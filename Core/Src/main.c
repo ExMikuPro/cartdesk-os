@@ -26,7 +26,9 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <string.h>
-
+#include <stdint.h>
+#include "stm32h7xx_hal.h"
+#include "lcd.h"
 #include "sdram.h"
 /* USER CODE END Includes */
 
@@ -37,7 +39,13 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+/* LCD 屏幕参数定义 */
+#define LCD_WIDTH    800
+#define LCD_HEIGHT   480
 
+/* 帧缓冲区配置 */
+#define FB_ADDR      0xD0000000u  // SDRAM 起始地址
+#define FB_SIZE      (LCD_WIDTH * LCD_HEIGHT * 4)  // ARGB8888 格式，每像素 4 字节
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -48,7 +56,6 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-
 
 /* USER CODE END PV */
 
@@ -62,122 +69,24 @@ static void MPU_Config(void);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
-
-static volatile uint32_t s_mdma_done = 0;
-static void _mdma_cplt_cb(MDMA_HandleTypeDef *h){ (void)h; s_mdma_done = 1; }
-
-// 你在 GDB 里看这两个全局变量
-volatile uint32_t g_mdma_cycles = 0;
-volatile uint32_t g_mdma_mbps   = 0;
-
-uint32_t MDMA_Test_SDRAM_to_SDRAM_MBps(void)
+/**
+  * @brief  填充整个屏幕为指定 ARGB8888 颜色
+  * @param  fb: 帧缓冲区地址
+  * @param  argb: ARGB8888 格式颜色值 (0xAARRGGBB)
+  * @note   填充完成后会执行 DCache 清理，确保数据写入 SDRAM
+  */
+void FillScreen_ARGB8888(void *fb, uint32_t argb)
 {
-  const uint32_t sdram_base = 0xC0000000u;
-  const uint32_t test_bytes = 4u * 1024u * 1024u;   // 4MB
-  const uint32_t offset     = 8u * 1024u * 1024u;   // dst = base + 8MB
-  const uint32_t words      = test_bytes / 4u;
+  uint32_t *p = (uint32_t *)fb;
 
-  uint32_t *src = (uint32_t *)(sdram_base);
-  uint32_t *dst = (uint32_t *)(sdram_base + offset);
-
-  // 先确认 SystemCoreClock 非 0（避免除 0）
-  if (SystemCoreClock == 0u) { g_mdma_cycles = 0; g_mdma_mbps = 0; return 0; }
-
-  // 启动 DWT（如果不可用也没关系：我们会检测 cycles==0）
-  CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
-  DWT->CYCCNT = 0;
-  DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
-
-  // 注册回调并启动
-  s_mdma_done = 0;
-  HAL_MDMA_RegisterCallback(&hmdma_mdma_channel0_sw_0,
-                            HAL_MDMA_XFER_CPLT_CB_ID,
-                            _mdma_cplt_cb);
-
-  uint32_t t0 = DWT->CYCCNT;
-
-  if (HAL_MDMA_Start_IT(&hmdma_mdma_channel0_sw_0,
-                        (uint32_t)src,
-                        (uint32_t)dst,
-                        words,
-                        1) != HAL_OK)
-  {
-    g_mdma_cycles = 0;
-    g_mdma_mbps   = 0;
-    return 0;
+  /* 填充所有像素 */
+  for (uint32_t i = 0; i < LCD_WIDTH * LCD_HEIGHT; i++) {
+    p[i] = argb;
   }
 
-  while (!s_mdma_done) {}
-
-  uint32_t t1 = DWT->CYCCNT;
-  uint32_t cycles = t1 - t0;
-  g_mdma_cycles = cycles;
-
-  // cycles==0 就直接返回 0，绝不做除法
-  if (cycles == 0u) { g_mdma_mbps = 0; return 0; }
-
-  // MB/s = bytes * CPU_Hz / cycles / 1e6
-  uint64_t num = (uint64_t)test_bytes * (uint64_t)SystemCoreClock;
-  uint64_t den = (uint64_t)cycles * 1000000ull;
-  if (den == 0ull) { g_mdma_mbps = 0; return 0; } // 双保险
-
-  g_mdma_mbps = (uint32_t)(num / den);
-  return g_mdma_mbps;
+  /* 清理 DCache，确保数据写入外部 SDRAM */
+  SCB_CleanDCache_by_Addr((uint32_t*)fb, FB_SIZE);
 }
-
-
-volatile HAL_StatusTypeDef g_mdma_start_ret;
-volatile HAL_MDMA_StateTypeDef g_mdma_state;
-volatile uint32_t g_mdma_error;
-
-uint32_t mdma_copy_poll(uint32_t dst, uint32_t src, uint32_t words, uint32_t timeout_ms)
-{
-  g_mdma_start_ret = HAL_MDMA_Start(&hmdma_mdma_channel0_sw_0, src, dst, words, 1);
-  if (g_mdma_start_ret != HAL_OK) {
-    g_mdma_state = HAL_MDMA_GetState(&hmdma_mdma_channel0_sw_0);
-    g_mdma_error = HAL_MDMA_GetError(&hmdma_mdma_channel0_sw_0);
-    return 0;
-  }
-
-  uint32_t t0 = HAL_GetTick();
-  while (1)
-  {
-    g_mdma_state = HAL_MDMA_GetState(&hmdma_mdma_channel0_sw_0);
-    g_mdma_error = HAL_MDMA_GetError(&hmdma_mdma_channel0_sw_0);
-
-    if (g_mdma_state == HAL_MDMA_STATE_READY) return 1;
-    if ((HAL_GetTick() - t0) > timeout_ms) return 0;
-  }
-}
-
-#define BUFFER_SIZE              32
-
-static const uint32_t SRC_Const_Buffer[BUFFER_SIZE] =
-{
-  0x01020304, 0x05060708, 0x090A0B0C, 0x0D0E0F10,
-  0x11121314, 0x15161718, 0x191A1B1C, 0x1D1E1F20,
-  0x21222324, 0x25262728, 0x292A2B2C, 0x2D2E2F30,
-  0x31323334, 0x35363738, 0x393A3B3C, 0x3D3E3F40,
-  0x41424344, 0x45464748, 0x494A4B4C, 0x4D4E4F50,
-  0x51525354, 0x55565758, 0x595A5B5C, 0x5D5E5F60,
-  0x61626364, 0x65666768, 0x696A6B6C, 0x6D6E6F70,
-  0x71727374, 0x75767778, 0x797A7B7C, 0x7D7E7F80
-};
-
-__attribute__((at(0x24004000))) uint32_t DESTBuffer[BUFFER_SIZE];
-
-
-
-
-uint8_t Buffercmp(const uint32_t* p0, const uint32_t* p1, uint32_t words)
-{
-  while (words--)
-  {
-    if (*p0++ != *p1++) return 0;
-  }
-  return 1;
-}
-
 
 /* USER CODE END 0 */
 
@@ -194,6 +103,9 @@ int main(void)
 
   /* MPU Configuration--------------------------------------------------------*/
   MPU_Config();
+
+  /* Enable D-Cache---------------------------------------------------------*/
+  SCB_EnableDCache();
 
   /* MCU Configuration--------------------------------------------------------*/
 
@@ -218,53 +130,27 @@ int main(void)
   MX_FMC_Init();
   /* USER CODE BEGIN 2 */
 
-  __HAL_RCC_LTDC_CLK_DISABLE();   // 直接关 LTDC 时钟
-
+  /* 初始化 SDRAM */
   SDRAM_Init();
 
-  HAL_StatusTypeDef DMA_Status = HAL_ERROR;
+  /* 使能 LCD 显示 */
+  LCD_DisplayON();
 
+  /* 循环显示不同颜色，测试屏幕显示功能 */
+  FillScreen_ARGB8888((void*)FB_ADDR, 0xFF000000);  // 黑色
+  HAL_Delay(1000);
 
-  // volatile uint32_t *s = (uint32_t*)0xD0000000;  // 你实际 SDRAM bank 地址
-  // s[0] = 0x11223344;
-  // s[1] = 0xA5A5A5A5;
-  // volatile uint32_t a = s[0];
-  // volatile uint32_t b = s[1];
-  // (void)a; (void)b;
+  FillScreen_ARGB8888((void*)FB_ADDR, 0xFFFFFFFF);  // 白色
+  HAL_Delay(1000);
 
-  volatile uint32_t *s = (uint32_t*)0xD0100000;
+  FillScreen_ARGB8888((void*)FB_ADDR, 0xFFFF0000);  // 红色
+  HAL_Delay(1000);
 
-  s[0] = 0x11111111;
-  s[1] = 0x22222222;
-  s[2] = 0x33333333;
-  s[3] = 0x44444444;
+  FillScreen_ARGB8888((void*)FB_ADDR, 0xFF00FF00);  // 绿色
+  HAL_Delay(1000);
 
-  volatile uint32_t a0 = s[0];
-  volatile uint32_t a1 = s[1];
-  volatile uint32_t a2 = s[2];
-  volatile uint32_t a3 = s[3];
-  (void)a0; (void)a1; (void)a2; (void)a3;
-
-
-
-  DMA_Status = HAL_MDMA_Start_IT(
-  &hmdma_mdma_channel0_sw_0,
-  (uint32_t)SRC_Const_Buffer,
-  (uint32_t)s,
-  BUFFER_SIZE *4,   // word 数
-  1
-);
-  if (DMA_Status !=HAL_OK) {
-
-    while (1);
-
-  }
-  uint8_t callbacks = Buffercmp(SRC_Const_Buffer,s,BUFFER_SIZE);
-
-
-  if (callbacks != 1) {
-    while (1);
-  }
+  FillScreen_ARGB8888((void*)FB_ADDR, 0xFF0000FF);  // 蓝色
+  HAL_Delay(1000);
 
   /* USER CODE END 2 */
 
@@ -272,6 +158,7 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+    /* LED 闪烁，指示系统运行 */
     HAL_Delay(500);
     HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
     /* USER CODE END WHILE */
@@ -434,6 +321,7 @@ void Error_Handler(void)
   }
   /* USER CODE END Error_Handler_Debug */
 }
+
 #ifdef USE_FULL_ASSERT
 /**
   * @brief  Reports the name of the source file and the source line number
