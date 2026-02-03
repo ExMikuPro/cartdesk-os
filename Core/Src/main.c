@@ -57,6 +57,15 @@
 
 /* USER CODE BEGIN PV */
 
+#define LCD_W 800
+#define LCD_H 480
+
+// 你需要把这两个地址放到你的 SDRAM 映射区（按你工程实际改）
+// 常见 H7 FMC SDRAM 映射在 0xC0000000
+#define FB0_ADDR 0xD0000000u
+#define FB1_ADDR (FB0_ADDR + (LCD_W * LCD_H * 4u))  // 紧挨着放第二个buffer
+
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -68,26 +77,317 @@ static void MPU_Config(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+/* ============================================================================
+ *                           测试函数实现
+ * ============================================================================ */
 
 /**
-  * @brief  填充整个屏幕为指定 ARGB8888 颜色
-  * @param  fb: 帧缓冲区地址
-  * @param  argb: ARGB8888 格式颜色值 (0xAARRGGBB)
-  * @note   填充完成后会执行 DCache 清理，确保数据写入 SDRAM
-  */
-void FillScreen_ARGB8888(void *fb, uint32_t argb)
+ * @brief  测试1: 水平线和垂直线
+ */
+void Test_HorizontalVerticalLines(void)
 {
-  uint32_t *p = (uint32_t *)fb;
+    LCD_Clear(LCD_LAYER0);
 
-  /* 填充所有像素 */
-  for (uint32_t i = 0; i < LCD_WIDTH * LCD_HEIGHT; i++) {
-    p[i] = argb;
-  }
+    /* 绘制网格 */
+    for (uint16_t x = 0; x < LCD_W; x += 50) {
+        LCD_DrawVLine(LCD_LAYER0, x, 0, LCD_H, LCD_COLOR_GRAY);
+    }
 
-  /* 清理 DCache，确保数据写入外部 SDRAM */
-  SCB_CleanDCache_by_Addr((uint32_t*)fb, FB_SIZE);
+    for (uint16_t y = 0; y < LCD_H; y += 50) {
+        LCD_DrawHLine(LCD_LAYER0, 0, y, LCD_W, LCD_COLOR_GRAY);
+    }
+
+    /* 绘制彩色水平线 */
+    LCD_DrawHLine(LCD_LAYER0, 100, 100, 600, LCD_COLOR_RED);
+    LCD_DrawHLine(LCD_LAYER0, 100, 150, 600, LCD_COLOR_GREEN);
+    LCD_DrawHLine(LCD_LAYER0, 100, 200, 600, LCD_COLOR_BLUE);
+
+    /* 绘制彩色垂直线 */
+    LCD_DrawVLine(LCD_LAYER0, 200, 250, 200, LCD_COLOR_YELLOW);
+    LCD_DrawVLine(LCD_LAYER0, 300, 250, 200, LCD_COLOR_CYAN);
+    LCD_DrawVLine(LCD_LAYER0, 400, 250, 200, LCD_COLOR_MAGENTA);
 }
 
+/**
+ * @brief  测试2: 矩形函数
+ */
+void Test_RectangleFunctions(void)
+{
+    LCD_Clear(LCD_LAYER0);
+
+    /* 实心矩形 */
+    LCD_DrawRectFilled(LCD_LAYER0, 50, 50, 150, 100, LCD_COLOR_RED);
+
+    /* 空心矩形(单像素边框) */
+    LCD_DrawRectOutline(LCD_LAYER0, 250, 50, 150, 100, 1, LCD_COLOR_GREEN);
+
+    /* 空心矩形(粗边框) */
+    LCD_DrawRectOutline(LCD_LAYER0, 450, 50, 150, 100, 5, LCD_COLOR_BLUE);
+
+    /* 嵌套矩形 */
+    LCD_DrawRectOutline(LCD_LAYER0, 50, 200, 200, 150, 10, LCD_COLOR_ORANGE);
+    LCD_DrawRectOutline(LCD_LAYER0, 70, 220, 160, 110, 5, LCD_COLOR_YELLOW);
+    LCD_DrawRectFilled(LCD_LAYER0, 90, 240, 120, 70, LCD_COLOR_CYAN);
+}
+
+/**
+ * @brief  测试3: 三角形
+ */
+void Test_TriangleFunctions(void)
+{
+    LCD_Clear(LCD_LAYER0);
+
+    /* 空心三角形 */
+    LCD_DrawTriangle(LCD_LAYER0, 150, 50, 50, 200, 250, 200, 2, LCD_COLOR_RED);
+
+    /* 实心三角形 */
+    LCD_DrawTriangleFilled(LCD_LAYER0, 450, 50, 350, 200, 550, 200, LCD_COLOR_GREEN);
+
+    /* 各种朝向的三角形 */
+    LCD_DrawTriangleFilled(LCD_LAYER0, 150, 250, 50, 400, 250, 400, LCD_COLOR_BLUE);    // 向右
+    LCD_DrawTriangleFilled(LCD_LAYER0, 350, 250, 350, 400, 450, 325, LCD_COLOR_YELLOW); // 向左
+    LCD_DrawTriangleFilled(LCD_LAYER0, 550, 400, 650, 400, 600, 250, LCD_COLOR_MAGENTA);// 向上
+}
+
+/**
+ * @brief  测试4: 折线(波形图)
+ */
+void Test_PolylineFunctions(void)
+{
+    LCD_Clear(LCD_LAYER0);
+
+    /* 正弦波模拟数据 */
+    int16_t sine_wave[100];
+    for (int i = 0; i < 50; i++) {
+        sine_wave[i * 2] = i * 15;                                    // X坐标
+        sine_wave[i * 2 + 1] = 240 + (int16_t)(80.0f * sinf(i * 0.3f)); // Y坐标
+    }
+
+    /* 绘制正弦波 */
+    LCD_DrawPolyline(LCD_LAYER0, sine_wave, 50, 2, LCD_COLOR_RED);
+
+    /* 锯齿波 */
+    int16_t sawtooth[20] = {
+        50, 100,  100, 150,  150, 100,  200, 150,  250, 100,
+        300, 150, 350, 100,  400, 150,  450, 100,  500, 150
+    };
+    LCD_DrawPolyline(LCD_LAYER0, sawtooth, 10, 3, LCD_COLOR_GREEN);
+
+    /* 折线路径 */
+    int16_t path[16] = {
+        100, 350,  200, 400,  300, 320,  400, 380,
+        500, 300,  600, 360,  700, 280,  750, 350
+    };
+    LCD_DrawPolyline(LCD_LAYER0, path, 8, 2, LCD_COLOR_CYAN);
+}
+
+/**
+ * @brief  测试5: 多边形
+ */
+void Test_PolygonFunctions(void)
+{
+    LCD_Clear(LCD_LAYER0);
+
+    /* 五边形(空心) */
+    int16_t pentagon[10] = {
+        150, 50,   250, 100,  220, 200,  80, 200,  50, 100
+    };
+    LCD_DrawPolygon(LCD_LAYER0, pentagon, 5, 2, LCD_COLOR_RED);
+
+    /* 六边形(实心) */
+    int16_t hexagon[12] = {
+        450, 80,   520, 120,  520, 200,  450, 240,  380, 200,  380, 120
+    };
+    LCD_DrawPolygonFilled(LCD_LAYER0, hexagon, 6, LCD_COLOR_GREEN);
+
+    /* 星形 */
+    int16_t star[10] = {
+        200, 280,  220, 340,  280, 350,  230, 390,  250, 450,
+    };
+    int16_t star2[10] = {
+        200, 420,  150, 390,  100, 350,  160, 340,  180, 280
+    };
+    LCD_DrawPolygonFilled(LCD_LAYER0, star, 5, LCD_COLOR_YELLOW);
+    LCD_DrawPolygonFilled(LCD_LAYER0, star2, 5, LCD_COLOR_YELLOW);
+
+    /* 八边形 */
+    int16_t octagon[16] = {
+        500, 280,  550, 280,  580, 310,  580, 360,
+        550, 390,  500, 390,  470, 360,  470, 310
+    };
+    LCD_DrawPolygonFilled(LCD_LAYER0, octagon, 8, LCD_COLOR_ORANGE);
+}
+
+/**
+ * @brief  测试6: 椭圆
+ */
+void Test_EllipseFunctions(void)
+{
+    LCD_Clear(LCD_LAYER0);
+
+    /* 空心椭圆 */
+    LCD_DrawEllipse(LCD_LAYER0, 200, 120, 150, 80, 2, LCD_COLOR_RED);
+    LCD_DrawEllipse(LCD_LAYER0, 600, 120, 100, 100, 3, LCD_COLOR_BLUE);  // 圆形(特殊椭圆)
+
+    /* 实心椭圆 */
+    LCD_DrawEllipseFilled(LCD_LAYER0, 200, 320, 120, 60, LCD_COLOR_GREEN);
+    LCD_DrawEllipseFilled(LCD_LAYER0, 600, 320, 80, 120, LCD_COLOR_MAGENTA);
+
+    /* 同心椭圆 */
+    LCD_DrawEllipse(LCD_LAYER0, 400, 240, 150, 100, 2, LCD_COLOR_CYAN);
+    LCD_DrawEllipse(LCD_LAYER0, 400, 240, 120, 80, 2, LCD_COLOR_YELLOW);
+    LCD_DrawEllipse(LCD_LAYER0, 400, 240, 90, 60, 2, LCD_COLOR_ORANGE);
+}
+
+/**
+ * @brief  测试7: 圆弧
+ */
+void Test_ArcFunctions(void)
+{
+    LCD_Clear(LCD_LAYER0);
+
+    /* 四分之一圆弧 */
+    LCD_DrawArc(LCD_LAYER0, 200, 240, 100, 0, 90, 3, LCD_COLOR_RED);      // 0-90度
+    LCD_DrawArc(LCD_LAYER0, 200, 240, 100, 90, 180, 3, LCD_COLOR_GREEN);  // 90-180度
+    LCD_DrawArc(LCD_LAYER0, 200, 240, 100, 180, 270, 3, LCD_COLOR_BLUE);  // 180-270度
+    LCD_DrawArc(LCD_LAYER0, 200, 240, 100, 270, 360, 3, LCD_COLOR_YELLOW);// 270-360度
+
+    /* 半圆弧 */
+    LCD_DrawArc(LCD_LAYER0, 500, 120, 80, 0, 180, 5, LCD_COLOR_CYAN);
+    LCD_DrawArc(LCD_LAYER0, 500, 360, 80, 180, 360, 5, LCD_COLOR_MAGENTA);
+
+    /* 进度环(270度) */
+    LCD_DrawArc(LCD_LAYER0, 650, 240, 100, 135, 405, 8, LCD_COLOR_ORANGE);
+}
+
+/**
+ * @brief  测试8: 综合图形(绘制房子)
+ */
+void Test_ComplexGraphics(void)
+{
+    LCD_Clear(LCD_LAYER0);
+
+    /* 房子主体 */
+    LCD_DrawRectFilled(LCD_LAYER0, 250, 200, 300, 250, LCD_COLOR_WHEAT);
+
+    /* 屋顶 */
+    LCD_DrawTriangleFilled(LCD_LAYER0, 400, 80, 200, 200, 600, 200, LCD_COLOR_RED);
+
+    /* 门 */
+    LCD_DrawRectFilled(LCD_LAYER0, 360, 320, 80, 130, LCD_COLOR_BROWN);
+    LCD_DrawCircleFilled(LCD_LAYER0, 420, 390, 5, LCD_COLOR_YELLOW);  // 门把手
+
+    /* 窗户 */
+    LCD_DrawRectFilled(LCD_LAYER0, 280, 250, 80, 80, LCD_COLOR_SKYBLUE);
+    LCD_DrawRectOutline(LCD_LAYER0, 280, 250, 80, 80, 3, LCD_COLOR_BLACK);
+    LCD_DrawHLine(LCD_LAYER0, 280, 290, 80, LCD_COLOR_BLACK);
+    LCD_DrawVLine(LCD_LAYER0, 320, 250, 80, LCD_COLOR_BLACK);
+
+    LCD_DrawRectFilled(LCD_LAYER0, 440, 250, 80, 80, LCD_COLOR_SKYBLUE);
+    LCD_DrawRectOutline(LCD_LAYER0, 440, 250, 80, 80, 3, LCD_COLOR_BLACK);
+    LCD_DrawHLine(LCD_LAYER0, 440, 290, 80, LCD_COLOR_BLACK);
+    LCD_DrawVLine(LCD_LAYER0, 480, 250, 80, LCD_COLOR_BLACK);
+
+    /* 烟囱 */
+    LCD_DrawRectFilled(LCD_LAYER0, 480, 120, 40, 80, LCD_COLOR_MAROON);
+
+    /* 太阳 */
+    LCD_DrawCircleFilled(LCD_LAYER0, 100, 100, 40, LCD_COLOR_YELLOW);
+
+    /* 云朵(用椭圆组合) */
+    LCD_DrawEllipseFilled(LCD_LAYER0, 650, 100, 50, 30, LCD_COLOR_WHITE);
+    LCD_DrawEllipseFilled(LCD_LAYER0, 690, 110, 40, 25, LCD_COLOR_WHITE);
+    LCD_DrawEllipseFilled(LCD_LAYER0, 720, 100, 45, 28, LCD_COLOR_WHITE);
+
+    /* 地面 */
+    LCD_DrawRectFilled(LCD_LAYER0, 0, 450, 800, 30, LCD_COLOR_GREEN);
+}
+
+/**
+ * @brief  测试9: 仪表盘示例
+ */
+void Test_Dashboard(void)
+{
+    LCD_Clear(LCD_LAYER0);
+
+    /* 仪表盘外圈 */
+    LCD_DrawCircle(LCD_LAYER0, 400, 240, 180, 5, LCD_COLOR_SILVER);
+    LCD_DrawCircle(LCD_LAYER0, 400, 240, 160, 2, LCD_COLOR_GRAY);
+
+    /* 刻度圆弧 */
+    LCD_DrawArc(LCD_LAYER0, 400, 240, 150, 135, 405, 3, LCD_COLOR_WHITE);
+
+    /* 刻度线(简化版,只画主要刻度) */
+    for (int i = 0; i <= 10; i++) {
+        int angle = 135 + i * 27;  // 每27度一个刻度
+        float rad = angle * 3.14159f / 180.0f;
+        int x0 = 400 + (int)(150.0f * cosf(rad));
+        int y0 = 240 - (int)(150.0f * sinf(rad));
+        int x1 = 400 + (int)(135.0f * cosf(rad));
+        int y1 = 240 - (int)(135.0f * sinf(rad));
+        LCD_DrawLine(LCD_LAYER0, x0, y0, x1, y1, 2, LCD_COLOR_WHITE);
+    }
+
+    /* 指针(指向60%) */
+    int pointer_angle = 135 + (int)(270 * 0.6f);  // 60%位置
+    float pointer_rad = pointer_angle * 3.14159f / 180.0f;
+    int px = 400 + (int)(120.0f * cosf(pointer_rad));
+    int py = 240 - (int)(120.0f * sinf(pointer_rad));
+    LCD_DrawLine(LCD_LAYER0, 400, 240, px, py, 4, LCD_COLOR_RED);
+
+    /* 中心圆 */
+    LCD_DrawCircleFilled(LCD_LAYER0, 400, 240, 15, LCD_COLOR_SILVER);
+    LCD_DrawCircle(LCD_LAYER0, 400, 240, 15, 2, LCD_COLOR_BLACK);
+
+    /* 进度环显示60% */
+    int arc_end = 135 + (int)(270 * 0.6f);
+    LCD_DrawArc(LCD_LAYER0, 400, 240, 140, 135, arc_end, 8, LCD_COLOR_LIME);
+}
+
+/**
+ * @brief  测试10: 图表示例(柱状图)
+ */
+void Test_Chart(void)
+{
+    LCD_Clear(LCD_LAYER0);
+
+    /* 标题区域 */
+    LCD_DrawRectFilled(LCD_LAYER0, 0, 0, 800, 50, LCD_COLOR_NAVY);
+
+    /* 绘制坐标轴 */
+    LCD_DrawHLine(LCD_LAYER0, 50, 400, 700, LCD_COLOR_WHITE);  // X轴
+    LCD_DrawVLine(LCD_LAYER0, 50, 80, 320, LCD_COLOR_WHITE);   // Y轴
+
+    /* Y轴刻度 */
+    for (int i = 0; i <= 5; i++) {
+        int y = 400 - i * 64;
+        LCD_DrawHLine(LCD_LAYER0, 45, y, 10, LCD_COLOR_WHITE);
+    }
+
+    /* 柱状图数据 */
+    uint16_t data[6] = {80, 150, 120, 200, 90, 180};  // 6个数据点
+    uint32_t colors[6] = {
+        LCD_COLOR_RED, LCD_COLOR_BLUE, LCD_COLOR_GREEN,
+        LCD_COLOR_YELLOW, LCD_COLOR_CYAN, LCD_COLOR_MAGENTA
+    };
+
+    /* 绘制柱状图 */
+    for (int i = 0; i < 6; i++) {
+        uint16_t x = 100 + i * 110;
+        uint16_t height = data[i];
+        uint16_t y = 400 - height;
+
+        /* 柱子 */
+        LCD_DrawRectFilled(LCD_LAYER0, x, y, 80, height, colors[i]);
+        LCD_DrawRectOutline(LCD_LAYER0, x, y, 80, height, 2, LCD_COLOR_BLACK);
+    }
+
+    /* 网格线 */
+    for (int i = 1; i < 5; i++) {
+        int y = 400 - i * 64;
+        LCD_DrawHLine(LCD_LAYER0, 50, y, 700, LCD_COLOR_GRAY);
+    }
+}
 /* USER CODE END 0 */
 
 /**
@@ -134,23 +434,55 @@ int main(void)
   SDRAM_Init();
 
   /* 使能 LCD 显示 */
-  LCD_DisplayON();
 
-  /* 循环显示不同颜色，测试屏幕显示功能 */
-  FillScreen_ARGB8888((void*)FB_ADDR, 0xFF000000);  // 黑色
-  HAL_Delay(1000);
 
-  FillScreen_ARGB8888((void*)FB_ADDR, 0xFFFFFFFF);  // 白色
-  HAL_Delay(1000);
+    // LCD_Clear(0);
+    // LCD_Clear(1);
+    // LCD_Refresh(0);
+    // LCD_Refresh(1);
+    //
+    // LCD_DrawRectFilled(LCD_LAYER0, 70, 50, 150, 100, 0x000000FF);
+    // LCD_DrawRectFilled(LCD_LAYER0, 50, 50, 150, 100, 0x99FF00FF);
 
-  FillScreen_ARGB8888((void*)FB_ADDR, 0xFFFF0000);  // 红色
-  HAL_Delay(1000);
+    // 底层：黑底 + 白色实心方块
+    LCD_Fill(LCD_LAYER0, LCD_COLOR_BLACK);
+    LCD_DrawRect(LCD_LAYER0, 200, 120, 240, 240, LCD_COLOR_WHITE);
 
-  FillScreen_ARGB8888((void*)FB_ADDR, 0xFF00FF00);  // 绿色
-  HAL_Delay(1000);
+    // 顶层：透明底 + “偏粉的红”方块（与白块有重叠）
+    LCD_Fill(LCD_LAYER1, 0x00000000u);               // 全透明背景
+    LCD_DrawRect(LCD_LAYER1, 260, 160, 240, 240, 0xCCFF8197u); // 关键颜色
 
-  FillScreen_ARGB8888((void*)FB_ADDR, 0xFF0000FF);  // 蓝色
-  HAL_Delay(1000);
+    // 顶层半透明：让叠加后的颜色落在粉色附近
+    LCD_SetLayerVisible(LCD_LAYER0, 1);
+    LCD_SetLayerVisible(LCD_LAYER1, 1);
+    LCD_SetTransparency(LCD_LAYER1, 128);
+
+    LCD_Refresh(LCD_LAYER0);
+    LCD_Refresh(LCD_LAYER1);
+    LCD_DisplayON();
+
+    HAL_Delay(2000);
+
+    Test_HorizontalVerticalLines();
+    HAL_Delay(2000);
+    Test_RectangleFunctions();
+    HAL_Delay(2000);
+    Test_TriangleFunctions();
+    HAL_Delay(2000);
+    Test_PolylineFunctions();
+    HAL_Delay(2000);
+    Test_PolygonFunctions();
+    HAL_Delay(2000);
+    Test_EllipseFunctions();
+    HAL_Delay(2000);
+    Test_ArcFunctions();
+    HAL_Delay(2000);
+    Test_ComplexGraphics();
+    HAL_Delay(2000);
+    Test_Dashboard();
+    HAL_Delay(2000);
+    Test_Chart();
+    HAL_Delay(2000);
 
   /* USER CODE END 2 */
 
@@ -321,7 +653,6 @@ void Error_Handler(void)
   }
   /* USER CODE END Error_Handler_Debug */
 }
-
 #ifdef USE_FULL_ASSERT
 /**
   * @brief  Reports the name of the source file and the source line number
