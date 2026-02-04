@@ -463,6 +463,11 @@ int main(void)
 
     HAL_Delay(2000);
 
+    LCD_Clear(0);
+    LCD_Clear(1);
+    LCD_Refresh(0);
+    LCD_Refresh(1);
+
     Test_HorizontalVerticalLines();
     HAL_Delay(2000);
     Test_RectangleFunctions();
