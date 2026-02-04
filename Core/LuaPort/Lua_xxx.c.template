@@ -1,0 +1,208 @@
+// Lua_xxx.c.template
+// 复制此文件 -> 改名成 lua_gpio.c / lua_tim.c / lua_ltdc.c ...
+// 并把所有 "xxx" 替换成你的模块名（建议全小写）
+
+#include "lua.h"
+#include "lauxlib.h"
+#include <stdint.h>
+#include <string.h>
+
+// 如果你采用了 LuaPort 统一 cfg（推荐），就 include 并用 lua_port_get_cfg(L)
+// #include "lua_port.h"
+
+// 如果你不想依赖 lua_port.h，也可以直接从 registry 取：
+//   lua_getfield(L, LUA_REGISTRYINDEX, "port.cfg"); cfg = lua_touserdata(L, -1);
+
+#ifndef LUA_XXX_MODNAME
+#define LUA_XXX_MODNAME "xxx"
+#endif
+
+// -----------------------------
+// 0) 可选：取全局 cfg 的通用写法（两选一）
+// -----------------------------
+
+// A) 推荐：如果你有 lua_port_get_cfg(L)，直接用
+// static inline const lua_port_config_t* xxx_get_cfg(lua_State* L) {
+//   return lua_port_get_cfg(L);
+// }
+
+// B) 通用：不依赖 lua_port.h（cfg 类型用 void*，你自己 cast）
+static inline void* xxx_get_cfg_void(lua_State* L) {
+  lua_getfield(L, LUA_REGISTRYINDEX, "port.cfg");
+  void* cfg = lua_touserdata(L, -1);
+  lua_pop(L, 1);
+  return cfg;
+}
+
+// -----------------------------
+// 1) 参数检查/错误模板（你可以按需扩展）
+// -----------------------------
+static inline uint32_t check_u32(lua_State* L, int idx) {
+  lua_Integer v = luaL_checkinteger(L, idx);
+  if (v < 0) luaL_error(L, "arg %d must be >= 0", idx);
+  return (uint32_t)v;
+}
+
+static inline const char* check_cstr(lua_State* L, int idx) {
+  return luaL_checkstring(L, idx);
+}
+
+// -----------------------------
+// 2) 形式一：模块表 API（xxx.foo / xxx.bar）
+// -----------------------------
+
+// 示例：xxx.foo(a, b) -> returns number
+static int l_xxx_foo(lua_State* L) {
+  // 取参数
+  uint32_t a = check_u32(L, 1);
+  uint32_t b = check_u32(L, 2);
+
+  // 取 cfg（如需）
+  void* cfg = xxx_get_cfg_void(L);
+  (void)cfg;
+
+  // TODO: 你的底层硬件逻辑写在这里
+  // ...
+
+  // 返回值
+  lua_pushinteger(L, (lua_Integer)(a + b));
+  return 1;
+}
+
+// 示例：xxx.bar("name") -> returns boolean
+static int l_xxx_bar(lua_State* L) {
+  const char* name = check_cstr(L, 1);
+  (void)name;
+
+  // TODO: 你的底层硬件逻辑
+  lua_pushboolean(L, 1);
+  return 1;
+}
+
+static const luaL_Reg xxx_funcs[] = {
+  {"foo", l_xxx_foo},
+  {"bar", l_xxx_bar},
+  {NULL, NULL}
+};
+
+// -----------------------------
+// 3) 形式二：对象/句柄 API（userdata + metatable）
+//    用于：I2C/SPI/UART/QSPI/文件/设备句柄等
+// -----------------------------
+
+typedef struct {
+  void* handle;   // 你要保存的底层句柄（TIM_HandleTypeDef* / FATFS* / 自己的结构体*）
+  uint32_t flags; // 可选：状态/标志
+} xxx_ud_t;
+
+#define XXX_MT "xxx.mt"
+
+// 确保 userdata 类型正确
+static xxx_ud_t* check_xxx_ud(lua_State* L, int idx) {
+  return (xxx_ud_t*)luaL_checkudata(L, idx, XXX_MT);
+}
+
+// h:close()
+static int l_xxx_close(lua_State* L) {
+  xxx_ud_t* ud = check_xxx_ud(L, 1);
+
+  if (ud->handle) {
+    // TODO: 释放/关闭底层资源
+    ud->handle = NULL;
+  }
+  return 0;
+}
+
+// h:read(n) -> string
+static int l_xxx_read(lua_State* L) {
+  xxx_ud_t* ud = check_xxx_ud(L, 1);
+  uint32_t n = check_u32(L, 2);
+
+  if (!ud->handle) {
+    return luaL_error(L, "xxx handle is closed");
+  }
+
+  // TODO: 从底层读 n 字节到 buffer
+  // 这里给模板：返回空字符串
+  (void)n;
+  lua_pushlstring(L, "", 0);
+  return 1;
+}
+
+// h:write(data) -> written_len
+static int l_xxx_write(lua_State* L) {
+  xxx_ud_t* ud = check_xxx_ud(L, 1);
+  size_t len = 0;
+  const char* data = luaL_checklstring(L, 2, &len);
+
+  if (!ud->handle) {
+    return luaL_error(L, "xxx handle is closed");
+  }
+
+  // TODO: 写入 data
+  lua_pushinteger(L, (lua_Integer)len);
+  return 1;
+}
+
+static const luaL_Reg xxx_methods[] = {
+  {"close", l_xxx_close},
+  {"read",  l_xxx_read},
+  {"write", l_xxx_write},
+  {NULL, NULL}
+};
+
+// xxx.open(...) -> returns userdata
+static int l_xxx_open(lua_State* L) {
+  // TODO: 解析 open 参数
+  // const char* dev = luaL_checkstring(L, 1);
+
+  // 取 cfg（如需）
+  void* cfg = xxx_get_cfg_void(L);
+  (void)cfg;
+
+  // 创建 userdata
+  xxx_ud_t* ud = (xxx_ud_t*)lua_newuserdatauv(L, sizeof(xxx_ud_t), 0);
+  memset(ud, 0, sizeof(*ud));
+
+  // TODO: 打开底层资源，把句柄存进去
+  // ud->handle = (void*)some_handle;
+
+  // 绑定 metatable
+  luaL_getmetatable(L, XXX_MT);
+  lua_setmetatable(L, -2);
+
+  return 1;
+}
+
+// 绑定 metatable（只做一次）
+static void xxx_create_metatable(lua_State* L) {
+  if (luaL_newmetatable(L, XXX_MT)) {
+    // mt.__index = methods_table
+    lua_newtable(L);
+    luaL_setfuncs(L, xxx_methods, 0);
+    lua_setfield(L, -2, "__index");
+
+    // mt.__gc = close
+    lua_pushcfunction(L, l_xxx_close);
+    lua_setfield(L, -2, "__gc");
+  }
+  lua_pop(L, 1); // pop metatable
+}
+
+// -----------------------------
+// 4) 模块导出（你可以选择导出表模块 或 同时导出 open）
+// -----------------------------
+
+int luaopen_xxx(lua_State* L) {
+  // 如果你用到 userdata 句柄，先建 metatable
+  xxx_create_metatable(L);
+
+  // 创建模块表
+  luaL_newlib(L, xxx_funcs);
+
+  // 可选：把 open 也挂到模块上（xxx.open -> userdata）
+  lua_pushcfunction(L, l_xxx_open);
+  lua_setfield(L, -2, "open");
+
+  return 1; // 返回模块表
+}
