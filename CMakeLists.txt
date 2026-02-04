@@ -35,10 +35,62 @@ enable_language(C ASM)
 add_executable(${CMAKE_PROJECT_NAME}
         Core/Src/sdram.c
         Core/Src/lcd.c
-        Core/Inc/lcd.h)
+        Core/Inc/lcd.h
+        Core/Inc/lua_vm.h
+        Core/Src/lua_vm.c
+        Core/LuaPort/lua_port.c
+        Core/LuaPort/modules/lua_gpio.c
+        Core/LuaPort/modules/lua_delay.c
+        Core/LuaPort/modules/lua_tim.c
+
+)
 
 # Add STM32CubeMX generated sources
 add_subdirectory(cmake/stm32cubemx)
+
+
+# ===== Add Lua (minimal) =====
+set(LUA_SRC_DIR ${CMAKE_SOURCE_DIR} Core/LuaPort/src)
+
+add_library(lua STATIC
+        ${LUA_SRC_DIR}/lapi.c
+        ${LUA_SRC_DIR}/lcode.c
+        ${LUA_SRC_DIR}/lctype.c
+        ${LUA_SRC_DIR}/ldebug.c
+        ${LUA_SRC_DIR}/ldo.c
+        ${LUA_SRC_DIR}/ldump.c
+        ${LUA_SRC_DIR}/lfunc.c
+        ${LUA_SRC_DIR}/lgc.c
+        ${LUA_SRC_DIR}/llex.c
+        ${LUA_SRC_DIR}/lmem.c
+        ${LUA_SRC_DIR}/lobject.c
+        ${LUA_SRC_DIR}/lopcodes.c
+        ${LUA_SRC_DIR}/lparser.c
+        ${LUA_SRC_DIR}/lstate.c
+        ${LUA_SRC_DIR}/lstring.c
+        ${LUA_SRC_DIR}/ltable.c
+        ${LUA_SRC_DIR}/ltm.c
+        ${LUA_SRC_DIR}/lundump.c
+        ${LUA_SRC_DIR}/lvm.c
+        ${LUA_SRC_DIR}/lzio.c
+
+        ${LUA_SRC_DIR}/lauxlib.c
+
+        ${LUA_SRC_DIR}/lbaselib.c
+        ${LUA_SRC_DIR}/lcorolib.c
+        ${LUA_SRC_DIR}/lmathlib.c
+        ${LUA_SRC_DIR}/lstrlib.c
+#        ${LUA_SRC_DIR}/lstrlib.c
+        ${LUA_SRC_DIR}/ltablib.c
+        ${LUA_SRC_DIR}/lutf8lib.c
+)
+
+# 去重：上面我写了两次 lstrlib.c，你删掉其中一个（保留一个即可）
+
+target_compile_options(lua PRIVATE -ffunction-sections -fdata-sections)
+
+target_include_directories(lua PUBLIC ${LUA_SRC_DIR})
+
 
 # Link directories setup
 target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
@@ -48,11 +100,15 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 # Add sources to executable
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
+
 )
 
 # Add include paths
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined include paths
+        Core/Inc
+        Core/LuaPort
+        Core/LuaPort/modules
 )
 
 # Add project symbols (macros)
@@ -68,4 +124,6 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
     stm32cubemx
 
     # Add user defined libraries
+    lua
+    m
 )
