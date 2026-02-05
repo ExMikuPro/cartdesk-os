@@ -18,6 +18,7 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "crc.h"
 #include "fatfs.h"
 #include "ltdc.h"
 #include "mdma.h"
@@ -36,6 +37,7 @@
 #include "../Driver/LCD/lcd.h"
 #include "lua_vm.h"
 #include "../Driver/SDRAM/sdram.h"
+#include "CRC/crc.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -483,6 +485,42 @@ void fatfs_min_test(void)
     // 可选：卸载
     // f_mount(NULL, "0:", 0);
 }
+
+void demo_crc(void)
+{
+    CRC_ASSERT_INT32();
+
+    uint8_t  u8[]  = {1,2,3,4,0xAA};
+    uint16_t u16[] = {0x1122,0x3344,0x5566};
+    uint32_t u32[] = {0x11223344,0xAABBCCDD};
+
+    int8_t   i8[]  = {-1,2,-3,4};
+    int16_t  i16[] = {-1000,2000,-3000};
+    int32_t  i32[] = {-12345678, 23456789};
+    int      ii[]  = {1,-2,3,-4};
+
+    /* 1) one-shot：数组 → 自动格式+自动长度 */
+    uint32_t c1 = CRC_Calc(&hcrc, u8);   // bytes
+    uint32_t c2 = CRC_Calc(&hcrc, u16);  // u16
+    uint32_t c3 = CRC_Calc(&hcrc, u32);  // u32
+    uint32_t c4 = CRC_Calc(&hcrc, i8);   // bytes
+    uint32_t c5 = CRC_Calc(&hcrc, i16);  // u16
+    uint32_t c6 = CRC_Calc(&hcrc, i32);  // u32
+    uint32_t c7 = CRC_Calc(&hcrc, ii);   // u32(int)
+
+    /* 2) one-shot：指针+长度 → 自动格式 + 你指定长度 */
+    uint32_t c8 = CRC_Calc(&hcrc, (uint8_t*)u8, 3);   // 只算前3个字节
+    uint32_t c9 = CRC_Calc(&hcrc, (uint16_t*)u16, 2); // 只算前2个halfword
+
+    /* 3) 流式：同名 CRC_Update */
+    CRC_Begin(&hcrc);
+    CRC_Update(&hcrc, u8);               // 数组：自动长度
+    CRC_Update(&hcrc, (uint32_t*)u32, 1); // 指针+长度：只喂1个word
+    uint32_t c10 = CRC_Final(&hcrc);
+
+    (void)c1;(void)c2;(void)c3;(void)c4;(void)c5;(void)c6;(void)c7;(void)c8;(void)c9;(void)c10;
+}
+
 /* USER CODE END 0 */
 
 /**
@@ -526,69 +564,72 @@ int main(void)
   MX_USART1_UART_Init();
   MX_SDMMC1_SD_Init();
   MX_FATFS_Init();
+  MX_CRC_Init();
   /* USER CODE BEGIN 2 */
 
   /* 初始化 SDRAM */
   SDRAM_Init();
 
+    // demo_crc();
+
   /* 使能 LCD 显示 */
 
     // fatfs_min_test();
-    // lua_demo_blink();
+    lua_demo_blink();
 
 
-    LCD_Clear(0);
-    LCD_Clear(1);
-    LCD_Refresh(0);
-    LCD_Refresh(1);
-
-    LCD_DrawRectFilled(LCD_LAYER0, 70, 50, 150, 100, 0x000000FF);
-    LCD_DrawRectFilled(LCD_LAYER0, 50, 50, 150, 100, 0x99FF00FF);
-
-    // 底层：黑底 + 白色实心方块
-    LCD_Fill(LCD_LAYER0, LCD_COLOR_BLACK);
-    LCD_DrawRect(LCD_LAYER0, 200, 120, 240, 240, LCD_COLOR_WHITE);
-
-    // 顶层：透明底 + “偏粉的红”方块（与白块有重叠）
-    LCD_Fill(LCD_LAYER1, 0x00000000u);               // 全透明背景
-    LCD_DrawRect(LCD_LAYER1, 260, 160, 240, 240, 0xCCFF8197u); // 关键颜色
-
-    // 顶层半透明：让叠加后的颜色落在粉色附近
-    LCD_SetLayerVisible(LCD_LAYER0, 1);
-    LCD_SetLayerVisible(LCD_LAYER1, 1);
-    LCD_SetTransparency(LCD_LAYER1, 128);
-
-    LCD_Refresh(LCD_LAYER0);
-    LCD_Refresh(LCD_LAYER1);
-    LCD_DisplayON();
-
-    HAL_Delay(2000);
-
-    LCD_Clear(0);
-    LCD_Clear(1);
-    LCD_Refresh(0);
-    LCD_Refresh(1);
-
-    Test_HorizontalVerticalLines();
-    HAL_Delay(2000);
-    Test_RectangleFunctions();
-    HAL_Delay(2000);
-    Test_TriangleFunctions();
-    HAL_Delay(2000);
-    Test_PolylineFunctions();
-    HAL_Delay(2000);
-    Test_PolygonFunctions();
-    HAL_Delay(2000);
-    Test_EllipseFunctions();
-    HAL_Delay(2000);
-    Test_ArcFunctions();
-    HAL_Delay(2000);
-    Test_ComplexGraphics();
-    HAL_Delay(2000);
-    Test_Dashboard();
-    HAL_Delay(2000);
-    Test_Chart();
-    HAL_Delay(2000);
+    // LCD_Clear(0);
+    // LCD_Clear(1);
+    // LCD_Refresh(0);
+    // LCD_Refresh(1);
+    //
+    // LCD_DrawRectFilled(LCD_LAYER0, 70, 50, 150, 100, 0x000000FF);
+    // LCD_DrawRectFilled(LCD_LAYER0, 50, 50, 150, 100, 0x99FF00FF);
+    //
+    // // 底层：黑底 + 白色实心方块
+    // LCD_Fill(LCD_LAYER0, LCD_COLOR_BLACK);
+    // LCD_DrawRect(LCD_LAYER0, 200, 120, 240, 240, LCD_COLOR_WHITE);
+    //
+    // // 顶层：透明底 + “偏粉的红”方块（与白块有重叠）
+    // LCD_Fill(LCD_LAYER1, 0x00000000u);               // 全透明背景
+    // LCD_DrawRect(LCD_LAYER1, 260, 160, 240, 240, 0xCCFF8197u); // 关键颜色
+    //
+    // // 顶层半透明：让叠加后的颜色落在粉色附近
+    // LCD_SetLayerVisible(LCD_LAYER0, 1);
+    // LCD_SetLayerVisible(LCD_LAYER1, 1);
+    // LCD_SetTransparency(LCD_LAYER1, 128);
+    //
+    // LCD_Refresh(LCD_LAYER0);
+    // LCD_Refresh(LCD_LAYER1);
+    // LCD_DisplayON();
+    //
+    // HAL_Delay(2000);
+    //
+    // LCD_Clear(0);
+    // LCD_Clear(1);
+    // LCD_Refresh(0);
+    // LCD_Refresh(1);
+    //
+    // Test_HorizontalVerticalLines();
+    // HAL_Delay(2000);
+    // Test_RectangleFunctions();
+    // HAL_Delay(2000);
+    // Test_TriangleFunctions();
+    // HAL_Delay(2000);
+    // Test_PolylineFunctions();
+    // HAL_Delay(2000);
+    // Test_PolygonFunctions();
+    // HAL_Delay(2000);
+    // Test_EllipseFunctions();
+    // HAL_Delay(2000);
+    // Test_ArcFunctions();
+    // HAL_Delay(2000);
+    // Test_ComplexGraphics();
+    // HAL_Delay(2000);
+    // Test_Dashboard();
+    // HAL_Delay(2000);
+    // Test_Chart();
+    // HAL_Delay(2000);
 
   /* USER CODE END 2 */
 
