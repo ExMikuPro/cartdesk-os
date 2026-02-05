@@ -57,6 +57,8 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
+#define BUZZER_Pin GPIO_PIN_8
+#define BUZZER_GPIO_Port GPIOI
 #define LCD_BL_Pin GPIO_PIN_13
 #define LCD_BL_GPIO_Port GPIOD
 #define LED_Pin GPIO_PIN_1

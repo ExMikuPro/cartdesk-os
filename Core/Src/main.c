@@ -573,9 +573,11 @@ int main(void)
     // demo_crc();
 
   /* 使能 LCD 显示 */
+    HAL_GPIO_WritePin(BUZZER_GPIO_Port,BUZZER_Pin, GPIO_PIN_RESET); // 蜂鸣器高响低不响
+
 
     // fatfs_min_test();
-    lua_demo_blink();
+    // lua_demo_blink();
 
 
     // LCD_Clear(0);
