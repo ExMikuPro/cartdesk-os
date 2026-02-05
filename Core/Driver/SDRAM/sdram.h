@@ -1,7 +1,7 @@
 #ifndef __SDRAM_H
 #define __SDRAM_H
 
-#include "main.h"
+#include "../../Inc/main.h"
 
 extern SDRAM_HandleTypeDef hsdram1;
 
