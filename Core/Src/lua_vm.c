@@ -49,11 +49,10 @@ static int lua_run_buffer(lua_State* L, const char* buf, size_t len, const char*
 }
 
 static const char* DEMO_LUA =
-"gpio.write(false)\n"
-"while true do\n"
-"  gpio.toggle()\n"
-"  delay(200)\n"
-"end\n";
+"local f2 = sd.open(\"/data.bin\", \"w\")\n"
+"sd.wirte(f2, \"abc\")\n"
+"sd.close(f2)\n";
+
 
 
 void lua_demo_blink(void) {
