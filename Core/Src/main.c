@@ -533,9 +533,8 @@ int main(void)
 
   /* 使能 LCD 显示 */
 
-    fatfs_min_test();
-
-    // lua_demo_blink();
+    // fatfs_min_test();
+    lua_demo_blink();
 
 
     // LCD_Clear(0);
