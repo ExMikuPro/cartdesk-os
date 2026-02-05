@@ -18,8 +18,10 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "fatfs.h"
 #include "ltdc.h"
 #include "mdma.h"
+#include "sdmmc.h"
 #include "usart.h"
 #include "gpio.h"
 #include "fmc.h"
@@ -28,6 +30,8 @@
 /* USER CODE BEGIN Includes */
 #include <string.h>
 #include <stdint.h>
+#include <stdio.h>
+
 #include "stm32h7xx_hal.h"
 #include "lcd.h"
 #include "lua_vm.h"
@@ -393,6 +397,92 @@ void Test_Chart(void)
         LCD_DrawHLine(LCD_LAYER0, 50, y, 700, LCD_COLOR_GRAY);
     }
 }
+
+
+static FATFS fs;
+static FIL fil;
+
+static void list_dir(const char *path)
+{
+    FRESULT fr;
+    DIR dir;
+    FILINFO fno;
+
+    fr = f_opendir(&dir, path);
+    if (fr != FR_OK) {
+        printf("opendir %s failed: %d\r\n", path, fr);
+        return;
+    }
+
+    printf("=== list: %s ===\r\n", path);
+    while (1) {
+        fr = f_readdir(&dir, &fno);
+        if (fr != FR_OK || fno.fname[0] == 0) break;
+
+        // 只打印文件名（不开 LFN 也能用）
+        printf("%c  %s\r\n", (fno.fattrib & AM_DIR) ? 'D' : 'F', fno.fname);
+    }
+
+    f_closedir(&dir);
+}
+
+void fatfs_min_test(void)
+{
+    FRESULT fr;
+
+    // 1) 挂载（CubeMX 默认盘符通常是 "0:"）
+    fr = f_mount(&fs, "0:", 1);
+    if (fr != FR_OK) {
+        printf("mount failed: %d\r\n", fr);
+        return;
+    }
+
+    // 2) 列根目录
+    list_dir("0:/");
+
+    // 3) 写文件
+    fr = f_open(&fil, "0:/hello.txt", FA_CREATE_ALWAYS | FA_WRITE);
+    if (fr != FR_OK) {
+        printf("open write failed: %d\r\n", fr);
+        return;
+    }
+
+    const char *msg = "hello sdmmc + fatfs\r\n";
+    UINT bw = 0;
+    fr = f_write(&fil, msg, (UINT)strlen(msg), &bw);
+    f_close(&fil);
+
+    if (fr != FR_OK) {
+        printf("write failed: %d\r\n", fr);
+        return;
+    }
+    printf("write ok, bytes=%u\r\n", bw);
+
+    // 4) 读文件
+    fr = f_open(&fil, "0:/hello.txt", FA_READ);
+    if (fr != FR_OK) {
+        printf("open read failed: %d\r\n", fr);
+        return;
+    }
+
+    char buf[128] = {0};
+    UINT br = 0;
+    fr = f_read(&fil, buf, sizeof(buf) - 1, &br);
+    f_close(&fil);
+
+    if (fr != FR_OK) {
+        printf("read failed: %d\r\n", fr);
+        return;
+    }
+
+    printf("read ok, bytes=%u, content:\r\n%s\r\n", br, buf);
+
+    // 5) 再列一次目录（应该能看到 hello.txt）
+    list_dir("0:/");
+
+    // 可选：卸载
+    // f_mount(NULL, "0:", 0);
+}
 /* USER CODE END 0 */
 
 /**
@@ -434,6 +524,8 @@ int main(void)
   MX_LTDC_Init();
   MX_FMC_Init();
   MX_USART1_UART_Init();
+  MX_SDMMC1_SD_Init();
+  MX_FATFS_Init();
   /* USER CODE BEGIN 2 */
 
   /* 初始化 SDRAM */
@@ -441,7 +533,9 @@ int main(void)
 
   /* 使能 LCD 显示 */
 
-    lua_demo_blink();
+    fatfs_min_test();
+
+    // lua_demo_blink();
 
 
     // LCD_Clear(0);
@@ -543,7 +637,7 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.PLL.PLLN = 192;
   RCC_OscInitStruct.PLL.PLLP = 2;
   RCC_OscInitStruct.PLL.PLLQ = 4;
-  RCC_OscInitStruct.PLL.PLLR = 2;
+  RCC_OscInitStruct.PLL.PLLR = 24;
   RCC_OscInitStruct.PLL.PLLRGE = RCC_PLL1VCIRANGE_2;
   RCC_OscInitStruct.PLL.PLLVCOSEL = RCC_PLL1VCOWIDE;
   RCC_OscInitStruct.PLL.PLLFRACN = 0;
