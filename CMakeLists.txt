@@ -33,9 +33,10 @@ enable_language(C ASM)
 
 # Create an executable object type
 add_executable(${CMAKE_PROJECT_NAME}
-        Core/Src/sdram.c
-        Core/Src/lcd.c
-        Core/Inc/lcd.h
+        Core/Driver/SDRAM/sdram.h
+        Core/Driver/SDRAM/sdram.c
+        Core/Driver/LCD/lcd.c
+        Core/Driver/LCD/lcd.h
         Core/Inc/lua_vm.h
         Core/Src/lua_vm.c
         Core/LuaPort/lua_port.c
@@ -110,6 +111,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
         Core/Inc
         Core/LuaPort
         Core/LuaPort/modules
+        Core/Driver/
 )
 
 # Add project symbols (macros)
