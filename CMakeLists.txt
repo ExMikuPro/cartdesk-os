@@ -49,6 +49,14 @@ add_executable(${CMAKE_PROJECT_NAME}
         Core/Screen/Page/ui_screen_launcher.h
         Core/Driver/LCD/jbmono_thin_a8_20px.h
         Core/Screen/Page/jbm_el_20px.h
+        Core/Driver/FLASH/flash.c
+        Core/Driver/FLASH/flash.h
+        Core/Driver/FLASH/lfs.c
+        Core/Driver/FLASH/lfs.h
+        Core/Driver/FLASH/lfs_util.c
+        Core/Driver/FLASH/lfs_util.h
+        Core/Driver/FLASH/lfs_port.c
+        Core/Driver/FLASH/lfs_port.h
 
 )
 
