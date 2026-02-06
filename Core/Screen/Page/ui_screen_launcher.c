@@ -55,29 +55,44 @@ static inline float f_abs(float x) {
     return (x < 0.0f) ? -x : x;
 }
 
+static void Launcher_DrawHUD(uint8_t layer)
+{
+    LCD_DrawHLine(layer, 20, 420, 759, LCD_COLOR_BLACK);           // 底部分割线
+
+    LCD_DrawString(layer, 600, 35, "12:34", LCD_COLOR_BLACK, 0);   // 时间
+    LCD_DrawString(layer, 675, 35, "100%",  LCD_COLOR_BLACK, 0);   // 电量文字
+
+    LCD_DrawRectFilled(layer, 735, 44, 20,  9, LCD_COLOR_BLACK);   // 电池内电量
+    LCD_DrawRectOutline(layer,730, 39, 30, 19, 3, LCD_COLOR_BLACK);// 电池外框
+    LCD_DrawRectFilled(layer, 760, 44,  3,  9, LCD_COLOR_BLACK);   // 电池凸起
+}
+
 /* ============================================================================
  *                           初始化
  * ============================================================================ */
 
+static void WaitLayerSwapDone(uint8_t layer, uint32_t maxVBlank)
+{
+    uint32_t start = LCD_GetVBlankCount();
+    while (LCD_IsPendingSwap(layer)) {
+        if ((LCD_GetVBlankCount() - start) > maxVBlank) break;
+    }
+}
+
 void Launcher_Init(void)
 {
+    // 背景层（Layer0）一次画好：背景 + HUD
     LCD_Clear(0);
     LCD_Fill(0, LCD_COLOR_WHEAT);
-    LCD_Refresh(0);
+    Launcher_DrawHUD(0);
+    LCD_Refresh(0);                 // Layer0 虽然不双缓冲，但 refresh 会做 cache clean
 
+    // UI 动画层（Layer1）只负责图标：确保 front/back 都是透明
     LCD_Clear(1);
-    LCD_Refresh(1);
-
-    // LCD_DRAW
-
-
-
-    LCD_DrawHLine(1,20,420,759,LCD_COLOR_BLACK); // 底部分割线
-    LCD_DrawString(1, 650, 35, "12:34", LCD_COLOR_BLACK, 0x00000000);
-
-#if DEBUG_MISALIGNMENT
-    printf("[Launcher] Initialized\n");
-#endif
+    LCD_Refresh(1);                 // 清 front（通过 swap）
+    WaitLayerSwapDone(1, 3);
+    LCD_Clear(1);                   // 再清 back（不 refresh 也行）
+    // 不要在这里画 HUD 到 Layer1 了
 }
 
 /* ============================================================================

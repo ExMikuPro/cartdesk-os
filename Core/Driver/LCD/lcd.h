@@ -33,6 +33,7 @@
 #define __LCD_H
 
 #include "../../Inc/main.h"
+#include "jbmono_thin_a8_20px.h"   // 例：W=18 H=38
 
 #ifdef __cplusplus
 extern "C" {
