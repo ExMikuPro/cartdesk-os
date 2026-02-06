@@ -1533,31 +1533,6 @@ void HAL_LTDC_LineEventCallback(LTDC_HandleTypeDef *hltdc_param) {
 // }
 
 
-// 选择一个字号：24/28/32 三选一
-#include "jbmono_thin_a8_20px.h"   // 例：W=18 H=38
-// #include "jbmono_a8_24px.h"
-// #include "jbmono_a8_32px.h"
-
-#include <stdint.h>
-#include <stddef.h>
-
-// 你的项目已有这些符号
-#ifndef LCD_W
-#define LCD_W 800
-#endif
-#ifndef LCD_H
-#define LCD_H 480
-#endif
-
-extern uint32_t *LCD_GetDrawFB(uint8_t Layer);
-extern void LCD_DrawRectFilledI32(uint8_t Layer, int x, int y, int w, int h, uint32_t argb);
-extern void DirtyMergeRect(uint8_t Layer, uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1);
-
-// JetBrains Mono 字格尺寸
-#define FONT_W JBMONO_W
-#define FONT_H JBMONO_H
-#define FONT_ADVANCE_X JBMONO_W  // 等宽：每个字符前进宽度=字格宽
-
 // 强制 A=FF（你之前也强调过 “A 必须 FF”）
 static inline uint32_t ARGB8888_Opaque(uint32_t c)
 {

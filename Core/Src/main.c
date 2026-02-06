@@ -736,8 +736,8 @@ int main(void)
     //     LCD_DrawRectOutline(1,10+(a*150),10,100,100,2,ARGB(0xFF, 0xAA, 0xAA, 0xAA));
     // }
 
-    HAL_Delay(2000);
-    while (1) {}
+    // HAL_Delay(2000);
+    // while (1) {}
     int selected_app = 0;
 
 
