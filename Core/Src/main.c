@@ -660,7 +660,7 @@ int main(void)
 
     /* 使能 LCD 显示 */
     HAL_GPIO_WritePin(BUZZER_GPIO_Port,BUZZER_Pin, GPIO_PIN_RESET); // 蜂鸣器高响低不响
-    LCD_DisplayON();
+
 
     LCD_DoubleBufferInit();
     // LCD_TearTest_Init();
@@ -730,9 +730,14 @@ int main(void)
     // HAL_Delay(2000);
     // int x = 0;
     Launcher_Init();
+
+    LCD_DisplayON();
     // for (int a = 0; a < 5; a++) {
     //     LCD_DrawRectOutline(1,10+(a*150),10,100,100,2,ARGB(0xFF, 0xAA, 0xAA, 0xAA));
     // }
+
+    HAL_Delay(2000);
+    while (1) {}
     int selected_app = 0;
 
 
