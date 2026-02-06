@@ -23,6 +23,7 @@
 #include "fatfs.h"
 #include "ltdc.h"
 #include "mdma.h"
+#include "quadspi.h"
 #include "sdmmc.h"
 #include "usart.h"
 #include "gpio.h"
@@ -644,39 +645,24 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_MDMA_Init();
-  MX_FMC_Init();
   MX_LTDC_Init();
+  MX_FMC_Init();
   MX_USART1_UART_Init();
   MX_SDMMC1_SD_Init();
   MX_FATFS_Init();
   MX_CRC_Init();
   MX_DMA2D_Init();
+  MX_QUADSPI_Init();
   /* USER CODE BEGIN 2 */
 
     /* 初始化 SDRAM */
     SDRAM_Init();
-
     // demo_crc();
-
     /* 使能 LCD 显示 */
-    HAL_GPIO_WritePin(BUZZER_GPIO_Port,BUZZER_Pin, GPIO_PIN_RESET); // 蜂鸣器高响低不响
-
-
-    LCD_DoubleBufferInit();
-    // LCD_TearTest_Init();
-
-    // ui_screen_launcher_init();
-    // ui_screen_launcher_set_on_launch(on_launch);
-    // ui_screen_launcher_enter();
-
-
-    // fatfs_min_test();
-    // lua_demo_blink();
-
-
-    // int i = 0;
-    // Launcher_Init();
-
+    // HAL_GPIO_WritePin(BUZZER_GPIO_Port,BUZZER_Pin, GPIO_PIN_RESET); // 蜂鸣器高响低不响
+    LCD_DoubleBufferInit(); // 双缓冲初始化
+    LCD_DisplayON(); // 开屏幕背光
+    Launcher_Init(); // 初始化选择器
     static uint8_t pa0_prev = 0, pc13_prev = 0;
 
 
@@ -730,17 +716,7 @@ int main(void)
     // HAL_Delay(2000);
     // int x = 0;
 
-    LCD_DisplayON();
-    Launcher_Init();
 
-
-    // while (1){}
-    // for (int a = 0; a < 5; a++) {
-    //     LCD_DrawRectOutline(1,10+(a*150),10,100,100,2,ARGB(0xFF, 0xAA, 0xAA, 0xAA));
-    // }
-
-    // HAL_Delay(2000);
-    // while (1) {}
     int selected_app = 0;
 
 
@@ -752,16 +728,6 @@ int main(void)
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
     while (1) {
-        // LCD_Clear(1);
-        // LCD_DrawRectOutline(1, x, 200, 100, 100, 3, 0xFFFF0000);
-        // LCD_Refresh(1);
-        //
-        // x += 10;
-        // if (x > 700) x = 0;
-        // HAL_Delay(16); // ~60fps
-        // LCD_TearTest_Loop();
-        // HAL_Delay(50);
-        /* LED 闪烁，指示系统运行 */
         uint8_t pa0  = (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_0)  == GPIO_PIN_SET);
         uint8_t pc13 = (HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13) == GPIO_PIN_SET);
 
@@ -837,6 +803,10 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
+
+  /** Enables the Clock Security System
+  */
+  HAL_RCC_EnableCSS();
 }
 
 /* USER CODE BEGIN 4 */
