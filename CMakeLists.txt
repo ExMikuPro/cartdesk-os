@@ -48,6 +48,7 @@ add_executable(${CMAKE_PROJECT_NAME}
         Core/Screen/Page/ui_screen_launcher.c
         Core/Screen/Page/ui_screen_launcher.h
         Core/Driver/LCD/jbmono_thin_a8_20px.h
+        Core/Screen/Page/jbm_el_20px.h
 
 )
 
