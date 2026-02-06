@@ -1331,370 +1331,366 @@ void HAL_LTDC_LineEventCallback(LTDC_HandleTypeDef *hltdc_param) {
     uint32_t line_event = hltdc_param->Init.AccumulatedActiveH + 1;
     HAL_LTDC_ProgramLineEvent(hltdc_param, line_event);
 }
-// // ============================================================================
-// // 字体绘制函数实现
-// // ============================================================================
-//
-// /**
-//  * @brief 绘制单个ASCII字符（8x16点阵）
-//  *
-//  * 性能优化策略：
-//  * 1. 如果有背景色：先用DMA2D快速填充8x16矩形背景
-//  * 2. 然后CPU绘制前景（只写需要的像素）
-//  * 3. 边界裁剪避免越界
-//  */
-// void LCD_DrawChar(uint8_t Layer, int X, int Y, char Char, uint32_t FgColor, uint32_t BgColor)
-// {
-//     // 检查字符范围
-//     if (Char < 0x20 || Char > 0x7E) return;
-//
-//     // 计算字体数据索引
-//     uint8_t char_index = Char - 0x20;
-//     const uint8_t *font_data = Font8x16_ASCII[char_index];
-//
-//     // 边界检查：完全在屏幕外
-//     if (X + 8 <= 0 || Y + 16 <= 0 || X >= LCD_W || Y >= LCD_H) return;
-//
-//     // 计算实际绘制范围（裁剪到屏幕内）
-//     int draw_x0 = (X < 0) ? 0 : X;
-//     int draw_y0 = (Y < 0) ? 0 : Y;
-//     int draw_x1 = (X + 8 > LCD_W) ? LCD_W - 1 : X + 7;
-//     int draw_y1 = (Y + 16 > LCD_H) ? LCD_H - 1 : Y + 15;
-//
-//     int draw_w = draw_x1 - draw_x0 + 1;
-//     int draw_h = draw_y1 - draw_y0 + 1;
-//
-//     if (draw_w <= 0 || draw_h <= 0) return;
-//
-//     // 步骤1: 如果有背景色，先用DMA2D填充背景
-//     if ((BgColor & 0xFF000000) != 0) {  // Alpha非0，有背景
-//         LCD_DrawRectFilledI32(Layer, X, Y, 8, 16, BgColor);
-//     }
-//
-//     // 步骤2: 绘制前景（字形）
-//     uint32_t *fb = LCD_GetDrawFB(Layer);
-//
-//     // 计算起始偏移（相对于字符左上角）
-//     int start_col = (X < 0) ? -X : 0;
-//     int start_row = (Y < 0) ? -Y : 0;
-//
-//     for (int row = start_row; row < 16 && (Y + row) < LCD_H; row++) {
-//         if ((Y + row) < 0) continue;
-//
-//         uint8_t row_data = font_data[row];
-//
-//         for (int col = start_col; col < 8 && (X + col) < LCD_W; col++) {
-//             if ((X + col) < 0) continue;
-//
-//             // 检查该位是否为1（前景）
-//             if (row_data & (0x80 >> col)) {
-//                 int px = X + col;
-//                 int py = Y + row;
-//                 fb[py * LCD_W + px] = FgColor;
-//             }
-//         }
-//     }
-//
-//     // 更新dirty rect
-//     extern void DirtyMergeRect(uint8_t Layer, uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1);
-//     DirtyMergeRect(Layer, draw_x0, draw_y0, draw_x1, draw_y1);
-// }
-//
-// /**
-//  * @brief 绘制字符串（8x16点阵）
-//  */
-// uint16_t LCD_DrawString(uint8_t Layer, int X, int Y, const char *Str, uint32_t FgColor, uint32_t BgColor)
-// {
-//     if (Str == NULL) return 0;
-//
-//     uint16_t count = 0;
-//     int cursor_x = X;
-//
-//     while (*Str) {
-//         char ch = *Str++;
-//
-//         // 只绘制可打印ASCII字符
-//         if (ch >= 0x20 && ch <= 0x7E) {
-//             LCD_DrawChar(Layer, cursor_x, Y, ch, FgColor, BgColor);
-//             cursor_x += 8;  // 每个字符8像素宽
-//             count++;
-//         }
-//     }
-//
-//     return count;
-// }
-//
-// /**
-//  * @brief 绘制整数（8x16点阵）
-//  */
-// uint16_t LCD_DrawInt(uint8_t Layer, int X, int Y, int32_t Value, uint32_t FgColor, uint32_t BgColor)
-// {
-//     char buffer[12];  // 足够容纳 -2147483648 + '\0'
-//
-//     // 转换为字符串
-//     if (Value == 0) {
-//         buffer[0] = '0';
-//         buffer[1] = '\0';
-//     } else {
-//         int is_negative = 0;
-//         if (Value < 0) {
-//             is_negative = 1;
-//             Value = -Value;
-//         }
-//
-//         char temp[12];
-//         int idx = 0;
-//
-//         while (Value > 0) {
-//             temp[idx++] = '0' + (Value % 10);
-//             Value /= 10;
-//         }
-//
-//         int buf_idx = 0;
-//         if (is_negative) {
-//             buffer[buf_idx++] = '-';
-//         }
-//
-//         // 反转
-//         for (int i = idx - 1; i >= 0; i--) {
-//             buffer[buf_idx++] = temp[i];
-//         }
-//         buffer[buf_idx] = '\0';
-//     }
-//
-//     return LCD_DrawString(Layer, X, Y, buffer, FgColor, BgColor);
-// }
-//
-// /**
-//  * @brief 绘制浮点数（8x16点阵）
-//  */
-// uint16_t LCD_DrawFloat(uint8_t Layer, int X, int Y, float Value, uint8_t Decimals, uint32_t FgColor, uint32_t BgColor)
-// {
-//     if (Decimals > 6) Decimals = 6;
-//
-//     char buffer[24];
-//
-//     // 简单的浮点转字符串（避免依赖sprintf）
-//     int is_negative = 0;
-//     if (Value < 0) {
-//         is_negative = 1;
-//         Value = -Value;
-//     }
-//
-//     // 整数部分
-//     int32_t int_part = (int32_t)Value;
-//     float frac_part = Value - (float)int_part;
-//
-//     // 构建字符串
-//     char temp[24];
-//     int idx = 0;
-//
-//     // 整数部分
-//     if (int_part == 0) {
-//         temp[idx++] = '0';
-//     } else {
-//         char int_temp[12];
-//         int int_idx = 0;
-//         int32_t val = int_part;
-//         while (val > 0) {
-//             int_temp[int_idx++] = '0' + (val % 10);
-//             val /= 10;
-//         }
-//         for (int i = int_idx - 1; i >= 0; i--) {
-//             temp[idx++] = int_temp[i];
-//         }
-//     }
-//
-//     // 小数点
-//     if (Decimals > 0) {
-//         temp[idx++] = '.';
-//
-//         // 小数部分
-//         for (uint8_t i = 0; i < Decimals; i++) {
-//             frac_part *= 10;
-//             int digit = (int)frac_part;
-//             temp[idx++] = '0' + digit;
-//             frac_part -= digit;
-//         }
-//     }
-//
-//     // 添加符号
-//     int buf_idx = 0;
-//     if (is_negative) {
-//         buffer[buf_idx++] = '-';
-//     }
-//
-//     for (int i = 0; i < idx; i++) {
-//         buffer[buf_idx++] = temp[i];
-//     }
-//     buffer[buf_idx] = '\0';
-//
-//     return LCD_DrawString(Layer, X, Y, buffer, FgColor, BgColor);
-// }
+/* ============================================================================
+ *                         内联辅助函数（颜色处理）
+ * ============================================================================ */
 
-
-// 强制 A=FF（你之前也强调过 “A 必须 FF”）
+/**
+ * @brief 强制设置颜色的Alpha通道为255（完全不透明）
+ * @param c 输入颜色值（ARGB8888格式）
+ * @return 强制Alpha=0xFF的颜色值
+ * @note 用于确保绘制的颜色完全不透明，避免LTDC混合问题
+ */
 static inline uint32_t ARGB8888_Opaque(uint32_t c)
 {
     return 0xFF000000u | (c & 0x00FFFFFFu);
 }
 
-// dst over fg，a=0..255（a 已经包含 fgA 调制之后）
+/**
+ * @brief Alpha混合函数（前景色叠加到背景色）
+ * @param dst 背景色（ARGB8888，目标像素当前颜色）
+ * @param fg_rgb_opaque 前景色RGB（已确保Alpha=0xFF）
+ * @param a 混合Alpha值（0~255）：0=完全透明，255=完全不透明
+ * @return 混合后的颜色值（ARGB8888）
+ *
+ * 混合公式（Porter-Duff "Source Over"）：
+ *   result = dst * (1 - a/255) + fg * (a/255)
+ *
+ * 优化点：
+ * - 快速路径处理a==0和a==255的极端情况
+ * - 使用+127技巧实现四舍五入除法（比直接除法更接近真实结果）
+ */
 static inline uint32_t BlendOver_ARGB8888(uint32_t dst, uint32_t fg_rgb_opaque, uint8_t a)
 {
-    if (a == 0)   return dst;
+    // 快速路径1：完全透明，直接返回背景色
+    if (a == 0) return dst;
+
+    // 快速路径2：完全不透明，直接返回前景色
     if (a == 255) return fg_rgb_opaque;
 
-    uint32_t dr = (dst >> 16) & 0xFF, dg = (dst >> 8) & 0xFF, db = dst & 0xFF;
-    uint32_t fr = (fg_rgb_opaque >> 16) & 0xFF, fg = (fg_rgb_opaque >> 8) & 0xFF, fb = fg_rgb_opaque & 0xFF;
+    // 一般路径：执行Alpha混合
+    // 分离背景色的RGB分量
+    uint32_t dr = (dst >> 16) & 0xFF;  // 背景红色分量
+    uint32_t dg = (dst >> 8) & 0xFF;   // 背景绿色分量
+    uint32_t db = dst & 0xFF;          // 背景蓝色分量
 
+    // 分离前景色的RGB分量
+    uint32_t fr = (fg_rgb_opaque >> 16) & 0xFF;  // 前景红色分量
+    uint32_t fg = (fg_rgb_opaque >> 8) & 0xFF;   // 前景绿色分量
+    uint32_t fb = fg_rgb_opaque & 0xFF;          // 前景蓝色分量
+
+    // 计算反向Alpha（用于背景色权重）
     uint32_t ia = 255u - a;
+
+    // 混合RGB分量（+127是四舍五入技巧，避免截断误差）
     uint32_t r = (dr * ia + fr * a + 127u) / 255u;
     uint32_t g = (dg * ia + fg * a + 127u) / 255u;
     uint32_t b = (db * ia + fb * a + 127u) / 255u;
 
+    // 重新组装ARGB8888颜色值（Alpha强制为0xFF）
     return 0xFF000000u | (r << 16) | (g << 8) | b;
 }
 
+/* ============================================================================
+ *                         字符绘制核心函数
+ * ============================================================================ */
+
 /**
  * @brief 绘制单个ASCII字符（JetBrains Mono A8 alpha mask）
+ * @param Layer 图层索引（0/1）
+ * @param X 字符左上角X坐标（可以为负数或超出屏幕，会自动裁剪）
+ * @param Y 字符左上角Y坐标（可以为负数或超出屏幕，会自动裁剪）
+ * @param Char ASCII字符（0x20~0x7E，即空格到'~'）
+ * @param FgColor 前景色（字符颜色，ARGB8888）
+ *                - RGB：字符的显示颜色
+ *                - Alpha：用于调制字体的Alpha值（0=完全透明，255=完全不透明）
+ * @param BgColor 背景色（字符背景，ARGB8888）
+ *                - Alpha!=0：先填充矩形背景，再绘制字符
+ *                - Alpha==0：透明背景模式，不填充背景
  *
- * 规则：
- * - BgColor: Alpha!=0 -> 先填背景；Alpha==0 -> 透明背景（不填）
- * - FgColor: 使用其 RGB；其 Alpha 会与 glyph alpha 相乘作为最终混合 alpha
+ * 工作流程：
+ * 1. 验证字符有效性（仅支持ASCII可打印字符）
+ * 2. 提前退出优化（字符完全在屏幕外）
+ * 3. 可选背景填充（如果BgColor的Alpha!=0）
+ * 4. Alpha混合绘制字符前景（使用字体的A8 alpha mask）
+ * 5. 更新脏矩形区域（用于后续DCache清理优化）
+ *
+ * 技术细节：
+ * - 使用JetBrains Mono字体的A8格式（每像素1字节Alpha）
+ * - 快慢路径分离：字符完全在屏幕内时使用快速路径（无边界检查）
+ * - 字符部分在屏幕外时使用慢速路径（逐像素裁剪）
  */
 void LCD_DrawChar(uint8_t Layer, int X, int Y, char Char, uint32_t FgColor, uint32_t BgColor)
 {
-    // 只支持可打印 ASCII（你生成的字库是 0x20..0x7E）
+    /* ====== 阶段1：输入验证和提前退出 ====== */
+
+    // 只支持可打印ASCII字符（字库范围：0x20空格 到 0x7E波浪号）
     uint8_t uc = (uint8_t)Char;
-    if (uc < JBMONO_FIRST || uc > JBMONO_LAST) return;
-
-    // 完全在屏幕外：快速退出
-    if (X + FONT_W <= 0 || Y + FONT_H <= 0 || X >= LCD_W || Y >= LCD_H) return;
-
-    // 计算实际绘制范围（裁剪到屏幕内）
-    int draw_x0 = (X < 0) ? 0 : X;
-    int draw_y0 = (Y < 0) ? 0 : Y;
-    int draw_x1 = (X + FONT_W > LCD_W) ? (LCD_W - 1) : (X + FONT_W - 1);
-    int draw_y1 = (Y + FONT_H > LCD_H) ? (LCD_H - 1) : (Y + FONT_H - 1);
-
-    int draw_w = draw_x1 - draw_x0 + 1;
-    int draw_h = draw_y1 - draw_y0 + 1;
-    if (draw_w <= 0 || draw_h <= 0) return;
-
-    // glyph alpha mask
-    const uint8_t *glyph = JBMono_GlyphA8((char)uc);
-
-    // Step1: 背景（如果 alpha != 0）
-    if ((BgColor & 0xFF000000u) != 0u) {
-        uint32_t bg = ARGB8888_Opaque(BgColor);
-        LCD_DrawRectFilledI32(Layer, X, Y, FONT_W, FONT_H, bg);
-        // 如果你的 RectFilled 不负责 dirty，这里兜底 merge 一下
-        DirtyMergeRect(Layer, (uint16_t)draw_x0, (uint16_t)draw_y0, (uint16_t)draw_x1, (uint16_t)draw_y1);
+    if (uc < JBMONO_FIRST || uc > JBMONO_LAST) {
+        return;  // 字符不在支持范围内，直接退出
     }
 
-    // Step2: 前景（A8 alpha 混合）
+    // 提前退出优化：字符完全在屏幕外（任意边界）
+    // 这避免了后续所有计算和内存访问
+    if (X + FONT_W <= 0 || Y + FONT_H <= 0 || X >= LCD_W || Y >= LCD_H) {
+        return;  // 字符完全不可见，无需绘制
+    }
+
+    /* ====== 阶段2：计算可见区域（用于裁剪和脏矩形） ====== */
+
+    // 计算字符在屏幕上的实际可见范围
+    int draw_x0 = (X < 0) ? 0 : X;                                    // 可见区域左边界
+    int draw_y0 = (Y < 0) ? 0 : Y;                                    // 可见区域上边界
+    int draw_x1 = (X + FONT_W > LCD_W) ? (LCD_W - 1) : (X + FONT_W - 1);  // 可见区域右边界
+    int draw_y1 = (Y + FONT_H > LCD_H) ? (LCD_H - 1) : (Y + FONT_H - 1);  // 可见区域下边界
+
+    // 计算可见区域的宽高
+    int draw_w = draw_x1 - draw_x0 + 1;
+    int draw_h = draw_y1 - draw_y0 + 1;
+
+    // 二次验证：可见区域无效（理论上不应到达此处）
+    if (draw_w <= 0 || draw_h <= 0) {
+        return;
+    }
+
+    /* ====== 阶段3：获取字体Alpha Mask数据 ====== */
+
+    // 获取该字符的A8 alpha mask指针
+    // A8格式：每个像素1字节，值0~255表示透明度（0=完全透明，255=完全不透明）
+    const uint8_t *glyph = JBMono_GlyphA8((char)uc);
+
+    /* ====== 阶段4：背景填充（可选） ====== */
+
+    // 检查背景色的Alpha通道，判断是否需要填充背景
+    if ((BgColor & 0xFF000000u) != 0u) {
+        // 背景不透明，先用DMA2D填充矩形背景
+        uint32_t bg = ARGB8888_Opaque(BgColor);  // 强制Alpha=0xFF
+        LCD_DrawRectFilledI32(Layer, X, Y, FONT_W, FONT_H, bg);
+
+        // 兜底更新脏矩形（如果DrawRectFilledI32内部没有处理）
+        // 这确保后续的DCache清理能覆盖到背景区域
+        DirtyMergeRect(Layer, (uint16_t)draw_x0, (uint16_t)draw_y0,
+                       (uint16_t)draw_x1, (uint16_t)draw_y1);
+    }
+
+    /* ====== 阶段5：前景字符Alpha混合绘制 ====== */
+
+    // 获取当前图层的绘制帧缓冲指针（back buffer）
     uint32_t *fb = LCD_GetDrawFB(Layer);
 
-    uint8_t  fgA = (uint8_t)(FgColor >> 24);              // 用来调制 glyph alpha
-    if (fgA == 0) return;                                 // 完全透明前景，直接结束
-    uint32_t fgRGB = ARGB8888_Opaque(FgColor);            // 强制 A=FF（只用 RGB）
+    // 提取前景色的Alpha通道（用于调制字体的Alpha）
+    uint8_t fgA = (uint8_t)(FgColor >> 24);
+    if (fgA == 0) {
+        return;  // 前景完全透明，无需绘制字符
+    }
 
-    // 快路径：完全在屏内，无需每像素边界判断
+    // 获取前景色的RGB分量（强制Alpha=0xFF，用于混合计算）
+    uint32_t fgRGB = ARGB8888_Opaque(FgColor);
+
+    /* ====== 路径选择：快速路径 vs 慢速路径 ====== */
+
+    // 快速路径：字符完全在屏幕内（无需逐像素边界检查）
+    // 判断条件：左上角在有效范围内 且 右下角不会超出屏幕
     if ((unsigned)X <= (unsigned)(LCD_W - FONT_W) &&
         (unsigned)Y <= (unsigned)(LCD_H - FONT_H))
     {
+        /* ========== 快速路径实现 ========== */
+        // 优点：无边界检查，循环更紧凑，性能更高
+        // 适用场景：屏幕中央区域绘制字符（最常见情况）
+
         for (int row = 0; row < FONT_H; row++) {
+            // 计算当前行的目标缓冲区指针
             uint32_t *dst = fb + (Y + row) * LCD_W + X;
+
+            // 获取当前行的字体Alpha数据指针
             const uint8_t *a8 = glyph + row * FONT_W;
+
+            // 遍历当前行的所有像素
             for (int col = 0; col < FONT_W; col++) {
+                // 获取字体Alpha值
                 uint8_t a = a8[col];
+
+                // 跳过完全透明的像素（优化：避免不必要的混合计算）
                 if (!a) continue;
-                if (fgA != 255) a = (uint8_t)((uint32_t)a * fgA / 255u);
+
+                // 如果前景色本身有透明度，需要调制字体Alpha
+                // 公式：最终Alpha = 字体Alpha × 前景Alpha / 255
+                if (fgA != 255) {
+                    a = (uint8_t)((uint32_t)a * fgA / 255u);
+                }
+
+                // 执行Alpha混合：将前景色混合到背景色
                 dst[col] = BlendOver_ARGB8888(dst[col], fgRGB, a);
             }
         }
-    } else {
-        // 慢路径：带裁剪
-        int start_col = (X < 0) ? -X : 0;
-        int start_row = (Y < 0) ? -Y : 0;
+    }
+    else
+    {
+        /* ========== 慢速路径实现（带边界裁剪） ========== */
+        // 用于字符部分超出屏幕的情况
+        // 需要逐像素检查边界，性能较低但正确处理边缘情况
 
+        // 计算字体内部的起始行列（处理负坐标情况）
+        int start_col = (X < 0) ? -X : 0;  // 字符左边被裁剪时，从第几列开始绘制
+        int start_row = (Y < 0) ? -Y : 0;  // 字符上边被裁剪时，从第几行开始绘制
+
+        // 遍历字体的可见行
         for (int row = start_row; row < FONT_H && (Y + row) < LCD_H; row++) {
-            int py = Y + row;
-            if (py < 0) continue;
+            int py = Y + row;  // 屏幕Y坐标
+            if (py < 0) continue;  // 仍在屏幕上方，跳过
 
+            // 获取当前行的目标缓冲区起始指针
             uint32_t *dst = fb + py * LCD_W;
+
+            // 获取当前行的字体Alpha数据指针
             const uint8_t *a8 = glyph + row * FONT_W;
 
+            // 遍历当前行的可见列
             for (int col = start_col; col < FONT_W && (X + col) < LCD_W; col++) {
-                int px = X + col;
-                if (px < 0) continue;
+                int px = X + col;  // 屏幕X坐标
+                if (px < 0) continue;  // 仍在屏幕左侧，跳过
 
+                // 获取字体Alpha值
                 uint8_t a = a8[col];
-                if (!a) continue;
-                if (fgA != 255) a = (uint8_t)((uint32_t)a * fgA / 255u);
 
+                // 跳过完全透明的像素
+                if (!a) continue;
+
+                // 调制前景色Alpha（如果需要）
+                if (fgA != 255) {
+                    a = (uint8_t)((uint32_t)a * fgA / 255u);
+                }
+
+                // 执行Alpha混合
                 uint32_t *p = &dst[px];
                 *p = BlendOver_ARGB8888(*p, fgRGB, a);
             }
         }
     }
 
-    // dirty rect
-    DirtyMergeRect(Layer, (uint16_t)draw_x0, (uint16_t)draw_y0, (uint16_t)draw_x1, (uint16_t)draw_y1);
+    /* ====== 阶段6：更新脏矩形区域 ====== */
+
+    // 记录本次绘制的矩形区域，用于后续优化DCache清理范围
+    // 只清理实际修改的内存区域，而不是整个帧缓冲
+    DirtyMergeRect(Layer, (uint16_t)draw_x0, (uint16_t)draw_y0,
+                   (uint16_t)draw_x1, (uint16_t)draw_y1);
 }
+
+/* ============================================================================
+ *                         字符串绘制函数
+ * ============================================================================ */
 
 /**
  * @brief 绘制字符串（支持 \n 换行）
+ * @param Layer 图层索引（0/1）
+ * @param X 字符串起始X坐标（像素）
+ * @param Y 字符串起始Y坐标（像素）
+ * @param Str 字符串指针（以'\0'结尾，支持'\n'换行符）
+ * @param FgColor 前景色（字符颜色，ARGB8888）
+ * @param BgColor 背景色（字符背景，ARGB8888）
+ * @return 绘制的字符数量（不包括换行符）
  *
- * 优化点：如果 BgColor alpha != 0，会按“每行”先 DMA2D 填一次整行背景，
- * 然后每个字符用透明背景绘前景，避免每个字都 Fill 一次。
+ * 优化策略：
+ * 1. 批量背景填充：统计每行字符数，一次性填充整行背景（减少DMA2D调用）
+ * 2. 透明前景绘制：背景填充后，所有字符用透明背景模式绘制前景
+ * 3. 换行支持：遇到'\n'时重置X坐标，Y坐标增加字体高度
+ *
+ * 性能对比：
+ * - 优化前：每个字符调用一次背景填充 → N次DMA2D操作
+ * - 优化后：每行调用一次背景填充 → 行数次DMA2D操作
  */
-uint16_t LCD_DrawString(uint8_t Layer, int X, int Y, const char *Str, uint32_t FgColor, uint32_t BgColor)
+uint16_t LCD_DrawString(uint8_t Layer, int X, int Y, const char *Str,
+                        uint32_t FgColor, uint32_t BgColor)
 {
+    // 输入验证
     if (!Str) return 0;
 
-    uint16_t count = 0;
-    int cursor_x = X;
-    int cursor_y = Y;
+    uint16_t count = 0;     // 绘制的字符计数
+    int cursor_x = X;       // 当前绘制位置X（会随字符前进）
+    int cursor_y = Y;       // 当前绘制位置Y（换行时更新）
+
+    /* ====== 主循环：逐行处理字符串 ====== */
 
     while (*Str) {
-        // 处理换行
-        if (*Str == '\r') { Str++; continue; }
-        if (*Str == '\n') { Str++; cursor_x = X; cursor_y += FONT_H; continue; }
+        /* ------ 处理控制字符（换行） ------ */
 
-        // 先统计这一行可打印字符数，用于一次性填背景
+        // 忽略回车符（Windows风格的\r\n）
+        if (*Str == '\r') {
+            Str++;
+            continue;
+        }
+
+        // 处理换行符
+        if (*Str == '\n') {
+            Str++;
+            cursor_x = X;               // 重置到行首
+            cursor_y += FONT_H;         // 移动到下一行
+            continue;
+        }
+
+        /* ------ 批量背景填充优化 ------ */
+
+        // 检查背景色是否需要填充（Alpha != 0）
         if ((BgColor & 0xFF000000u) != 0u) {
+            // 预扫描：统计当前行有多少个可打印字符
             const char *p = Str;
-            int n = 0;
+            int n = 0;  // 可打印字符计数
+
+            // 扫描直到行尾或字符串结束
             while (*p && *p != '\n' && *p != '\r') {
                 uint8_t uc = (uint8_t)*p;
-                if (uc >= JBMONO_FIRST && uc <= JBMONO_LAST) n++;
+                // 只统计字库支持的字符
+                if (uc >= JBMONO_FIRST && uc <= JBMONO_LAST) {
+                    n++;
+                }
                 p++;
             }
-            if (n > 0) {
-                uint32_t bg = ARGB8888_Opaque(BgColor);
-                LCD_DrawRectFilledI32(Layer, cursor_x, cursor_y, n * FONT_ADVANCE_X, FONT_H, bg);
 
-                // dirty（兜底）
+            // 如果本行有字符，批量填充背景
+            if (n > 0) {
+                // 强制背景色Alpha=0xFF（确保完全不透明）
+                uint32_t bg = ARGB8888_Opaque(BgColor);
+
+                // 一次性填充整行背景矩形
+                // 宽度 = 字符数 × 字符前进宽度
+                LCD_DrawRectFilledI32(Layer, cursor_x, cursor_y,
+                                     n * FONT_ADVANCE_X, FONT_H, bg);
+
+                /* 兜底更新脏矩形（如果DrawRectFilledI32未处理） */
+
+                // 计算实际绘制范围（裁剪到屏幕内）
                 int x0 = cursor_x < 0 ? 0 : cursor_x;
                 int y0 = cursor_y < 0 ? 0 : cursor_y;
                 int x1 = cursor_x + n * FONT_ADVANCE_X - 1;
                 int y1 = cursor_y + FONT_H - 1;
+
+                // 裁剪到屏幕边界
                 if (x1 >= LCD_W) x1 = LCD_W - 1;
                 if (y1 >= LCD_H) y1 = LCD_H - 1;
+
+                // 确保范围有效且与屏幕有交集
                 if (x0 < LCD_W && y0 < LCD_H && x1 >= 0 && y1 >= 0) {
-                    DirtyMergeRect(Layer, (uint16_t)x0, (uint16_t)y0, (uint16_t)x1, (uint16_t)y1);
+                    DirtyMergeRect(Layer, (uint16_t)x0, (uint16_t)y0,
+                                  (uint16_t)x1, (uint16_t)y1);
                 }
             }
         }
 
-        // 逐字符画前景（把 BgColor 设为透明，避免重复填背景）
+        /* ------ 绘制字符前景 ------ */
+
+        // 遍历当前行的所有字符，逐个绘制前景
         while (*Str && *Str != '\n' && *Str != '\r') {
             char ch = *Str++;
             uint8_t uc = (uint8_t)ch;
+
+            // 只绘制字库支持的字符
             if (uc >= JBMONO_FIRST && uc <= JBMONO_LAST) {
-                LCD_DrawChar(Layer, cursor_x, cursor_y, ch, FgColor, 0x00000000u);
+                // 使用透明背景模式绘制字符（0x00000000）
+                // 因为背景已经在上面批量填充过了
+                LCD_DrawChar(Layer, cursor_x, cursor_y, ch,
+                            FgColor, 0x00000000u);
+
+                // 光标前进（等宽字体，每个字符前进固定宽度）
                 cursor_x += FONT_ADVANCE_X;
                 count++;
             }
@@ -1704,72 +1700,168 @@ uint16_t LCD_DrawString(uint8_t Layer, int X, int Y, const char *Str, uint32_t F
     return count;
 }
 
+/* ============================================================================
+ *                         数字绘制函数
+ * ============================================================================ */
+
 /**
  * @brief 绘制整数
- * 修复了 INT32_MIN 取反溢出的问题
+ * @param Layer 图层索引（0/1）
+ * @param X 数字起始X坐标（像素）
+ * @param Y 数字起始Y坐标（像素）
+ * @param Value 整数值（支持负数，范围：INT32_MIN ~ INT32_MAX）
+ * @param FgColor 前景色（数字颜色，ARGB8888）
+ * @param BgColor 背景色（数字背景，ARGB8888）
+ * @return 绘制的字符数量（包括负号）
+ *
+ * 实现细节：
+ * - 使用64位中间变量避免INT32_MIN取反溢出问题
+ * - 逆序提取数字，然后反转到正序
+ * - 最终调用LCD_DrawString绘制
  */
-uint16_t LCD_DrawInt(uint8_t Layer, int X, int Y, int32_t Value, uint32_t FgColor, uint32_t BgColor)
+uint16_t LCD_DrawInt(uint8_t Layer, int X, int Y, int32_t Value,
+                     uint32_t FgColor, uint32_t BgColor)
 {
-    char buffer[12];
+    char buffer[12];  // 足够容纳 "-2147483648\0"
 
+    /* ====== 处理符号和转换为无符号数 ====== */
+
+    // 使用64位避免INT32_MIN (-2147483648) 取反溢出
+    // 因为 -INT32_MIN 会溢出32位范围
     int64_t v = (int64_t)Value;
-    uint32_t u;
-    int neg = 0;
-    if (v < 0) { neg = 1; u = (uint32_t)(-v); } else { u = (uint32_t)v; }
+    uint32_t u;      // 绝对值（无符号）
+    int neg = 0;     // 负数标志
 
-    int idx = 0;
+    if (v < 0) {
+        neg = 1;
+        u = (uint32_t)(-v);  // 安全：64位取反后转32位
+    } else {
+        u = (uint32_t)v;
+    }
+
+    /* ====== 数字转字符串 ====== */
+
+    int idx = 0;  // buffer填充位置
+
+    // 特殊情况：0
     if (u == 0) {
         buffer[idx++] = '0';
-    } else {
-        char tmp[10];
-        int t = 0;
-        while (u > 0) { tmp[t++] = (char)('0' + (u % 10u)); u /= 10u; }
-        if (neg) buffer[idx++] = '-';
-        while (t--) buffer[idx++] = tmp[t];
     }
-    buffer[idx] = '\0';
-
-    return LCD_DrawString(Layer, X, Y, buffer, FgColor, BgColor);
-}
-
-/**
- * @brief 绘制浮点数（简单版：截断，不做四舍五入）
- */
-uint16_t LCD_DrawFloat(uint8_t Layer, int X, int Y, float Value, uint8_t Decimals, uint32_t FgColor, uint32_t BgColor)
-{
-    if (Decimals > 6) Decimals = 6;
-
-    char buffer[32];
-    int idx = 0;
-
-    if (Value < 0) { buffer[idx++] = '-'; Value = -Value; }
-
-    int32_t int_part = (int32_t)Value;
-    float frac_part = Value - (float)int_part;
-
-    // int_part -> string
-    char itmp[12];
-    int ilen = 0;
-    if (int_part == 0) itmp[ilen++] = '0';
     else {
-        int32_t v = int_part;
-        while (v > 0) { itmp[ilen++] = (char)('0' + (v % 10)); v /= 10; }
-    }
-    for (int i = ilen - 1; i >= 0; i--) buffer[idx++] = itmp[i];
+        // 一般情况：逆序提取每一位数字
+        char tmp[10];  // 临时存储逆序数字（最多10位）
+        int t = 0;
 
-    if (Decimals) {
-        buffer[idx++] = '.';
-        for (uint8_t i = 0; i < Decimals; i++) {
-            frac_part *= 10.0f;
-            int d = (int)frac_part;
-            buffer[idx++] = (char)('0' + d);
-            frac_part -= (float)d;
+        // 提取数字（从低位到高位）
+        while (u > 0) {
+            tmp[t++] = (char)('0' + (u % 10u));
+            u /= 10u;
+        }
+
+        // 添加负号（如果需要）
+        if (neg) {
+            buffer[idx++] = '-';
+        }
+
+        // 反转数字到正序
+        while (t > 0) {
+            buffer[idx++] = tmp[--t];
         }
     }
 
+    // 字符串结束符
     buffer[idx] = '\0';
+
+    /* ====== 调用字符串绘制函数 ====== */
+
     return LCD_DrawString(Layer, X, Y, buffer, FgColor, BgColor);
 }
 
+/**
+ * @brief 绘制浮点数（简单版：截断法，不进行四舍五入）
+ * @param Layer 图层索引（0/1）
+ * @param X 数字起始X坐标（像素）
+ * @param Y 数字起始Y坐标（像素）
+ * @param Value 浮点数值
+ * @param Decimals 小数位数（0-6，超过6会被限制为6）
+ * @param FgColor 前景色（数字颜色，ARGB8888）
+ * @param BgColor 背景色（数字背景，ARGB8888）
+ * @return 绘制的字符数量
+ *
+ * 实现细节：
+ * - 将浮点数分为整数部分和小数部分分别处理
+ * - 小数部分通过连续乘10提取每一位
+ * - 不进行四舍五入，直接截断（提升性能）
+ *
+ * 注意：
+ * - 小数位数过多可能导致浮点精度问题
+ * - 对于需要精确舍入的场景，建议使用sprintf替代
+ */
+uint16_t LCD_DrawFloat(uint8_t Layer, int X, int Y, float Value,
+                       uint8_t Decimals, uint32_t FgColor, uint32_t BgColor)
+{
+    // 限制小数位数（避免缓冲区溢出和浮点精度问题）
+    if (Decimals > 6) {
+        Decimals = 6;
+    }
 
+    char buffer[32];  // 足够容纳浮点数字符串
+    int idx = 0;      // buffer填充位置
 
+    /* ====== 处理负号 ====== */
+
+    if (Value < 0) {
+        buffer[idx++] = '-';
+        Value = -Value;  // 转为正数处理
+    }
+
+    /* ====== 分离整数部分和小数部分 ====== */
+
+    int32_t int_part = (int32_t)Value;           // 整数部分
+    float frac_part = Value - (float)int_part;   // 小数部分
+
+    /* ====== 整数部分转字符串 ====== */
+
+    char itmp[12];  // 临时存储逆序整数
+    int ilen = 0;
+
+    // 特殊情况：整数部分为0
+    if (int_part == 0) {
+        itmp[ilen++] = '0';
+    }
+    else {
+        // 一般情况：逆序提取整数部分的每一位
+        int32_t v = int_part;
+        while (v > 0) {
+            itmp[ilen++] = (char)('0' + (v % 10));
+            v /= 10;
+        }
+    }
+
+    // 反转整数部分到正序
+    for (int i = ilen - 1; i >= 0; i--) {
+        buffer[idx++] = itmp[i];
+    }
+
+    /* ====== 小数部分处理 ====== */
+
+    if (Decimals > 0) {
+        // 添加小数点
+        buffer[idx++] = '.';
+
+        // 逐位提取小数
+        for (uint8_t i = 0; i < Decimals; i++) {
+            frac_part *= 10.0f;           // 左移一位小数
+            int d = (int)frac_part;       // 取整数部分（当前位）
+            buffer[idx++] = (char)('0' + d);
+            frac_part -= (float)d;        // 移除已提取的位
+        }
+    }
+
+    // 字符串结束符
+    buffer[idx] = '\0';
+
+    /* ====== 调用字符串绘制函数 ====== */
+
+    return LCD_DrawString(Layer, X, Y, buffer, FgColor, BgColor);
+}

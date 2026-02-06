@@ -1,17 +1,18 @@
 /**
- * @file    ui_screen_launcher_fixed.c
- * @brief   修复"方格错位"问题的Launcher（i=4或12→1时）
+ * @file    ui_screen_launcher_no_outline.c
+ * @brief   无描边Switch样式Launcher - 优化文字渲染
  *
- * 修复要点：
- * 1. 等待上一帧swap完成再开始绘制
- * 2. 添加调试信息辅助诊断
- * 3. 超时保护避免死锁
+ * 优化要点：
+ * 1. 确保文字使用完全不透明的前景色（Alpha=0xFF）
+ * 2. 清除文字区域背景避免混合产生暗边
+ * 3. 可选：增加文字亮度/对比度
  */
 
-#include "ui_screen_launcher.h"
+#include "jbm_el_20px.h"
 #include "../../Driver/LCD/lcd.h"
 #include <stdbool.h>
 #include <stdint.h>
+#include <string.h>
 
 /* ============================================================================
  *                           配置常量
@@ -32,20 +33,49 @@
 #define OUT_H     206
 #define OUT_TH    3
 
-#define COL_SEL   0xFF3DCCA3u
-#define COL_NOR   0xFFF9F9F9u
+// 文字配置（优化渲染）
+#define TEXT_Y_OFFSET   (OUT_Y - 35)        // 文字位置：图标上方35像素
+#define TEXT_COLOR      0xFF3DCCA3u         // 文字颜色（青绿色，Alpha必须=0xFF）
+#define TEXT_BG_COLOR   0x00000000u         // 透明背景
+
+// 可选：如果觉得颜色太暗，可以尝试更亮的青色
+// #define TEXT_COLOR   0xFF4DFFB8u         // 更亮的青绿色
+// #define TEXT_COLOR   0xFF5FFFD0u         // 非常亮的青色
+// #define TEXT_COLOR   0xFF00FFFF u         // 纯青色（最亮）
+
+#define COL_SEL   0xFF3DCCA3u               // 选中框颜色
+#define COL_NOR   0xFFF9F9F9u               // 未选中框颜色
 
 #define LEFT_PAD  (OUT_X)
 #define RIGHT_PAD ((float)LCD_W - OUT_X - (float)OUT_W)
 
-#define CLEAR_Y   (OUT_Y - 4)
-#define CLEAR_H   (OUT_H + 8)
+#define CLEAR_Y   (TEXT_Y_OFFSET - 5)
+#define CLEAR_H   (OUT_H + OUT_Y - TEXT_Y_OFFSET + 10)
 
 #define ANIM_STIFFNESS  58.0f
 #define ANIM_THRESHOLD  0.5f
 
-// ✅ 新增：调试开关
-#define DEBUG_MISALIGNMENT  0  // 设为1启用调试信息
+// 调试开关
+#define DEBUG_MISALIGNMENT  0
+
+/* ============================================================================
+ *                           应用名称数据
+ * ============================================================================ */
+
+static const char* APP_NAMES[N_APPS] = {
+    "Settings",     // 0:  设置
+    "Gallery",      // 1:  相册
+    "Music",        // 2:  音乐
+    "Video",        // 3:  视频
+    "Browser",      // 4:  浏览器
+    "Files",        // 5:  文件管理
+    "Calendar",     // 6:  日历
+    "Clock",        // 7:  时钟
+    "Weather",      // 8:  天气
+    "Calculator",   // 9:  计算器
+    "Notes",        // 10: 笔记
+    "Camera"        // 11: 相机
+};
 
 /* ============================================================================
  *                           辅助函数
@@ -55,16 +85,46 @@ static inline float f_abs(float x) {
     return (x < 0.0f) ? -x : x;
 }
 
+/**
+ * @brief 计算字符串长度（只统计可打印ASCII字符）
+ */
+static int GetStringLength(const char *str)
+{
+    if (!str) return 0;
+
+    int count = 0;
+    const char *p = str;
+    while (*p) {
+        uint8_t c = (uint8_t)*p;
+        if (c >= 0x20 && c <= 0x7E) {
+            count++;
+        }
+        p++;
+    }
+    return count;
+}
+
+/**
+ * @brief 计算字符串居中显示的X坐标
+ */
+static int CalcCenteredTextX(const char *str, int center_x)
+{
+    int char_count = GetStringLength(str);
+    int text_width = char_count * FONT_ADVANCE_X;
+    return center_x - (text_width / 2);
+}
+
+/**
+ * @brief 绘制HUD
+ */
 static void Launcher_DrawHUD(uint8_t layer)
 {
-    LCD_DrawHLine(layer, 20, 420, 759, LCD_COLOR_BLACK);           // 底部分割线
-
-    LCD_DrawString(layer, 600, 35, "12:34", LCD_COLOR_BLACK, 0);   // 时间
-    LCD_DrawString(layer, 675, 35, "100%",  LCD_COLOR_BLACK, 0);   // 电量文字
-
-    LCD_DrawRectFilled(layer, 735, 44, 20,  9, LCD_COLOR_BLACK);   // 电池内电量
-    LCD_DrawRectOutline(layer,730, 39, 30, 19, 3, LCD_COLOR_BLACK);// 电池外框
-    LCD_DrawRectFilled(layer, 760, 44,  3,  9, LCD_COLOR_BLACK);   // 电池凸起
+    LCD_DrawHLine(layer, 20, 420, 759, LCD_COLOR_BLACK);
+    LCD_DrawString(layer, 600, 35, "12:34", LCD_COLOR_BLACK, 0);
+    LCD_DrawString(layer, 675, 35, "100%",  LCD_COLOR_BLACK, 0);
+    LCD_DrawRectFilled(layer, 735, 44, 20,  9, LCD_COLOR_BLACK);
+    LCD_DrawRectOutline(layer,730, 39, 30, 19, 3, LCD_COLOR_BLACK);
+    LCD_DrawRectFilled(layer, 760, 44,  3,  9, LCD_COLOR_BLACK);
 }
 
 /* ============================================================================
@@ -81,22 +141,19 @@ static void WaitLayerSwapDone(uint8_t layer, uint32_t maxVBlank)
 
 void Launcher_Init(void)
 {
-    // 背景层（Layer0）一次画好：背景 + HUD
     LCD_Clear(0);
     LCD_Fill(0, LCD_COLOR_WHEAT);
     Launcher_DrawHUD(0);
-    LCD_Refresh(0);                 // Layer0 虽然不双缓冲，但 refresh 会做 cache clean
+    LCD_Refresh(0);
 
-    // UI 动画层（Layer1）只负责图标：确保 front/back 都是透明
     LCD_Clear(1);
-    LCD_Refresh(1);                 // 清 front（通过 swap）
+    LCD_Refresh(1);
     WaitLayerSwapDone(1, 3);
-    LCD_Clear(1);                   // 再清 back（不 refresh 也行）
-    // 不要在这里画 HUD 到 Layer1 了
+    LCD_Clear(1);
 }
 
 /* ============================================================================
- *                           主循环（修复版）
+ *                           主循环
  * ============================================================================ */
 
 void Launcher_Loop(int *pi)
@@ -107,12 +164,12 @@ void Launcher_Loop(int *pi)
     static int   last_i = -1;
     static uint32_t last_vblank = 0;
 
-    // ========================================================================
-    // 步骤1: VBlank节流
-    // ========================================================================
+    /* ====================================================================
+     * VBlank节流
+     * ==================================================================== */
     uint32_t curr_vblank = LCD_GetVBlankCount();
     if (curr_vblank == last_vblank) {
-        return;  // 同一帧内，不重复绘制
+        return;
     }
 
     uint32_t vblank_delta = curr_vblank - last_vblank;
@@ -130,19 +187,13 @@ void Launcher_Loop(int *pi)
     if (vblank_delta > 5) vblank_delta = 5;
     float dt = (float)vblank_delta * (1.0f / 60.0f);
 
-    // ========================================================================
-    // 步骤2: 【关键修复】等待上一帧swap完成
-    // ========================================================================
-    // 问题：如果在pending_swap=1期间继续绘制back buffer，
-    //       VBlank回调swap时会显示"绘制到一半"的中间状态，导致错位
-    //
-    // 解决：等待swap完成（pending_swap变为0）再开始绘制
-
+    /* ====================================================================
+     * 等待swap完成
+     * ==================================================================== */
     uint32_t wait_start_vblank = curr_vblank;
-    uint32_t wait_timeout = 5;  // 最多等5个VBlank（约83ms @ 60Hz）
+    uint32_t wait_timeout = 5;
 
     while (LCD_IsPendingSwap(1) && wait_timeout > 0) {
-        // 等待VBlank推进
         uint32_t new_vblank = LCD_GetVBlankCount();
         if (new_vblank != curr_vblank) {
             curr_vblank = new_vblank;
@@ -155,11 +206,10 @@ void Launcher_Loop(int *pi)
     }
 
     if (LCD_IsPendingSwap(1)) {
-        // 超时仍未swap，可能LineEvent未触发或系统异常
 #if DEBUG_MISALIGNMENT
         printf("[Launcher] ERROR: Swap timeout! Skip frame.\n");
 #endif
-        return;  // 跳过本帧，避免错位
+        return;
     }
 
     uint32_t wait_duration = curr_vblank - wait_start_vblank;
@@ -169,9 +219,9 @@ void Launcher_Loop(int *pi)
 #endif
     }
 
-    // ========================================================================
-    // 步骤3: 输入处理
-    // ========================================================================
+    /* ====================================================================
+     * 输入处理
+     * ==================================================================== */
     int i = *pi;
     i = (i % N_APPS + N_APPS) % N_APPS;
     *pi = i;
@@ -205,9 +255,9 @@ void Launcher_Loop(int *pi)
         animating = true;
     }
 
-    // ========================================================================
-    // 步骤4: 动画更新
-    // ========================================================================
+    /* ====================================================================
+     * 动画更新
+     * ==================================================================== */
     if (animating) {
         float dx = target - scroll;
         float a = ANIM_STIFFNESS * dt;
@@ -224,46 +274,68 @@ void Launcher_Loop(int *pi)
         }
     }
 
-    // 如果没有变化且不在动画中，跳过绘制
     if (!i_changed && !animating) {
         return;
     }
 
-    // ========================================================================
-    // 步骤5: 绘制（现在可以安全绘制，因为swap已完成）
-    // ========================================================================
+    /* ====================================================================
+     * 绘制
+     * ==================================================================== */
 
 #if DEBUG_MISALIGNMENT
     printf("[Launcher] Draw frame: i=%d, scroll=%.2f, animating=%d\n",
            i, scroll, animating);
 #endif
 
-    // 清除带状区域
-    LCD_DrawRectFilledI32(1, 0, CLEAR_Y, LCD_W, CLEAR_H, 0x00000000u);
+    // 清除整个绘制区域
+    // LCD_DrawRectFilledI32(1, 0, CLEAR_Y, LCD_W, CLEAR_H, 0x00000000u);
+    LCD_DrawRectFilledI32(1, 0, CLEAR_Y, LCD_W, CLEAR_H, LCD_COLOR_WHEAT);
 
-    // 绘制所有可见图标
+    // 遍历所有应用
     for (int idx = 0; idx < N_APPS; idx++) {
-        // 内框
+        // 内框位置
         float xb_f = BASE_X + SPACING * (float)idx - scroll;
         int xb = (int)(xb_f + 0.5f);
 
         if (xb >= (int)LCD_W) break;
         if ((xb + BASE_W) < 0) continue;
 
+        // 绘制内框
         LCD_DrawRectOutlineI32(1, xb, BASE_Y, BASE_W, BASE_H, BASE_TH, LCD_COLOR_BLACK);
 
-        // 外框
+        // 外框位置
         float xo_f = OUT_X + SPACING * (float)idx - scroll;
         int xo = (int)(xo_f + 0.5f);
 
         if (xo >= (int)LCD_W) continue;
         if ((xo + OUT_W) < 0) continue;
 
-        uint32_t col = (idx == i) ? COL_SEL : COL_NOR;
-        LCD_DrawRectOutlineI32(1, xo, OUT_Y, OUT_W, OUT_H, OUT_TH, col);
+        bool is_selected = (idx == i);
+
+        // 绘制外框
+        uint32_t frame_color = is_selected ? COL_SEL : COL_NOR;
+        LCD_DrawRectOutlineI32(1, xo, OUT_Y, OUT_W, OUT_H, OUT_TH, frame_color);
+
+        /* ====================================================================
+         * 【优化】仅选中时绘制文字，确保颜色完全不透明
+         * ==================================================================== */
+        if (is_selected) {
+            const char *app_name = APP_NAMES[idx];
+
+            // 计算文字位置
+            int icon_center_x = xb + BASE_W / 2;
+            int text_x = CalcCenteredTextX(app_name, icon_center_x);
+
+            // 【重要】确保文字颜色的Alpha通道=0xFF（完全不透明）
+            // 这样可以避免与背景混合产生暗边
+            uint32_t text_color = TEXT_COLOR | 0xFF000000u;
+
+            // 绘制文字（透明背景）
+            LCD_DrawString(1, text_x, TEXT_Y_OFFSET, app_name,
+                          text_color, 0);
+        }
     }
 
-    // 提交刷新
     LCD_Refresh(1);
 
 #if DEBUG_MISALIGNMENT
@@ -272,12 +344,9 @@ void Launcher_Loop(int *pi)
 }
 
 /* ============================================================================
- *                           调试辅助函数
+ *                           调试函数
  * ============================================================================ */
 
-/**
- * @brief 获取当前状态信息（用于调试）
- */
 void Launcher_PrintStatus(void)
 {
     static uint32_t last_vblank = 0;
@@ -297,35 +366,120 @@ void Launcher_PrintStatus(void)
 
     uint32_t vblank_count = curr_vblank - last_vblank;
     float fps = (float)vblank_count * 1000.0f / (float)dt_ms;
-    //
-    // printf("=== Launcher Status ===\n");
-    // printf("VBlank rate: %.1f Hz\n", fps);
-    // printf("Pending swap: %d\n", LCD_IsPendingSwap(1));
-    // printf("======================\n");
 
     last_vblank = curr_vblank;
     last_tick = curr_tick;
 }
 
 /* ============================================================================
- *                           使用说明
+ *                           解决"黑色描边"问题的方法
  * ============================================================================ */
 
 /*
-调试步骤：
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                    🔍 "黑色描边"问题分析
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-1. 设置 DEBUG_MISALIGNMENT = 1
-2. 编译并运行
-3. 测试 i=4 和 12→1 的切换
-4. 观察串口输出：
-   - "Waiting for swap": 说明在等待（正常）
-   - "Swap timeout": 说明LineEvent未触发（异常）
-   - "Frame skip": 说明主循环太慢或VBlank不稳定
+问题原因：
+1. 字体抗锯齿：JetBrains Mono使用A8 alpha mask，边缘像素是半透明的
+2. Alpha混合：半透明像素与背景混合时，可能产生深色边缘
+3. 背景影响：如果背景不是纯色，会影响文字边缘的颜色
 
-5. 如果仍有错位：
-   - 检查 LCD_DoubleBufferInit() 是否正确调用
-   - 检查 LTDC 中断是否开启
-   - 检查 LineEvent 计算是否正确（应为 AccumulatedActiveH + 1）
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                    ✅ 解决方案（按优先级）
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-6. 验证通过后，设置 DEBUG_MISALIGNMENT = 0 关闭调试信息
+方案1：【已实现】确保颜色完全不透明
+------------------------------------------------
+代码第317行：
+    uint32_t text_color = TEXT_COLOR | 0xFF000000u;
+
+强制设置Alpha=0xFF，避免透明度混合问题
+
+
+方案2：使用更亮的文字颜色
+------------------------------------------------
+在第35-40行选择更亮的颜色：
+
+// 当前颜色（可能显得较暗）
+#define TEXT_COLOR 0xFF3DCCA3u
+
+// 更亮的选项：
+#define TEXT_COLOR 0xFF4DFFB8u    // 亮青绿色
+#define TEXT_COLOR 0xFF5FFFD0u    // 很亮的青色
+#define TEXT_COLOR 0xFF00FFFFu    // 纯青色（最亮）
+#define TEXT_COLOR 0xFFFFFFFFu    // 纯白色（最清晰）
+
+
+方案3：修改字体生成参数（需要重新生成字库）
+------------------------------------------------
+如果使用的是自己生成的字体：
+
+1. 减少抗锯齿强度
+2. 使用更粗的字体（如Regular而不是Thin）
+3. 增加字体大小
+4. 调整字体渲染的gamma值
+
+示例（如果你有字体生成工具）：
+- 当前：JetBrains Mono THIN 20px
+- 建议：JetBrains Mono REGULAR 22px（更清晰）
+
+
+方案4：添加文字背景（类似标签效果）
+------------------------------------------------
+修改第36行：
+
+// 从透明背景
+#define TEXT_BG_COLOR 0x00000000u
+
+// 改为半透明深色背景
+#define TEXT_BG_COLOR 0x80000000u  // 半透明黑色
+// 或纯色背景
+#define TEXT_BG_COLOR 0xFF000000u  // 纯黑色背景
+
+这会在文字下方添加一个背景框，类似很多UI的标签效果
+
+
+方案5：检查背景层（Layer0）
+------------------------------------------------
+确保背景层是纯色且完全不透明：
+
+void Launcher_Init(void) {
+    LCD_Clear(0);
+    LCD_Fill(0, LCD_COLOR_WHEAT);  // 确保这是纯色
+    // ...
+}
+
+如果背景不是纯色或有渐变，会影响文字显示
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                    🎨 推荐配置（清晰无描边）
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+配置1：纯青色文字（最亮最清晰）
+#define TEXT_COLOR 0xFF00FFFFu
+
+配置2：亮绿青色（Switch风格但更亮）
+#define TEXT_COLOR 0xFF5FFFD0u
+
+配置3：纯白色（最高对比度）
+#define TEXT_COLOR 0xFFFFFFFFu
+
+配置4：带黑色背景标签（最清晰）
+#define TEXT_COLOR    0xFFFFFFFFu  // 白色文字
+#define TEXT_BG_COLOR 0xCC000000u  // 半透明黑色背景
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                    🔧 如何测试
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. 首先尝试方案1（已在代码中实现）
+2. 如果仍有描边，尝试方案2（修改TEXT_COLOR为更亮的颜色）
+3. 如果还是不满意，考虑方案4（添加背景框）
+
+快速测试不同颜色：
+直接修改第35行的 TEXT_COLOR 定义，重新编译即可
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 */
