@@ -729,9 +729,12 @@ int main(void)
     // Test_Chart();
     // HAL_Delay(2000);
     // int x = 0;
-    Launcher_Init();
 
     LCD_DisplayON();
+    Launcher_Init();
+
+
+    // while (1){}
     // for (int a = 0; a < 5; a++) {
     //     LCD_DrawRectOutline(1,10+(a*150),10,100,100,2,ARGB(0xFF, 0xAA, 0xAA, 0xAA));
     // }
@@ -739,6 +742,8 @@ int main(void)
     // HAL_Delay(2000);
     // while (1) {}
     int selected_app = 0;
+
+
 
 
 

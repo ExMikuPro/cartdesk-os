@@ -22,13 +22,13 @@
 #define SPACING   220.0f
 
 #define BASE_X    60.0f
-#define BASE_Y    120
+#define BASE_Y    105
 #define BASE_W    200
 #define BASE_H    200
 #define BASE_TH   1
 
 #define OUT_X     57.0f
-#define OUT_Y     117
+#define OUT_Y     102
 #define OUT_W     206
 #define OUT_H     206
 #define OUT_TH    3
@@ -119,12 +119,28 @@ static int CalcCenteredTextX(const char *str, int center_x)
  */
 static void Launcher_DrawHUD(uint8_t layer)
 {
-    LCD_DrawHLine(layer, 20, 420, 759, LCD_COLOR_BLACK);
-    LCD_DrawString(layer, 600, 35, "12:34", LCD_COLOR_BLACK, 0);
-    LCD_DrawString(layer, 675, 35, "100%",  LCD_COLOR_BLACK, 0);
-    LCD_DrawRectFilled(layer, 735, 44, 20,  9, LCD_COLOR_BLACK);
-    LCD_DrawRectOutline(layer,730, 39, 30, 19, 3, LCD_COLOR_BLACK);
-    LCD_DrawRectFilled(layer, 760, 44,  3,  9, LCD_COLOR_BLACK);
+    LCD_DrawHLine(layer, 20, 440, 759, LCD_COLOR_BLACK);
+    LCD_DrawString(layer, 600, 30, "12:34", LCD_COLOR_BLACK, 0);
+    LCD_DrawString(layer, 675, 30, "100%",  LCD_COLOR_BLACK, 0);
+    LCD_DrawRectFilled(layer, 735, 39, 20,  9, LCD_COLOR_BLACK);
+    LCD_DrawRectOutline(layer,730, 34, 30, 19, 3, LCD_COLOR_BLACK);
+    LCD_DrawRectFilled(layer, 760, 39,  3,  9, LCD_COLOR_BLACK);
+
+    /* 五个横向排列的圆形按钮（背景 + 选择框）：按你给的写法 */
+    {
+        const int y    = 375;   // 你原来这颗圆的 y
+        const int step = 80;    // 横向间距（可调：80~100）
+        const int x0   = 400 - 2 * step; // 让 5 个以 x=400 居中
+
+        for (int k = 0; k < 5; k++) {
+            const int x = x0 + k * step;
+            const uint32_t ring = (k == 2) ? COL_SEL : COL_NOR; // 默认中间选中，其它普通
+
+            LCD_DrawCircleFilled(layer, x, y, 25, LCD_COLOR_WHEAT); // 背景=方块背景
+            LCD_DrawCircle(layer,       x, y, 28, 2, ring);         // 框色=选中框色/普通框
+        }
+    }
+
 }
 
 /* ============================================================================
