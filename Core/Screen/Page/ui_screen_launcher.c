@@ -68,6 +68,13 @@ void Launcher_Init(void)
     LCD_Clear(1);
     LCD_Refresh(1);
 
+    // LCD_DRAW
+
+
+
+    LCD_DrawHLine(1,20,420,759,LCD_COLOR_BLACK); // 底部分割线
+    LCD_DrawString(1, 650, 35, "12:34", LCD_COLOR_BLACK, 0x00000000);
+
 #if DEBUG_MISALIGNMENT
     printf("[Launcher] Initialized\n");
 #endif

@@ -80,6 +80,12 @@ extern "C" {
 #define LCD_LAYER1             1u
 
 
+ // JetBrains Mono 字格尺寸
+#define FONT_W JBMONO_W
+#define FONT_H JBMONO_H
+#define FONT_ADVANCE_X JBMONO_W  // 等宽：每个字符前进宽度=字格宽
+
+
 /* ============================================================================
  *                           颜色定义（ARGB8888）
  * ============================================================================ */
@@ -529,6 +535,61 @@ uint32_t LCD_GetVBlankCount(void);
 * 用途：上层可在绘制前检查，避免在swap过程中修改back buffer导致错位
 */
 uint8_t LCD_IsPendingSwap(uint8_t Layer);
+
+/**
+* @brief 绘制单个ASCII字符（8x16点阵字体）
+* @param Layer 图层索引（0/1）
+* @param X 字符左上角X坐标（像素）
+* @param Y 字符左上角Y坐标（像素）
+* @param Char ASCII字符（0x20~0x7E，即空格到'~'）
+* @param FgColor 前景色（字符颜色，ARGB8888）
+* @param BgColor 背景色（字符背景，ARGB8888），设为0x00000000表示透明背景
+* @note  字符宽度8像素，高度16像素
+* @note  超出屏幕范围的部分会自动裁剪
+**/
+void LCD_DrawChar(uint8_t Layer, int X, int Y, char Char, uint32_t FgColor, uint32_t BgColor);
+
+/**
+* @brief 绘制字符串（8x16点阵字体）
+* @param Layer 图层索引（0/1）
+* @param X 字符串起始X坐标（像素）
+* @param Y 字符串起始Y坐标（像素）
+* @param Str 字符串指针（以'\0'结尾）
+* @param FgColor 前景色（字符颜色，ARGB8888）
+* @param BgColor 背景色（字符背景，ARGB8888），设为0x00000000表示透明背景
+* @return 绘制的字符数量
+* @note  字符水平排列，每个字符占8像素宽
+* @note  只绘制ASCII可打印字符（0x20~0x7E），其他字符跳过
+*
+**/
+uint16_t LCD_DrawString(uint8_t Layer, int X, int Y, const char *Str, uint32_t FgColor, uint32_t BgColor);
+
+/**
+ * @brief 绘制整数（8x16点阵字体）
+ * @param Layer 图层索引（0/1）
+ * @param X 数字起始X坐标（像素）
+ * @param Y 数字起始Y坐标（像素）
+ * @param Value 整数值（支持负数）
+ * @param FgColor 前景色（数字颜色，ARGB8888）
+ * @param BgColor 背景色（数字背景，ARGB8888）
+ * @return 绘制的字符数量（包括负号）
+ *
+**/
+uint16_t LCD_DrawInt(uint8_t Layer, int X, int Y, int32_t Value, uint32_t FgColor, uint32_t BgColor);
+
+/**
+ * @brief 绘制浮点数（8x16点阵字体）
+ * @param Layer 图层索引（0/1）
+ * @param X 数字起始X坐标（像素）
+ * @param Y 数字起始Y坐标（像素）
+ * @param Value 浮点数值
+ * @param Decimals 小数位数（0-6）
+ * @param FgColor 前景色（数字颜色，ARGB8888）
+ * @param BgColor 背景色（数字背景，ARGB8888）
+ * @return 绘制的字符数量
+ **/
+uint16_t LCD_DrawFloat(uint8_t Layer, int X, int Y, float Value, uint8_t Decimals, uint32_t FgColor, uint32_t BgColor);
+
 
 #ifdef __cplusplus
 }
