@@ -45,6 +45,8 @@ add_executable(${CMAKE_PROJECT_NAME}
         Core/LuaPort/modules/lua_tim.c
         Core/LuaPort/modules/Lua_sd.c
         Core/Driver/CRC/crc.h
+        Core/Screen/Page/ui_screen_launcher.c
+        Core/Screen/Page/ui_screen_launcher.h
 
 )
 
