@@ -19,6 +19,7 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "crc.h"
+#include "dma2d.h"
 #include "fatfs.h"
 #include "ltdc.h"
 #include "mdma.h"
@@ -37,6 +38,7 @@
 #include "../Driver/LCD/lcd.h"
 #include "lua_vm.h"
 #include "../Driver/SDRAM/sdram.h"
+#include "Core/Screen/Page/ui_screen_launcher.h"
 #include "CRC/crc.h"
 /* USER CODE END Includes */
 
@@ -95,8 +97,7 @@ static void MPU_Config(void);
 /**
  * @brief  测试1: 水平线和垂直线
  */
-void Test_HorizontalVerticalLines(void)
-{
+void Test_HorizontalVerticalLines(void) {
     LCD_Clear(LCD_LAYER0);
 
     /* 绘制网格 */
@@ -122,8 +123,7 @@ void Test_HorizontalVerticalLines(void)
 /**
  * @brief  测试2: 矩形函数
  */
-void Test_RectangleFunctions(void)
-{
+void Test_RectangleFunctions(void) {
     LCD_Clear(LCD_LAYER0);
 
     /* 实心矩形 */
@@ -144,8 +144,7 @@ void Test_RectangleFunctions(void)
 /**
  * @brief  测试3: 三角形
  */
-void Test_TriangleFunctions(void)
-{
+void Test_TriangleFunctions(void) {
     LCD_Clear(LCD_LAYER0);
 
     /* 空心三角形 */
@@ -155,23 +154,22 @@ void Test_TriangleFunctions(void)
     LCD_DrawTriangleFilled(LCD_LAYER0, 450, 50, 350, 200, 550, 200, LCD_COLOR_GREEN);
 
     /* 各种朝向的三角形 */
-    LCD_DrawTriangleFilled(LCD_LAYER0, 150, 250, 50, 400, 250, 400, LCD_COLOR_BLUE);    // 向右
+    LCD_DrawTriangleFilled(LCD_LAYER0, 150, 250, 50, 400, 250, 400, LCD_COLOR_BLUE); // 向右
     LCD_DrawTriangleFilled(LCD_LAYER0, 350, 250, 350, 400, 450, 325, LCD_COLOR_YELLOW); // 向左
-    LCD_DrawTriangleFilled(LCD_LAYER0, 550, 400, 650, 400, 600, 250, LCD_COLOR_MAGENTA);// 向上
+    LCD_DrawTriangleFilled(LCD_LAYER0, 550, 400, 650, 400, 600, 250, LCD_COLOR_MAGENTA); // 向上
 }
 
 /**
  * @brief  测试4: 折线(波形图)
  */
-void Test_PolylineFunctions(void)
-{
+void Test_PolylineFunctions(void) {
     LCD_Clear(LCD_LAYER0);
 
     /* 正弦波模拟数据 */
     int16_t sine_wave[100];
     for (int i = 0; i < 50; i++) {
-        sine_wave[i * 2] = i * 15;                                    // X坐标
-        sine_wave[i * 2 + 1] = 240 + (int16_t)(80.0f * sinf(i * 0.3f)); // Y坐标
+        sine_wave[i * 2] = i * 15; // X坐标
+        sine_wave[i * 2 + 1] = 240 + (int16_t) (80.0f * sinf(i * 0.3f)); // Y坐标
     }
 
     /* 绘制正弦波 */
@@ -179,15 +177,15 @@ void Test_PolylineFunctions(void)
 
     /* 锯齿波 */
     int16_t sawtooth[20] = {
-        50, 100,  100, 150,  150, 100,  200, 150,  250, 100,
-        300, 150, 350, 100,  400, 150,  450, 100,  500, 150
+        50, 100, 100, 150, 150, 100, 200, 150, 250, 100,
+        300, 150, 350, 100, 400, 150, 450, 100, 500, 150
     };
     LCD_DrawPolyline(LCD_LAYER0, sawtooth, 10, 3, LCD_COLOR_GREEN);
 
     /* 折线路径 */
     int16_t path[16] = {
-        100, 350,  200, 400,  300, 320,  400, 380,
-        500, 300,  600, 360,  700, 280,  750, 350
+        100, 350, 200, 400, 300, 320, 400, 380,
+        500, 300, 600, 360, 700, 280, 750, 350
     };
     LCD_DrawPolyline(LCD_LAYER0, path, 8, 2, LCD_COLOR_CYAN);
 }
@@ -195,36 +193,35 @@ void Test_PolylineFunctions(void)
 /**
  * @brief  测试5: 多边形
  */
-void Test_PolygonFunctions(void)
-{
+void Test_PolygonFunctions(void) {
     LCD_Clear(LCD_LAYER0);
 
     /* 五边形(空心) */
     int16_t pentagon[10] = {
-        150, 50,   250, 100,  220, 200,  80, 200,  50, 100
+        150, 50, 250, 100, 220, 200, 80, 200, 50, 100
     };
     LCD_DrawPolygon(LCD_LAYER0, pentagon, 5, 2, LCD_COLOR_RED);
 
     /* 六边形(实心) */
     int16_t hexagon[12] = {
-        450, 80,   520, 120,  520, 200,  450, 240,  380, 200,  380, 120
+        450, 80, 520, 120, 520, 200, 450, 240, 380, 200, 380, 120
     };
     LCD_DrawPolygonFilled(LCD_LAYER0, hexagon, 6, LCD_COLOR_GREEN);
 
     /* 星形 */
     int16_t star[10] = {
-        200, 280,  220, 340,  280, 350,  230, 390,  250, 450,
+        200, 280, 220, 340, 280, 350, 230, 390, 250, 450,
     };
     int16_t star2[10] = {
-        200, 420,  150, 390,  100, 350,  160, 340,  180, 280
+        200, 420, 150, 390, 100, 350, 160, 340, 180, 280
     };
     LCD_DrawPolygonFilled(LCD_LAYER0, star, 5, LCD_COLOR_YELLOW);
     LCD_DrawPolygonFilled(LCD_LAYER0, star2, 5, LCD_COLOR_YELLOW);
 
     /* 八边形 */
     int16_t octagon[16] = {
-        500, 280,  550, 280,  580, 310,  580, 360,
-        550, 390,  500, 390,  470, 360,  470, 310
+        500, 280, 550, 280, 580, 310, 580, 360,
+        550, 390, 500, 390, 470, 360, 470, 310
     };
     LCD_DrawPolygonFilled(LCD_LAYER0, octagon, 8, LCD_COLOR_ORANGE);
 }
@@ -232,13 +229,12 @@ void Test_PolygonFunctions(void)
 /**
  * @brief  测试6: 椭圆
  */
-void Test_EllipseFunctions(void)
-{
+void Test_EllipseFunctions(void) {
     LCD_Clear(LCD_LAYER0);
 
     /* 空心椭圆 */
     LCD_DrawEllipse(LCD_LAYER0, 200, 120, 150, 80, 2, LCD_COLOR_RED);
-    LCD_DrawEllipse(LCD_LAYER0, 600, 120, 100, 100, 3, LCD_COLOR_BLUE);  // 圆形(特殊椭圆)
+    LCD_DrawEllipse(LCD_LAYER0, 600, 120, 100, 100, 3, LCD_COLOR_BLUE); // 圆形(特殊椭圆)
 
     /* 实心椭圆 */
     LCD_DrawEllipseFilled(LCD_LAYER0, 200, 320, 120, 60, LCD_COLOR_GREEN);
@@ -253,15 +249,14 @@ void Test_EllipseFunctions(void)
 /**
  * @brief  测试7: 圆弧
  */
-void Test_ArcFunctions(void)
-{
+void Test_ArcFunctions(void) {
     LCD_Clear(LCD_LAYER0);
 
     /* 四分之一圆弧 */
-    LCD_DrawArc(LCD_LAYER0, 200, 240, 100, 0, 90, 3, LCD_COLOR_RED);      // 0-90度
-    LCD_DrawArc(LCD_LAYER0, 200, 240, 100, 90, 180, 3, LCD_COLOR_GREEN);  // 90-180度
-    LCD_DrawArc(LCD_LAYER0, 200, 240, 100, 180, 270, 3, LCD_COLOR_BLUE);  // 180-270度
-    LCD_DrawArc(LCD_LAYER0, 200, 240, 100, 270, 360, 3, LCD_COLOR_YELLOW);// 270-360度
+    LCD_DrawArc(LCD_LAYER0, 200, 240, 100, 0, 90, 3, LCD_COLOR_RED); // 0-90度
+    LCD_DrawArc(LCD_LAYER0, 200, 240, 100, 90, 180, 3, LCD_COLOR_GREEN); // 90-180度
+    LCD_DrawArc(LCD_LAYER0, 200, 240, 100, 180, 270, 3, LCD_COLOR_BLUE); // 180-270度
+    LCD_DrawArc(LCD_LAYER0, 200, 240, 100, 270, 360, 3, LCD_COLOR_YELLOW); // 270-360度
 
     /* 半圆弧 */
     LCD_DrawArc(LCD_LAYER0, 500, 120, 80, 0, 180, 5, LCD_COLOR_CYAN);
@@ -274,8 +269,7 @@ void Test_ArcFunctions(void)
 /**
  * @brief  测试8: 综合图形(绘制房子)
  */
-void Test_ComplexGraphics(void)
-{
+void Test_ComplexGraphics(void) {
     LCD_Clear(LCD_LAYER0);
 
     /* 房子主体 */
@@ -286,7 +280,7 @@ void Test_ComplexGraphics(void)
 
     /* 门 */
     LCD_DrawRectFilled(LCD_LAYER0, 360, 320, 80, 130, LCD_COLOR_BROWN);
-    LCD_DrawCircleFilled(LCD_LAYER0, 420, 390, 5, LCD_COLOR_YELLOW);  // 门把手
+    LCD_DrawCircleFilled(LCD_LAYER0, 420, 390, 5, LCD_COLOR_YELLOW); // 门把手
 
     /* 窗户 */
     LCD_DrawRectFilled(LCD_LAYER0, 280, 250, 80, 80, LCD_COLOR_SKYBLUE);
@@ -317,8 +311,7 @@ void Test_ComplexGraphics(void)
 /**
  * @brief  测试9: 仪表盘示例
  */
-void Test_Dashboard(void)
-{
+void Test_Dashboard(void) {
     LCD_Clear(LCD_LAYER0);
 
     /* 仪表盘外圈 */
@@ -330,20 +323,20 @@ void Test_Dashboard(void)
 
     /* 刻度线(简化版,只画主要刻度) */
     for (int i = 0; i <= 10; i++) {
-        int angle = 135 + i * 27;  // 每27度一个刻度
+        int angle = 135 + i * 27; // 每27度一个刻度
         float rad = angle * 3.14159f / 180.0f;
-        int x0 = 400 + (int)(150.0f * cosf(rad));
-        int y0 = 240 - (int)(150.0f * sinf(rad));
-        int x1 = 400 + (int)(135.0f * cosf(rad));
-        int y1 = 240 - (int)(135.0f * sinf(rad));
+        int x0 = 400 + (int) (150.0f * cosf(rad));
+        int y0 = 240 - (int) (150.0f * sinf(rad));
+        int x1 = 400 + (int) (135.0f * cosf(rad));
+        int y1 = 240 - (int) (135.0f * sinf(rad));
         LCD_DrawLine(LCD_LAYER0, x0, y0, x1, y1, 2, LCD_COLOR_WHITE);
     }
 
     /* 指针(指向60%) */
-    int pointer_angle = 135 + (int)(270 * 0.6f);  // 60%位置
+    int pointer_angle = 135 + (int) (270 * 0.6f); // 60%位置
     float pointer_rad = pointer_angle * 3.14159f / 180.0f;
-    int px = 400 + (int)(120.0f * cosf(pointer_rad));
-    int py = 240 - (int)(120.0f * sinf(pointer_rad));
+    int px = 400 + (int) (120.0f * cosf(pointer_rad));
+    int py = 240 - (int) (120.0f * sinf(pointer_rad));
     LCD_DrawLine(LCD_LAYER0, 400, 240, px, py, 4, LCD_COLOR_RED);
 
     /* 中心圆 */
@@ -351,23 +344,22 @@ void Test_Dashboard(void)
     LCD_DrawCircle(LCD_LAYER0, 400, 240, 15, 2, LCD_COLOR_BLACK);
 
     /* 进度环显示60% */
-    int arc_end = 135 + (int)(270 * 0.6f);
+    int arc_end = 135 + (int) (270 * 0.6f);
     LCD_DrawArc(LCD_LAYER0, 400, 240, 140, 135, arc_end, 8, LCD_COLOR_LIME);
 }
 
 /**
  * @brief  测试10: 图表示例(柱状图)
  */
-void Test_Chart(void)
-{
+void Test_Chart(void) {
     LCD_Clear(LCD_LAYER0);
 
     /* 标题区域 */
     LCD_DrawRectFilled(LCD_LAYER0, 0, 0, 800, 50, LCD_COLOR_NAVY);
 
     /* 绘制坐标轴 */
-    LCD_DrawHLine(LCD_LAYER0, 50, 400, 700, LCD_COLOR_WHITE);  // X轴
-    LCD_DrawVLine(LCD_LAYER0, 50, 80, 320, LCD_COLOR_WHITE);   // Y轴
+    LCD_DrawHLine(LCD_LAYER0, 50, 400, 700, LCD_COLOR_WHITE); // X轴
+    LCD_DrawVLine(LCD_LAYER0, 50, 80, 320, LCD_COLOR_WHITE); // Y轴
 
     /* Y轴刻度 */
     for (int i = 0; i <= 5; i++) {
@@ -376,7 +368,7 @@ void Test_Chart(void)
     }
 
     /* 柱状图数据 */
-    uint16_t data[6] = {80, 150, 120, 200, 90, 180};  // 6个数据点
+    uint16_t data[6] = {80, 150, 120, 200, 90, 180}; // 6个数据点
     uint32_t colors[6] = {
         LCD_COLOR_RED, LCD_COLOR_BLUE, LCD_COLOR_GREEN,
         LCD_COLOR_YELLOW, LCD_COLOR_CYAN, LCD_COLOR_MAGENTA
@@ -404,8 +396,7 @@ void Test_Chart(void)
 static FATFS fs;
 static FIL fil;
 
-static void list_dir(const char *path)
-{
+static void list_dir(const char *path) {
     FRESULT fr;
     DIR dir;
     FILINFO fno;
@@ -428,8 +419,7 @@ static void list_dir(const char *path)
     f_closedir(&dir);
 }
 
-void fatfs_min_test(void)
-{
+void fatfs_min_test(void) {
     FRESULT fr;
 
     // 1) 挂载（CubeMX 默认盘符通常是 "0:"）
@@ -451,7 +441,7 @@ void fatfs_min_test(void)
 
     const char *msg = "hello sdmmc + fatfs\r\n";
     UINT bw = 0;
-    fr = f_write(&fil, msg, (UINT)strlen(msg), &bw);
+    fr = f_write(&fil, msg, (UINT) strlen(msg), &bw);
     f_close(&fil);
 
     if (fr != FR_OK) {
@@ -486,39 +476,134 @@ void fatfs_min_test(void)
     // f_mount(NULL, "0:", 0);
 }
 
-void demo_crc(void)
-{
+void demo_crc(void) {
     CRC_ASSERT_INT32();
 
-    uint8_t  u8[]  = {1,2,3,4,0xAA};
-    uint16_t u16[] = {0x1122,0x3344,0x5566};
-    uint32_t u32[] = {0x11223344,0xAABBCCDD};
+    uint8_t u8[] = {1, 2, 3, 4, 0xAA};
+    uint16_t u16[] = {0x1122, 0x3344, 0x5566};
+    uint32_t u32[] = {0x11223344, 0xAABBCCDD};
 
-    int8_t   i8[]  = {-1,2,-3,4};
-    int16_t  i16[] = {-1000,2000,-3000};
-    int32_t  i32[] = {-12345678, 23456789};
-    int      ii[]  = {1,-2,3,-4};
+    int8_t i8[] = {-1, 2, -3, 4};
+    int16_t i16[] = {-1000, 2000, -3000};
+    int32_t i32[] = {-12345678, 23456789};
+    int ii[] = {1, -2, 3, -4};
 
     /* 1) one-shot：数组 → 自动格式+自动长度 */
-    uint32_t c1 = CRC_Calc(&hcrc, u8);   // bytes
-    uint32_t c2 = CRC_Calc(&hcrc, u16);  // u16
-    uint32_t c3 = CRC_Calc(&hcrc, u32);  // u32
-    uint32_t c4 = CRC_Calc(&hcrc, i8);   // bytes
-    uint32_t c5 = CRC_Calc(&hcrc, i16);  // u16
-    uint32_t c6 = CRC_Calc(&hcrc, i32);  // u32
-    uint32_t c7 = CRC_Calc(&hcrc, ii);   // u32(int)
+    uint32_t c1 = CRC_Calc(&hcrc, u8); // bytes
+    uint32_t c2 = CRC_Calc(&hcrc, u16); // u16
+    uint32_t c3 = CRC_Calc(&hcrc, u32); // u32
+    uint32_t c4 = CRC_Calc(&hcrc, i8); // bytes
+    uint32_t c5 = CRC_Calc(&hcrc, i16); // u16
+    uint32_t c6 = CRC_Calc(&hcrc, i32); // u32
+    uint32_t c7 = CRC_Calc(&hcrc, ii); // u32(int)
 
     /* 2) one-shot：指针+长度 → 自动格式 + 你指定长度 */
-    uint32_t c8 = CRC_Calc(&hcrc, (uint8_t*)u8, 3);   // 只算前3个字节
+    uint32_t c8 = CRC_Calc(&hcrc, (uint8_t*)u8, 3); // 只算前3个字节
     uint32_t c9 = CRC_Calc(&hcrc, (uint16_t*)u16, 2); // 只算前2个halfword
 
     /* 3) 流式：同名 CRC_Update */
     CRC_Begin(&hcrc);
-    CRC_Update(&hcrc, u8);               // 数组：自动长度
+    CRC_Update(&hcrc, u8); // 数组：自动长度
     CRC_Update(&hcrc, (uint32_t*)u32, 1); // 指针+长度：只喂1个word
     uint32_t c10 = CRC_Final(&hcrc);
 
-    (void)c1;(void)c2;(void)c3;(void)c4;(void)c5;(void)c6;(void)c7;(void)c8;(void)c9;(void)c10;
+    (void) c1;
+    (void) c2;
+    (void) c3;
+    (void) c4;
+    (void) c5;
+    (void) c6;
+    (void) c7;
+    (void) c8;
+    (void) c9;
+    (void) c10;
+}
+
+static void on_launch(int index) {
+    // TODO: 这里切换到你的“程序”/“脚本”
+    // 例如：load_lua_app(index);
+}
+
+
+
+// ========== 可选：如果你已经做了 LTDC LineEvent/VBlank 旗标，可以开这个对比“有/无 VSync” ==========
+#ifndef TEARTEST_USE_VBLANK
+#define TEARTEST_USE_VBLANK 0
+#endif
+
+#if TEARTEST_USE_VBLANK
+extern volatile uint8_t  g_ltdc_vblank_flag;   // 你自己的 LineEvent 回调里置 1
+static inline void TearTest_WaitVBlank(void) {
+    while (!g_ltdc_vblank_flag) {}
+    g_ltdc_vblank_flag = 0;
+}
+#else
+static inline void TearTest_WaitVBlank(void) { (void)0; }
+#endif
+
+static inline uint32_t ARGB(uint8_t a, uint8_t r, uint8_t g, uint8_t b) {
+    return ((uint32_t)a<<24) | ((uint32_t)r<<16) | ((uint32_t)g<<8) | (uint32_t)b;
+}
+
+// 调一次：清背景，准备测试
+void LCD_TearTest_Init(void)
+{
+    LCD_Clear(0);
+    LCD_Clear(1);
+
+    // 背景固定（layer0）
+    LCD_Fill(0, ARGB(0xFF, 0x10, 0x12, 0x18));
+    LCD_Refresh(0);
+
+    // 覆盖层（layer1）清成透明（如果你的 layer1 支持 alpha 混合）
+    LCD_Fill(1, ARGB(0x00, 0x00, 0x00, 0x00));
+    LCD_Refresh(1);
+}
+
+/**
+ * 在 while(1) 里一直调用：动态绘制“整屏移动条纹 + 贯穿全屏的竖条”
+ * 如果是单缓冲且不做 VBlank 翻页，最容易看到水平撕裂断层。
+ */
+void LCD_TearTest_Loop(void)
+{
+    static uint32_t last = 0;
+    static int phase = 0;
+
+    uint32_t now = HAL_GetTick();
+    if (last == 0) last = now;
+    uint32_t dt = now - last;
+    last = now;
+
+    // 速度：每 16ms 前进 8 像素（你可以调大更容易撕裂）
+    (void)dt;
+    phase = (phase + 8) % 64;
+
+    // 对比测试：若你开了 TEARTEST_USE_VBLANK，这里会等到 VBlank 再动手画
+    TearTest_WaitVBlank();
+
+    // 每帧重画 layer1（覆盖层）
+    LCD_Fill(1, ARGB(0x00, 0x00, 0x00, 0x00));   // 透明清屏（overlay）
+    // 如果你 layer1 不支持透明，就把 alpha 改 FF 并选深色
+
+    // 1) 整屏横向条纹（移动）：特别容易看出“同一帧上下相位不一致”的撕裂
+    const int stripe_h = 16;
+    for (int y = 0; y < (int)LCD_H; y += stripe_h) {
+        int on = ((y + phase) / stripe_h) & 1;
+        uint32_t c = on ? ARGB(0xFF, 0xF2, 0xF6, 0xFF) : ARGB(0xFF, 0x2A, 0x33, 0x42);
+        LCD_DrawRectFilled(1, 0, (uint16_t)y, LCD_W, (uint16_t)stripe_h, c);
+    }
+
+    // 2) 贯穿全屏的竖条（移动）：撕裂时竖条会在某个水平位置“断开错位”
+    int x = (phase * 12) % (int)(LCD_W + 80) - 40;     // 左右穿出屏幕
+    int w = 20;
+    if (x < 0) { w += x; x = 0; }
+    if (x + w > (int)LCD_W) w = (int)LCD_W - x;
+    if (w > 0) {
+        LCD_DrawRectFilled(1, (uint16_t)x, 0, (uint16_t)w, LCD_H, ARGB(0xFF, 0x3D, 0xCC, 0xA3));
+        LCD_DrawRectOutline(1, (uint16_t)x, 0, (uint16_t)w, LCD_H, 2, ARGB(0xFF, 0x00, 0x00, 0x00));
+    }
+
+    LCD_Refresh(1);
 }
 
 /* USER CODE END 0 */
@@ -559,31 +644,42 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_MDMA_Init();
-  MX_LTDC_Init();
   MX_FMC_Init();
+  MX_LTDC_Init();
   MX_USART1_UART_Init();
   MX_SDMMC1_SD_Init();
   MX_FATFS_Init();
   MX_CRC_Init();
+  MX_DMA2D_Init();
   /* USER CODE BEGIN 2 */
 
-  /* 初始化 SDRAM */
-  SDRAM_Init();
+    /* 初始化 SDRAM */
+    SDRAM_Init();
 
     // demo_crc();
 
-  /* 使能 LCD 显示 */
+    /* 使能 LCD 显示 */
     HAL_GPIO_WritePin(BUZZER_GPIO_Port,BUZZER_Pin, GPIO_PIN_RESET); // 蜂鸣器高响低不响
+    LCD_DisplayON();
+
+    LCD_DoubleBufferInit();
+    // LCD_TearTest_Init();
+
+    // ui_screen_launcher_init();
+    // ui_screen_launcher_set_on_launch(on_launch);
+    // ui_screen_launcher_enter();
 
 
     // fatfs_min_test();
     // lua_demo_blink();
 
 
-    // LCD_Clear(0);
-    // LCD_Clear(1);
-    // LCD_Refresh(0);
-    // LCD_Refresh(1);
+    // int i = 0;
+    // Launcher_Init();
+
+    static uint8_t pa0_prev = 0, pc13_prev = 0;
+
+
     //
     // LCD_DrawRectFilled(LCD_LAYER0, 70, 50, 150, 100, 0x000000FF);
     // LCD_DrawRectFilled(LCD_LAYER0, 50, 50, 150, 100, 0x99FF00FF);
@@ -632,20 +728,46 @@ int main(void)
     // HAL_Delay(2000);
     // Test_Chart();
     // HAL_Delay(2000);
+    // int x = 0;
+    Launcher_Init();
+    // for (int a = 0; a < 5; a++) {
+    //     LCD_DrawRectOutline(1,10+(a*150),10,100,100,2,ARGB(0xFF, 0xAA, 0xAA, 0xAA));
+    // }
+    int selected_app = 0;
+
+
 
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  while (1)
-  {
-    /* LED 闪烁，指示系统运行 */
-    HAL_Delay(500);
-    HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
+    while (1) {
+        // LCD_Clear(1);
+        // LCD_DrawRectOutline(1, x, 200, 100, 100, 3, 0xFFFF0000);
+        // LCD_Refresh(1);
+        //
+        // x += 10;
+        // if (x > 700) x = 0;
+        // HAL_Delay(16); // ~60fps
+        // LCD_TearTest_Loop();
+        // HAL_Delay(50);
+        /* LED 闪烁，指示系统运行 */
+        uint8_t pa0  = (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_0)  == GPIO_PIN_SET);
+        uint8_t pc13 = (HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13) == GPIO_PIN_SET);
+
+        if (pa0 && !pa0_prev)  selected_app++;
+        if (pc13 && !pc13_prev) selected_app--;
+
+        pa0_prev  = pa0;
+        pc13_prev = pc13;
+        // 自动节流到60Hz
+        Launcher_Loop(&selected_app);
+        // HAL_Delay(16);
+        // HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-  }
+    }
   /* USER CODE END 3 */
 }
 
@@ -795,11 +917,10 @@ void MPU_Config(void)
 void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
-  /* User can add his own implementation to report the HAL error return state */
-  __disable_irq();
-  while (1)
-  {
-  }
+    /* User can add his own implementation to report the HAL error return state */
+    __disable_irq();
+    while (1) {
+    }
   /* USER CODE END Error_Handler_Debug */
 }
 #ifdef USE_FULL_ASSERT
@@ -813,8 +934,8 @@ void Error_Handler(void)
 void assert_failed(uint8_t *file, uint32_t line)
 {
   /* USER CODE BEGIN 6 */
-  /* User can add his own implementation to report the file name and line number,
-     ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
+    /* User can add his own implementation to report the file name and line number,
+       ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
   /* USER CODE END 6 */
 }
 #endif /* USE_FULL_ASSERT */
