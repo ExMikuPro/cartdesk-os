@@ -27,6 +27,7 @@
 #include "quadspi.h"
 #include "rng.h"
 #include "sdmmc.h"
+#include "tim.h"
 #include "usart.h"
 #include "gpio.h"
 #include "fmc.h"
@@ -41,7 +42,13 @@
 #include "../Driver/SDRAM/sdram.h"
 #include "Core/Screen/Page/ui_screen_launcher.h"
 
+
+#include "demos/lv_demos.h"
+
 /* Storage: QSPI NOR + littlefs */
+#include "Core/APPS/LVGL/port/lvgl_init.h"
+#include "Core/APPS/LVGL/src/core/lv_obj_pos.h"
+#include "Core/APPS/LVGL/src/widgets/label/lv_label.h"
 #include "EEPROM/eeprom.h"
 #include "FLASH/flash.h"
 #include "FLASH/lfs_port.h"
@@ -126,6 +133,13 @@ static void Storage_InitOrDie(void) {
   // (void)LFS_EnableMappedRead(1);
 }
 
+static void ui_hello(void)
+{
+  lv_obj_t * label = lv_label_create(lv_screen_active());
+  lv_label_set_text(label, "Hello, LVGL 9!");
+  lv_obj_center(label);
+}
+
 /* USER CODE END 0 */
 
 /**
@@ -174,7 +188,9 @@ int main(void)
   MX_QUADSPI_Init();
   MX_I2C1_Init();
   MX_RNG_Init();
+  MX_TIM12_Init();
   /* USER CODE BEGIN 2 */
+  HAL_TIM_Base_Start_IT(&htim12);
   /* 初始化 SDRAM */
   SDRAM_Init();
   /* 初始化 QSPI NOR + littlefs */
@@ -182,26 +198,21 @@ int main(void)
   /* LCD/UI */
   LCD_DoubleBufferInit();
   LCD_DisplayON();
-  Launcher_Init();
-  static uint8_t pa0_prev = 0, pc13_prev = 0;
-  static int selected_app = 0;
+
+  lvgl_init();
+  // lv_obj_t *label = lv_label_create(lv_screen_active());
+  // lv_label_set_text(label, "Hello LVGL 9.4!");
+  // lv_obj_center(label);
+  lv_demo_widgets();
+  // ui_hello();
+  // Launcher_Init();
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1) {
-    uint8_t pa0 = (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_0) == GPIO_PIN_SET);
-    uint8_t pc13 = (HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13) == GPIO_PIN_SET);
-
-    if (pa0 && !pa0_prev) selected_app++;
-    if (pc13 && !pc13_prev) selected_app--;
-
-    pa0_prev = pa0;
-    pc13_prev = pc13;
-    // 自动节流到60Hz
-    Launcher_Loop(&selected_app);
-    // HAL_Delay(16);
-    // HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
+    lvgl_task_handler();
+    HAL_Delay(5);  // 5ms调用一次
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
