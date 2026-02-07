@@ -25,6 +25,7 @@
 #include "ltdc.h"
 #include "mdma.h"
 #include "quadspi.h"
+#include "rng.h"
 #include "sdmmc.h"
 #include "usart.h"
 #include "gpio.h"
@@ -44,6 +45,7 @@
 #include "EEPROM/eeprom.h"
 #include "FLASH/flash.h"
 #include "FLASH/lfs_port.h"
+#include "RNG/rng_port.h"
 #include "UID/uid.h"
 /* USER CODE END Includes */
 
@@ -171,35 +173,16 @@ int main(void)
   MX_DMA2D_Init();
   MX_QUADSPI_Init();
   MX_I2C1_Init();
+  MX_RNG_Init();
   /* USER CODE BEGIN 2 */
   /* 初始化 SDRAM */
   SDRAM_Init();
-
-  bsp_uid96_t id = BSP_UID_Read96();
-
-  char uid_hex[25];
-  BSP_UID_ToHex(uid_hex);
-
-  char short_id[14];
-  BSP_UID_MakeShortID_Base32(short_id, 0x13572468u); // salt 你自己定一个常量
-
-  uint32_t devid = BSP_Chip_GetDEVID();
-  uint32_t revid = BSP_Chip_GetREVID();
-
-  // 这里你换成你的日志输出
-  // printf("UID: %s\r\n", uid_hex);
-  // printf("ShortID: %s\r\n", short_id);
-  // printf("DEVID: 0x%lX REVID: 0x%lX\r\n", devid, revid);
-  (void)id; (void)devid; (void)revid;
-
   /* 初始化 QSPI NOR + littlefs */
   Storage_InitOrDie();
-
   /* LCD/UI */
   LCD_DoubleBufferInit();
   LCD_DisplayON();
   Launcher_Init();
-
   static uint8_t pa0_prev = 0, pc13_prev = 0;
   static int selected_app = 0;
   /* USER CODE END 2 */
@@ -248,8 +231,9 @@ void SystemClock_Config(void)
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI48|RCC_OSCILLATORTYPE_HSE;
   RCC_OscInitStruct.HSEState = RCC_HSE_ON;
+  RCC_OscInitStruct.HSI48State = RCC_HSI48_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
   RCC_OscInitStruct.PLL.PLLM = 5;
