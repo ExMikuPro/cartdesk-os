@@ -27,7 +27,6 @@
 #include "quadspi.h"
 #include "rng.h"
 #include "sdmmc.h"
-#include "tim.h"
 #include "usart.h"
 #include "gpio.h"
 #include "fmc.h"
@@ -133,11 +132,50 @@ static void Storage_InitOrDie(void) {
   // (void)LFS_EnableMappedRead(1);
 }
 
-static void ui_hello(void)
+static lv_obj_t *g_box = NULL;
+
+static void box_anim_x(void *obj, int32_t v)
 {
-  lv_obj_t * label = lv_label_create(lv_screen_active());
-  lv_label_set_text(label, "Hello, LVGL 9!");
-  lv_obj_center(label);
+  lv_obj_set_x((lv_obj_t *)obj, v);
+}
+
+void ui_test_moving_box_start(void)
+{
+  // 清空屏幕（可选，但建议排障时干净一点）
+  lv_obj_clean(lv_screen_active());
+
+  // 背景设为不透明纯黑（避免透明叠加引起“看起来像重影”）
+  lv_obj_set_style_bg_opa(lv_screen_active(), LV_OPA_COVER, 0);
+  lv_obj_set_style_bg_color(lv_screen_active(), lv_color_hex(0x000000), 0);
+
+  // 创建小方块
+  const int32_t box_w = 40;
+  const int32_t box_h = 40;
+
+  g_box = lv_obj_create(lv_screen_active());
+  lv_obj_set_size(g_box, box_w, box_h);
+  lv_obj_set_style_bg_opa(g_box, LV_OPA_COVER, 0);
+  lv_obj_set_style_bg_color(g_box, lv_color_hex(0x00FF00), 0); // 亮绿色方便观察
+  lv_obj_set_style_border_width(g_box, 0, 0);
+  lv_obj_set_style_radius(g_box, 0, 0);
+
+  // 初始位置：垂直居中，x=0
+  lv_obj_set_y(g_box, (LCD_H - box_h) / 2);
+  lv_obj_set_x(g_box, 0);
+
+  // 做左右往返动画
+  lv_anim_t a;
+  lv_anim_init(&a);
+  lv_anim_set_var(&a, g_box);
+  lv_anim_set_exec_cb(&a, box_anim_x);
+  lv_anim_set_values(&a, 0, LCD_W - box_w);
+
+  // 速度：这里 1000ms 从左到右；再 1000ms 从右到左
+  lv_anim_set_time(&a, 1000);
+  lv_anim_set_playback_time(&a, 1000);
+
+  lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
+  lv_anim_start(&a);
 }
 
 /* USER CODE END 0 */
@@ -188,9 +226,7 @@ int main(void)
   MX_QUADSPI_Init();
   MX_I2C1_Init();
   MX_RNG_Init();
-  MX_TIM12_Init();
   /* USER CODE BEGIN 2 */
-  HAL_TIM_Base_Start_IT(&htim12);
   /* 初始化 SDRAM */
   SDRAM_Init();
   /* 初始化 QSPI NOR + littlefs */
@@ -203,8 +239,9 @@ int main(void)
   // lv_obj_t *label = lv_label_create(lv_screen_active());
   // lv_label_set_text(label, "Hello LVGL 9.4!");
   // lv_obj_center(label);
-  lv_demo_widgets();
+  // lv_demo_widgets();
   // ui_hello();
+  ui_test_moving_box_start();
   // Launcher_Init();
   /* USER CODE END 2 */
 
