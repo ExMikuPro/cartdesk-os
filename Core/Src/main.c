@@ -41,7 +41,13 @@
 #include "../Driver/SDRAM/sdram.h"
 #include "Core/Screen/Page/ui_screen_launcher.h"
 
+
+#include "demos/lv_demos.h"
+
 /* Storage: QSPI NOR + littlefs */
+#include "Core/APPS/LVGL/port/lvgl_init.h"
+#include "Core/APPS/LVGL/src/core/lv_obj_pos.h"
+#include "Core/APPS/LVGL/src/widgets/label/lv_label.h"
 #include "EEPROM/eeprom.h"
 #include "FLASH/flash.h"
 #include "FLASH/lfs_port.h"
@@ -126,6 +132,52 @@ static void Storage_InitOrDie(void) {
   // (void)LFS_EnableMappedRead(1);
 }
 
+static lv_obj_t *g_box = NULL;
+
+static void box_anim_x(void *obj, int32_t v)
+{
+  lv_obj_set_x((lv_obj_t *)obj, v);
+}
+
+void ui_test_moving_box_start(void)
+{
+  // 清空屏幕（可选，但建议排障时干净一点）
+  lv_obj_clean(lv_screen_active());
+
+  // 背景设为不透明纯黑（避免透明叠加引起“看起来像重影”）
+  lv_obj_set_style_bg_opa(lv_screen_active(), LV_OPA_COVER, 0);
+  lv_obj_set_style_bg_color(lv_screen_active(), lv_color_hex(0x000000), 0);
+
+  // 创建小方块
+  const int32_t box_w = 40;
+  const int32_t box_h = 40;
+
+  g_box = lv_obj_create(lv_screen_active());
+  lv_obj_set_size(g_box, box_w, box_h);
+  lv_obj_set_style_bg_opa(g_box, LV_OPA_COVER, 0);
+  lv_obj_set_style_bg_color(g_box, lv_color_hex(0x00FF00), 0); // 亮绿色方便观察
+  lv_obj_set_style_border_width(g_box, 0, 0);
+  lv_obj_set_style_radius(g_box, 0, 0);
+
+  // 初始位置：垂直居中，x=0
+  lv_obj_set_y(g_box, (LCD_H - box_h) / 2);
+  lv_obj_set_x(g_box, 0);
+
+  // 做左右往返动画
+  lv_anim_t a;
+  lv_anim_init(&a);
+  lv_anim_set_var(&a, g_box);
+  lv_anim_set_exec_cb(&a, box_anim_x);
+  lv_anim_set_values(&a, 0, LCD_W - box_w);
+
+  // 速度：这里 1000ms 从左到右；再 1000ms 从右到左
+  lv_anim_set_time(&a, 1000);
+  lv_anim_set_playback_time(&a, 1000);
+
+  lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
+  lv_anim_start(&a);
+}
+
 /* USER CODE END 0 */
 
 /**
@@ -180,28 +232,20 @@ int main(void)
   /* 初始化 QSPI NOR + littlefs */
   Storage_InitOrDie();
   /* LCD/UI */
-  LCD_DoubleBufferInit();
+  // LCD_DoubleBufferInit();
+
+  lvgl_init();
+  ui_test_moving_box_start();
   LCD_DisplayON();
-  Launcher_Init();
-  static uint8_t pa0_prev = 0, pc13_prev = 0;
-  static int selected_app = 0;
+  // Launcher_Init();
+  // LauncherLVGL_Create(lv_display_get_default());
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1) {
-    uint8_t pa0 = (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_0) == GPIO_PIN_SET);
-    uint8_t pc13 = (HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13) == GPIO_PIN_SET);
-
-    if (pa0 && !pa0_prev) selected_app++;
-    if (pc13 && !pc13_prev) selected_app--;
-
-    pa0_prev = pa0;
-    pc13_prev = pc13;
-    // 自动节流到60Hz
-    Launcher_Loop(&selected_app);
-    // HAL_Delay(16);
-    // HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
+    lvgl_task_handler();
+    HAL_Delay(5);  // 5ms调用一次
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */

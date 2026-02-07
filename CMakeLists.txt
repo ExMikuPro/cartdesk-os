@@ -63,6 +63,15 @@ add_executable(${CMAKE_PROJECT_NAME}
         Core/Driver/UID/uid.h
         Core/Driver/RNG/rng_port.c
         Core/Driver/RNG/rng_port.h
+        Core/APPS/LVGL/port/lv_port_disp.c
+        Core/APPS/LVGL/port/lv_port_disp.h
+        Core/APPS/LVGL/port/lv_port_tick.c
+        Core/APPS/LVGL/port/lv_port_tick.h
+        Core/APPS/LVGL/port/lv_port_indev.c
+        Core/APPS/LVGL/port/lv_port_indev.h
+        Core/APPS/LVGL/port/lvgl_init.c
+        Core/APPS/LVGL/port/lvgl_init.h
+        Core/APPS/LVGL/lv_conf.h
 
 )
 
@@ -104,7 +113,39 @@ add_library(lua STATIC
 #        ${LUA_SRC_DIR}/lstrlib.c
         ${LUA_SRC_DIR}/ltablib.c
         ${LUA_SRC_DIR}/lutf8lib.c
+
 )
+
+# ===== LVGL v9.x =====
+set(LVGL_DIR ${CMAKE_SOURCE_DIR}/Core/APPS/LVGL)
+
+file(GLOB_RECURSE LVGL_SOURCES CONFIGURE_DEPENDS
+        ${LVGL_DIR}/src/*.c
+        ${LVGL_DIR}/demos/widgets/*.c
+)
+
+add_library(lvgl STATIC ${LVGL_SOURCES})
+
+target_include_directories(lvgl PUBLIC
+        ${LVGL_DIR}
+        ${LVGL_DIR}/src
+        ${LVGL_DIR}/port
+
+        ${CMAKE_SOURCE_DIR}/Core/Inc
+
+        ${CMAKE_SOURCE_DIR}/Drivers/STM32H7xx_HAL_Driver/Inc
+        ${CMAKE_SOURCE_DIR}/Drivers/STM32H7xx_HAL_Driver/Inc/Legacy
+
+        ${CMAKE_SOURCE_DIR}/Drivers/CMSIS/Include
+        ${CMAKE_SOURCE_DIR}/Drivers/CMSIS/Device/ST/STM32H7xx/Include
+)
+
+# 让 LVGL 使用你的 lv_conf.h（放在 LVGL_DIR 或 LVGL_DIR/port 里都行）
+target_compile_definitions(lvgl PUBLIC
+        LV_CONF_INCLUDE_SIMPLE=1
+        STM32H743xx
+)
+
 
 # 去重：上面我写了两次 lstrlib.c，你删掉其中一个（保留一个即可）
 
@@ -144,7 +185,7 @@ list(REMOVE_ITEM CMAKE_C_IMPLICIT_LINK_LIBRARIES ob)
 # Add linked libraries
 target_link_libraries(${CMAKE_PROJECT_NAME}
     stm32cubemx
-
+        lvgl
     # Add user defined libraries
     lua
     m
