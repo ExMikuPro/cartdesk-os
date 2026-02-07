@@ -69,6 +69,9 @@
     #define LV_DRAW_SW_SHADOW_CACHE_SIZE 0
     #define LV_DRAW_SW_CIRCLE_CACHE_SIZE 4
     #define LV_DRAW_SW_GRADIENT_CACHE_SIZE 1
+#define LV_USE_DRAW_DMA2D               1
+#define LV_DRAW_DMA2D_HAL_INCLUDE       "stm32h7xx_hal.h"
+#define LV_USE_DRAW_DMA2D_INTERRUPT     1
 #endif
 
 /*=================

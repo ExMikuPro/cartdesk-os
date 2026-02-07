@@ -6,32 +6,35 @@
 
 #ifdef __cplusplus
 extern "C" {
+
 #endif
 
- /*********************
-  *      INCLUDES
-  *********************/
+/*********************
+ *      INCLUDES
+ *********************/
 #include "Core/APPS/LVGL/lvgl.h"
 #include "stm32h7xx_hal.h"
 
- /*********************
-  *      DEFINES
-  *********************/
+/*********************
+ *      DEFINES
+ *********************/
 
- /**********************
-  *      TYPEDEFS
-  **********************/
+/**********************
+ *      TYPEDEFS
+ **********************/
 
- /**********************
-  * GLOBAL PROTOTYPES
-  **********************/
- void lv_port_disp_init(void);
- void disp_enable_update(void);
- void disp_disable_update(void);
+/**********************
+ * GLOBAL PROTOTYPES
+ **********************/
+void lv_port_disp_init(void);
 
- /**********************
-  *      MACROS
-  **********************/
+void disp_enable_update(void);
+
+void disp_disable_update(void);
+
+/**********************
+ *      MACROS
+ **********************/
 
 #ifdef __cplusplus
 } /*extern "C"*/
