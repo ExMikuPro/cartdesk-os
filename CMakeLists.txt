@@ -130,11 +130,20 @@ target_include_directories(lvgl PUBLIC
         ${LVGL_DIR}
         ${LVGL_DIR}/src
         ${LVGL_DIR}/port
+
+        ${CMAKE_SOURCE_DIR}/Core/Inc
+
+        ${CMAKE_SOURCE_DIR}/Drivers/STM32H7xx_HAL_Driver/Inc
+        ${CMAKE_SOURCE_DIR}/Drivers/STM32H7xx_HAL_Driver/Inc/Legacy
+
+        ${CMAKE_SOURCE_DIR}/Drivers/CMSIS/Include
+        ${CMAKE_SOURCE_DIR}/Drivers/CMSIS/Device/ST/STM32H7xx/Include
 )
 
 # 让 LVGL 使用你的 lv_conf.h（放在 LVGL_DIR 或 LVGL_DIR/port 里都行）
 target_compile_definitions(lvgl PUBLIC
         LV_CONF_INCLUDE_SIMPLE=1
+        STM32H743xx
 )
 
 

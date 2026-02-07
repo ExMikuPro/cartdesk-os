@@ -115,6 +115,8 @@
 /* 文本选择支持 */
 #define LV_TXT_BREAK_CHARS " ,.;:-_"
 
+#define LV_USE_ST_LTDC 1
+
 /*=================
    WIDGET USAGE
  ==================*/
