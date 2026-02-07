@@ -31,6 +31,7 @@ set(MX_Application_Src
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/crc.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/dma2d.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/fmc.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/i2c.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/ltdc.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/mdma.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/quadspi.c

@@ -57,6 +57,10 @@ add_executable(${CMAKE_PROJECT_NAME}
         Core/Driver/FLASH/lfs_util.h
         Core/Driver/FLASH/lfs_port.c
         Core/Driver/FLASH/lfs_port.h
+        Core/Driver/EEPROM/eeprom.c
+        Core/Driver/EEPROM/eeprom.h
+        Core/Driver/UID/uid.c
+        Core/Driver/UID/uid.h
 
 )
 
