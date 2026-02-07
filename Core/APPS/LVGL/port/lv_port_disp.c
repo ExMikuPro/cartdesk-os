@@ -28,7 +28,6 @@ void lv_port_disp_init(void)
 
 
   lv_display_t * disp = lv_st_ltdc_create_direct(fb, fb1, 1);
-
   /* DIRECT：LVGL直接画到fb里 */
   lv_st_ltdc_create_direct(fb,fb1,1);
   lv_display_set_default(disp);
