@@ -61,6 +61,8 @@ add_executable(${CMAKE_PROJECT_NAME}
         Core/Driver/EEPROM/eeprom.h
         Core/Driver/UID/uid.c
         Core/Driver/UID/uid.h
+        Core/Driver/RNG/rng_port.c
+        Core/Driver/RNG/rng_port.h
 
 )
 
