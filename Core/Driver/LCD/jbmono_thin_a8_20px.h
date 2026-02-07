@@ -1,8 +1,14 @@
 // Auto-generated JetBrains Mono THIN 20px A8 bitmap font (ASCII 0x20..0x7E)
 // Each glyph is an A8 alpha mask (0..255). Blend onto ARGB8888.
-#pragma once
-#include <stdint.h>
 
+#pragma once
+#include "lvgl.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+  extern const lv_font_t jbmono_thin_a8_20px_lvgl;
 
 #define JBMONO_FIRST 32
 #define JBMONO_LAST  126

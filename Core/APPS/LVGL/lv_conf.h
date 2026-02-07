@@ -33,6 +33,8 @@
 /* LVGL内存池大小 (字节) - STM32H743有充足的SRAM */
 #define LV_MEM_SIZE    (128U * 1024U)  /* 128KB */
 
+#define LV_FONT_DEFAULT &lv_font_montserrat_20
+
 /* 内存池缓冲区位置 (可选: 放到SDRAM以节省SRAM) */
 // #define LV_MEM_POOL_INCLUDE your_alloc_declaration
 // #define LV_MEM_POOL_ALLOC   your_alloc_function
@@ -208,5 +210,37 @@
 #define LV_USE_DEMO_BENCHMARK  0
 #define LV_USE_DEMO_STRESS     0
 #define LV_USE_DEMO_MUSIC      0
+
+/** 1: Enable system monitor component */
+#define LV_USE_SYSMON   0
+#if LV_USE_SYSMON
+    /** Get the idle percentage. E.g. uint32_t my_get_idle(void); */
+    #define LV_SYSMON_GET_IDLE lv_os_get_idle_percent
+    /** 1: Enable usage of lv_os_get_proc_idle_percent.*/
+    #define LV_SYSMON_PROC_IDLE_AVAILABLE 0
+    #if LV_SYSMON_PROC_IDLE_AVAILABLE
+        /** Get the applications idle percentage.
+         * - Requires `LV_USE_OS == LV_OS_PTHREAD` */
+        #define LV_SYSMON_GET_PROC_IDLE lv_os_get_proc_idle_percent
+    #endif
+
+    /** 1: Show CPU usage and FPS count.
+     *  - Requires `LV_USE_SYSMON = 1` */
+    #define LV_USE_PERF_MONITOR 1
+    #if LV_USE_PERF_MONITOR
+        #define LV_USE_PERF_MONITOR_POS LV_ALIGN_BOTTOM_RIGHT
+
+        /** 0: Displays performance data on the screen; 1: Prints performance data using log. */
+        #define LV_USE_PERF_MONITOR_LOG_MODE 0
+    #endif
+
+    /** 1: Show used memory and memory fragmentation.
+     *     - Requires `LV_USE_STDLIB_MALLOC = LV_STDLIB_BUILTIN`
+     *     - Requires `LV_USE_SYSMON = 1`*/
+    #define LV_USE_MEM_MONITOR 0
+    #if LV_USE_MEM_MONITOR
+        #define LV_USE_MEM_MONITOR_POS LV_ALIGN_BOTTOM_LEFT
+    #endif
+#endif /*LV_USE_SYSMON*/
 
 #endif /* LV_CONF_H */

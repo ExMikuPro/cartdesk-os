@@ -232,17 +232,13 @@ int main(void)
   /* 初始化 QSPI NOR + littlefs */
   Storage_InitOrDie();
   /* LCD/UI */
-  LCD_DoubleBufferInit();
-  LCD_DisplayON();
+  // LCD_DoubleBufferInit();
 
   lvgl_init();
-  // lv_obj_t *label = lv_label_create(lv_screen_active());
-  // lv_label_set_text(label, "Hello LVGL 9.4!");
-  // lv_obj_center(label);
-  // lv_demo_widgets();
-  // ui_hello();
   ui_test_moving_box_start();
+  LCD_DisplayON();
   // Launcher_Init();
+  // LauncherLVGL_Create(lv_display_get_default());
   /* USER CODE END 2 */
 
   /* Infinite loop */
