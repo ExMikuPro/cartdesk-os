@@ -1,257 +1,437 @@
+/**
+ * @file touch.c
+ * @brief Goodix GT911 电容触摸屏驱动实现
+ */
+
 #include "touch.h"
-
-#include <string.h>
-
 #include "i2c.h"
+#include <string.h>
+#include <stdio.h>
 
-static void Touch_Restart(void) {
-  HAL_GPIO_WritePin(TOUCH_RST_GPIO_Port, TOUCH_RST_Pin, GPIO_PIN_RESET);
-  HAL_GPIO_WritePin(TOUCH_INT_GPIO_Port, TOUCH_INT_Pin, GPIO_PIN_RESET);
-  HAL_Delay(20);
-  HAL_GPIO_WritePin(TOUCH_RST_GPIO_Port, TOUCH_RST_Pin, GPIO_PIN_SET);
+/* ==================== 私有变量 ==================== */
+static Touch_Data_t g_touch_data = {0};                              // 触摸数据
+static int16_t g_last_x[GT911_MAX_TOUCH_POINTS] = {-1,-1,-1,-1,-1};  // 上次X坐标
+static int16_t g_last_y[GT911_MAX_TOUCH_POINTS] = {-1,-1,-1,-1,-1};  // 上次Y坐标
+static volatile bool g_touch_irq_pending = false;                    // 中断待处理标志
+static Touch_IRQ_Callback_t g_irq_callback = NULL;                   // 中断回调函数
 
-  GPIO_InitTypeDef GPIO_InitStruct = {0};
-  GPIO_InitStruct.Pin = TOUCH_INT_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
-  GPIO_InitStruct.Pull = GPIO_PULLDOWN;
-  HAL_GPIO_Init(TOUCH_INT_GPIO_Port, &GPIO_InitStruct);
-}
+/* I2C超时时间 */
+#define I2C_TIMEOUT_MS  100
 
-void Touch_Init(void) {
-  Touch_Restart();
-}
-void Touch_Test(void) {
-  uint8_t test[3] = {0x8050 >> 8, 0x8050 & 0xff};
-  uint8_t retry = 0;
-  int8_t ret = -1;
+/* ==================== 私有函数声明 ==================== */
+static void Touch_HW_Reset(void);
+static bool Touch_I2C_Read(uint16_t reg_addr, uint8_t *buf, uint16_t len);
+static bool Touch_I2C_Write(uint16_t reg_addr, uint8_t *buf, uint16_t len);
 
-  while(retry++ < 5)
-  {
-    ret = GTP_I2C_Read(0xBA, test, 3);
-    if (ret > 0)
-    {
-      break;
-    }
-  }
-}
+/* ==================== 硬件层函数 ==================== */
 
-int32_t I2C_Transfer(struct i2c_msg *msgs, int num) {
-  int32_t im = 0;
-  int32_t ret = 0;
-  for (im = 0; ret == 0 && im != num; im++) {
-    if (msgs[im].flags & READ_Bytes) {
-      ret = HAL_I2C_Master_Receive(&hi2c2,msgs[im].addr,msgs[im].buf,msgs[im].len,1000);
-    } else {
-      ret = HAL_I2C_Master_Transmit(&hi2c2,msgs[im].addr,msgs[im].buf,msgs[im].len,1000);
-    }
-  }
-  if (ret) return ret;
-  return im;
-}
-
-static int32_t GTP_I2C_Read(uint8_t client_addr, uint8_t *buf, int32_t len)
+/**
+ * @brief 硬件复位GT911芯片
+ * @note  按照GT911数据手册的复位时序操作
+ */
+static void Touch_HW_Reset(void)
 {
-  struct i2c_msg msgs[2];
-  int32_t ret=-1;
-  int32_t retries = 0;
+    GPIO_InitTypeDef GPIO_InitStruct = {0};
 
-  msgs[0].flags = !0x0001;					//д��
-  msgs[0].addr  = client_addr;					//IIC�豸��ַ
-  msgs[0].len   = GTP_ADDR_LENGTH;	//�Ĵ�����ַΪ2�ֽ�(��д�����ֽڵ�����)
-  msgs[0].buf   = &buf[0];						//buf[0~1]�洢����Ҫ��ȡ�ļĴ�����ַ
+    /* 配置RST和INT引脚为输出模式 */
+    GPIO_InitStruct.Pin = TOUCH_RST_Pin | TOUCH_INT_Pin;
+    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+    GPIO_InitStruct.Pull = GPIO_PULLDOWN;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+    HAL_GPIO_Init(GPIOG, &GPIO_InitStruct);
 
-  msgs[1].flags = 0x0001;					//��ȡ
-  msgs[1].addr  = client_addr;					//IIC�豸��ַ
-  msgs[1].len   = len - GTP_ADDR_LENGTH;	//Ҫ��ȡ�����ݳ���
-  msgs[1].buf   = &buf[GTP_ADDR_LENGTH];	//buf[GTP_ADDR_LENGTH]֮��Ļ������洢����������
+    /* 执行复位时序 */
+    HAL_GPIO_WritePin(TOUCH_RST_GPIO_Port, TOUCH_RST_Pin, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(TOUCH_INT_GPIO_Port, TOUCH_INT_Pin, GPIO_PIN_RESET);
+    HAL_Delay(20);
 
-  while(retries < 5)
-  {
-    ret = I2C_Transfer( msgs, 2);					//����IIC���ݴ�����̺�������2���������
-    if(ret == 2)break;
-    retries++;
-  }
-  if((retries >= 5))
-  {
+    HAL_GPIO_WritePin(TOUCH_RST_GPIO_Port, TOUCH_RST_Pin, GPIO_PIN_SET);
+    HAL_Delay(100);  // 等待芯片启动
 
-  }
-  return ret;
-}
-static int32_t GTP_I2C_Write(uint8_t client_addr,uint8_t *buf,int32_t len)
-{
-  struct i2c_msg msg;
-  int32_t ret = -1;
-  int32_t retries = 0;
-
-  /*һ��д���ݵĹ���ֻ��Ҫһ���������:
-   * 1. IIC���� д�� ���ݼĴ�����ַ������
-   * */
-  msg.flags = !0x0001;			//д��
-  msg.addr  = client_addr;			//���豸��ַ
-  msg.len   = len;							//����ֱ�ӵ���(�Ĵ�����ַ����+д��������ֽ���)
-  msg.buf   = buf;						//ֱ������д�뻺�����е�����(�����˼Ĵ�����ַ)
-
-  while(retries < 5)
-  {
-    ret = I2C_Transfer(&msg, 1);	//����IIC���ݴ�����̺�����1���������
-    if (ret == 1)break;
-    retries++;
-  }
-  if((retries >= 5))
-  {
-
-  }
-  return ret;
+    /* 配置INT引脚为下降沿中断模式 */
+    GPIO_InitStruct.Pin = TOUCH_INT_Pin;
+    GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
+    GPIO_InitStruct.Pull = GPIO_PULLUP;
+    HAL_GPIO_Init(TOUCH_INT_GPIO_Port, &GPIO_InitStruct);
 }
 
-
-void Goodix_TS_Work_Func(void)
+/**
+ * @brief 通过I2C读取GT911数据
+ * @param reg_addr 寄存器地址 (16位)
+ * @param buf 数据缓冲区
+ * @param len 读取长度
+ * @return true: 成功; false: 失败
+ */
+static bool Touch_I2C_Read(uint16_t reg_addr, uint8_t *buf, uint16_t len)
 {
-    uint8_t  end_cmd[3] = {0x814E >> 8, 0x814E & 0xFF, 0};
-    uint8_t  point_data[2 + 1 + 8 * 5 + 1]={0x814E >> 8, 0x814E & 0xFF};
-    uint8_t  touch_num = 0;
-    uint8_t  finger = 0;
-    static uint16_t pre_touch = 0;
-    static uint8_t pre_id[5] = {0};
+    uint8_t addr_buf[2];
+    addr_buf[0] = (reg_addr >> 8) & 0xFF;  // 高字节
+    addr_buf[1] = reg_addr & 0xFF;         // 低字节
 
-    uint8_t client_addr=0xBA;
-    uint8_t* coor_data = NULL;
-    int32_t input_x = 0;
-    int32_t input_y = 0;
-    int32_t input_w = 0;
-    uint8_t id = 0;
+    HAL_StatusTypeDef status;
 
-    int32_t i  = 0;
-    int32_t ret = -1;
-
-    ret = GTP_I2C_Read(client_addr, point_data, 12);//10�ֽڼĴ�����2�ֽڵ�ַ
-    if (ret < 0)
-    {
-
-        return;
+    /* 发送寄存器地址 */
+    status = HAL_I2C_Master_Transmit(&hi2c2, GT911_I2C_ADDR, addr_buf, 2, I2C_TIMEOUT_MS);
+    if (status != HAL_OK) {
+        return false;
     }
 
-    finger = point_data[GTP_ADDR_LENGTH];//״̬�Ĵ�������
+    /* 读取数据 */
+    status = HAL_I2C_Master_Receive(&hi2c2, GT911_I2C_ADDR, buf, len, I2C_TIMEOUT_MS);
+    return (status == HAL_OK);
+}
 
-    if (finger == 0x00)		//û�����ݣ��˳�
-    {
-        return;
+/**
+ * @brief 通过I2C写入GT911数据
+ * @param reg_addr 寄存器地址 (16位)
+ * @param buf 数据缓冲区
+ * @param len 写入长度
+ * @return true: 成功; false: 失败
+ */
+static bool Touch_I2C_Write(uint16_t reg_addr, uint8_t *buf, uint16_t len)
+{
+    uint8_t write_buf[64];  // 临时缓冲区
+
+    /* 防止缓冲区溢出 */
+    if (len + 2 > sizeof(write_buf)) {
+        return false;
     }
 
-    if((finger & 0x80) == 0)//�ж�buffer statusλ
-    {
-        goto exit_work_func;//����δ������������Ч
+    /* 组装数据: 寄存器地址 + 数据 */
+    write_buf[0] = (reg_addr >> 8) & 0xFF;  // 高字节
+    write_buf[1] = reg_addr & 0xFF;         // 低字节
+    memcpy(&write_buf[2], buf, len);
+
+    HAL_StatusTypeDef status = HAL_I2C_Master_Transmit(&hi2c2, GT911_I2C_ADDR,
+                                                        write_buf, len + 2, I2C_TIMEOUT_MS);
+    return (status == HAL_OK);
+}
+
+/* ==================== 公共API实现 ==================== */
+
+/**
+ * @brief 初始化GT911触摸控制器
+ */
+void Touch_Init(void)
+{
+    /* 硬件复位 */
+    Touch_HW_Reset();
+
+    /* 读取并验证产品ID */
+    uint8_t product_id[4] = {0};
+    if (Touch_ReadProductID(product_id)) {
+        // 产品ID应为 "911"
+        if (product_id[0] == '9' && product_id[1] == '1' && product_id[2] == '1') {
+            // 验证成功
+        }
     }
 
-    touch_num = finger & 0x0f;//�������
-    if (touch_num > 5)
-    {
-        goto exit_work_func;//�������֧�ֵ����������˳�
+    /* 清除待处理的触摸数据 */
+    Touch_ClearStatus();
+
+    /* 清除中断标志 */
+    g_touch_irq_pending = false;
+}
+
+/**
+ * @brief 扫描触摸事件
+ * @return true: 有新的触摸数据; false: 无触摸或数据未就绪
+ */
+bool Touch_Scan(void)
+{
+    uint8_t status = 0;
+
+    /* 读取状态寄存器 */
+    if (!Touch_ReadStatus(&status)) {
+        return false;
     }
 
-    if (touch_num > 1)//��ֹһ����
-    {
-        uint8_t buf[8 * 5] = {(0x814E + 10) >> 8, (0x814E + 10) & 0xff};
-
-        ret = GTP_I2C_Read(client_addr, buf, 2 + 8 * (touch_num - 1));
-        memcpy(&point_data[12], &buf[2], 8 * (touch_num - 1));			//����������������ݵ�point_data
+    /* 检查缓冲区状态位(bit 7) */
+    if ((status & 0x80) == 0) {
+        return false;  // 数据未就绪
     }
 
+    /* 获取触摸点数量 */
+    g_touch_data.touch_count = status & 0x0F;
 
-
-    if (pre_touch>touch_num)				//pre_touch>touch_num,��ʾ�еĵ��ͷ���
-    {
-        for (i = 0; i < pre_touch; i++)						//һ����һ���㴦��
-         {
-            uint8_t j;
-           for(j=0; j<touch_num; j++)
-           {
-               coor_data = &point_data[j * 8 + 3];
-               id = coor_data[0] & 0x0F;									//track id
-              if(pre_id[i] == id)
-                break;
-
-              if(j >= touch_num-1)											//������ǰ����id���Ҳ���pre_id[i]����ʾ���ͷ�
-              {
-                 GTP_Touch_Up( pre_id[i]);
-              }
-           }
-       }
+    /* 触摸点数量校验 */
+    if (g_touch_data.touch_count > GT911_MAX_TOUCH_POINTS) {
+        Touch_ClearStatus();
+        return false;
     }
 
+    /* 如果有触摸点，读取触摸数据 */
+    if (g_touch_data.touch_count > 0) {
+        uint8_t point_data[40] = {0};  // 最多5个点 * 8字节
+        uint16_t data_len = g_touch_data.touch_count * 8;
 
-    if (touch_num)
-    {
-        for (i = 0; i < touch_num; i++)						//һ����һ���㴦��
-        {
-            coor_data = &point_data[i * 8 + 3];
+        /* 读取所有触摸点数据 */
+        if (!Touch_I2C_Read(GT911_REG_POINT_1, point_data, data_len)) {
+            Touch_ClearStatus();
+            return false;
+        }
 
-            id = coor_data[0] & 0x0F;									//track id
-            pre_id[i] = id;
+        /* 解析每个触摸点 */
+        for (uint8_t i = 0; i < g_touch_data.touch_count; i++) {
+            uint8_t *p = &point_data[i * 8];
 
-            input_x  = coor_data[1] | (coor_data[2] << 8);	//x����
-            input_y  = coor_data[3] | (coor_data[4] << 8);	//y����
-            input_w  = coor_data[5] | (coor_data[6] << 8);	//size
+            g_touch_data.points[i].track_id = p[0] & 0x0F;
+            g_touch_data.points[i].x = p[1] | (p[2] << 8);
+            g_touch_data.points[i].y = p[3] | (p[4] << 8);
+            g_touch_data.points[i].size = p[5] | (p[6] << 8);
+            g_touch_data.points[i].valid = true;
 
-            {
-                GTP_Touch_Down( id, input_x, input_y, input_w);//���ݴ���
+            /* 保存上次位置 */
+            uint8_t id = g_touch_data.points[i].track_id;
+            if (id < GT911_MAX_TOUCH_POINTS) {
+                g_last_x[id] = g_touch_data.points[i].x;
+                g_last_y[id] = g_touch_data.points[i].y;
             }
         }
+
+        /* 清空未使用的触摸点 */
+        for (uint8_t i = g_touch_data.touch_count; i < GT911_MAX_TOUCH_POINTS; i++) {
+            g_touch_data.points[i].valid = false;
+        }
+
+        g_touch_data.data_ready = true;
     }
-    else if (pre_touch)		//touch_ num=0 ��pre_touch��=0
-    {
-      for(i=0;i<pre_touch;i++)
-      {
-          GTP_Touch_Up(pre_id[i]);
-      }
-    }
+    else {
+        /* 无触摸，清空所有触摸点 */
+        memset(&g_touch_data.points, 0, sizeof(g_touch_data.points));
+        g_touch_data.data_ready = false;
 
-
-    pre_touch = touch_num;
-
-
-exit_work_func:
-    {
-        ret = GTP_I2C_Write(client_addr, end_cmd, 3);
-        if (ret < 0)
-        {
-            // GTP_INFO("I2C write end_cmd error!");
+        /* 重置上次位置 */
+        for (uint8_t i = 0; i < GT911_MAX_TOUCH_POINTS; i++) {
+            g_last_x[i] = -1;
+            g_last_y[i] = -1;
         }
     }
 
+    /* 清除状态寄存器 */
+    Touch_ClearStatus();
+
+    return g_touch_data.data_ready;
 }
 
-static int16_t pre_x[5] ={-1,-1,-1,-1,-1};
-static int16_t pre_y[5] ={-1,-1,-1,-1,-1};
-
-static void GTP_Touch_Up( int32_t id)
+/**
+ * @brief 获取当前触摸点数量
+ * @return 触摸点数量 (0-5)
+ */
+uint8_t Touch_GetNum(void)
 {
-
-
-  /*�������ͷ�,���ڴ�������*/
-  // Touch_Button_Up(pre_x[id],pre_y[id]);
-
-  /*****************************************/
-  /*�ڴ˴�����Լ��Ĵ������ͷ�ʱ�Ĵ�����̼���*/
-  /* pre_x[id],pre_y[id] ��Ϊ���µ��ͷŵ� ****/
-  /*******************************************/
-  /***idΪ�켣���(��㴥��ʱ�ж�켣)********/
-
-
-  /*�����ͷţ���pre xy ����Ϊ��*/
-  pre_x[id] = -1;
-  pre_y[id] = -1;
+    return g_touch_data.touch_count;
 }
-static void GTP_Touch_Down(int32_t id,int32_t x,int32_t y,int32_t w)
+
+/**
+ * @brief 获取指定触摸点的坐标
+ * @param index 触摸点索引 (0-4)
+ * @param x X坐标指针
+ * @param y Y坐标指针
+ * @return true: 该触摸点有效; false: 无效或索引越界
+ */
+bool Touch_GetPoint(uint8_t index, uint16_t *x, uint16_t *y)
 {
+    if (index >= GT911_MAX_TOUCH_POINTS || !g_touch_data.points[index].valid) {
+        return false;
+    }
 
+    *x = g_touch_data.points[index].x;
+    *y = g_touch_data.points[index].y;
+    return true;
+}
 
-  /************************************/
-  /*�ڴ˴�����Լ��Ĵ����㰴��ʱ������̼���*/
-  /* (x,y) ��Ϊ���µĴ����� *************/
-  /************************************/
+/**
+ * @brief 读取完整的触摸数据结构
+ * @param touch_data 触摸数据结构指针
+ * @return true: 有新数据; false: 无新数据
+ */
+bool Touch_ReadData(Touch_Data_t *touch_data)
+{
+    if (Touch_Scan()) {
+        memcpy(touch_data, &g_touch_data, sizeof(Touch_Data_t));
+        return true;
+    }
+    return false;
+}
 
-  /*prex,prey����洢��һ�δ�����λ�ã�idΪ�켣���(��㴥��ʱ�ж�켣)*/
-  pre_x[id] = x; pre_y[id] =y;
+/**
+ * @brief 获取所有有效的触摸点
+ * @param points 触摸点数组
+ * @param max_points 数组最大容量
+ * @return 实际有效的触摸点数量
+ */
+uint8_t Touch_GetAllPoints(Touch_Point_t *points, uint8_t max_points)
+{
+    uint8_t count = 0;
 
+    for (uint8_t i = 0; i < GT911_MAX_TOUCH_POINTS && count < max_points; i++) {
+        if (g_touch_data.points[i].valid) {
+            memcpy(&points[count], &g_touch_data.points[i], sizeof(Touch_Point_t));
+            count++;
+        }
+    }
+
+    return count;
+}
+
+/* ==================== 中断相关函数 ==================== */
+
+/**
+ * @brief 启用触摸中断
+ */
+void Touch_EnableIRQ(void)
+{
+    /* 配置NVIC */
+    HAL_NVIC_SetPriority(EXTI15_10_IRQn, 5, 0);
+    HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
+}
+
+/**
+ * @brief 禁用触摸中断
+ */
+void Touch_DisableIRQ(void)
+{
+    HAL_NVIC_DisableIRQ(EXTI15_10_IRQn);
+}
+
+/**
+ * @brief 检查是否有待处理的中断
+ * @return true: 有待处理的中断; false: 无
+ */
+bool Touch_IsIRQPending(void)
+{
+    bool pending = g_touch_irq_pending;
+    g_touch_irq_pending = false;
+    return pending;
+}
+
+/**
+ * @brief 注册中断回调函数
+ * @param callback 回调函数指针
+ */
+void Touch_RegisterCallback(Touch_IRQ_Callback_t callback)
+{
+    g_irq_callback = callback;
+}
+
+/**
+ * @brief 触摸中断处理函数
+ * @note  在HAL_GPIO_EXTI_Callback中调用
+ */
+void Touch_IRQHandler(void)
+{
+    /* 设置中断待处理标志 */
+    g_touch_irq_pending = true;
+
+    /* 调用用户注册的回调函数 */
+    if (g_irq_callback != NULL) {
+        g_irq_callback();
+    }
+}
+
+/* ==================== 高级功能函数 ==================== */
+
+/**
+ * @brief 读取产品ID
+ * @param id_buf 4字节产品ID缓冲区
+ * @return true: 读取成功; false: 读取失败
+ */
+bool Touch_ReadProductID(uint8_t *id_buf)
+{
+    return Touch_I2C_Read(GT911_REG_PRODUCT_ID, id_buf, 4);
+}
+
+/**
+ * @brief 读取固件版本
+ * @param version 版本号指针
+ * @return true: 读取成功; false: 读取失败
+ */
+bool Touch_ReadFirmwareVersion(uint16_t *version)
+{
+    uint8_t buf[2];
+    if (Touch_I2C_Read(GT911_REG_FIRMWARE_VER, buf, 2)) {
+        *version = (buf[1] << 8) | buf[0];
+        return true;
+    }
+    return false;
+}
+
+/**
+ * @brief 读取状态寄存器
+ * @param status 状态字节指针
+ * @return true: 读取成功; false: 读取失败
+ */
+bool Touch_ReadStatus(uint8_t *status)
+{
+    return Touch_I2C_Read(GT911_REG_STATUS, status, 1);
+}
+
+/**
+ * @brief 清除状态寄存器
+ * @return true: 清除成功; false: 清除失败
+ */
+bool Touch_ClearStatus(void)
+{
+    uint8_t clear_flag = 0;
+    return Touch_I2C_Write(GT911_REG_STATUS, &clear_flag, 1);
+}
+
+/**
+ * @brief 进入休眠模式
+ */
+void Touch_Sleep(void)
+{
+    uint8_t cmd = 0x05;
+    Touch_I2C_Write(GT911_REG_CTRL, &cmd, 1);
+}
+
+/**
+ * @brief 从休眠模式唤醒
+ */
+void Touch_Wakeup(void)
+{
+    /* 通过INT引脚唤醒 */
+    HAL_GPIO_WritePin(TOUCH_INT_GPIO_Port, TOUCH_INT_Pin, GPIO_PIN_RESET);
+    HAL_Delay(5);
+    HAL_GPIO_WritePin(TOUCH_INT_GPIO_Port, TOUCH_INT_Pin, GPIO_PIN_SET);
+    HAL_Delay(50);
+}
+
+/**
+ * @brief 打印调试信息
+ */
+void Touch_DebugInfo(void)
+{
+    uint8_t product_id[4] = {0};
+    uint16_t fw_version = 0;
+    uint8_t status = 0;
+
+    printf("\n========== GT911 触摸屏调试信息 ==========\n");
+
+    /* 产品ID */
+    if (Touch_ReadProductID(product_id)) {
+        printf("产品ID: %c%c%c (0x%02X)\n",
+               product_id[0], product_id[1], product_id[2], product_id[3]);
+    } else {
+        printf("读取产品ID失败\n");
+    }
+
+    /* 固件版本 */
+    if (Touch_ReadFirmwareVersion(&fw_version)) {
+        printf("固件版本: 0x%04X\n", fw_version);
+    } else {
+        printf("读取固件版本失败\n");
+    }
+
+    /* 当前状态 */
+    if (Touch_ReadStatus(&status)) {
+        printf("状态寄存器: 0x%02X\n", status);
+        printf("  缓冲区就绪: %s\n", (status & 0x80) ? "是" : "否");
+        printf("  触摸点数: %d\n", status & 0x0F);
+    } else {
+        printf("读取状态寄存器失败\n");
+    }
+
+    printf("==========================================\n\n");
 }

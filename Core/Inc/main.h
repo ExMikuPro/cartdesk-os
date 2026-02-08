@@ -63,6 +63,7 @@ void Error_Handler(void);
 #define TOUCH_RST_GPIO_Port GPIOG
 #define TOUCH_INT_Pin GPIO_PIN_3
 #define TOUCH_INT_GPIO_Port GPIOG
+#define TOUCH_INT_EXTI_IRQn EXTI3_IRQn
 #define LCD_BL_Pin GPIO_PIN_13
 #define LCD_BL_GPIO_Port GPIOD
 #define LED_Pin GPIO_PIN_1
