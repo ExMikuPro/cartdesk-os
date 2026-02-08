@@ -59,6 +59,10 @@ void Error_Handler(void);
 /* Private defines -----------------------------------------------------------*/
 #define BUZZER_Pin GPIO_PIN_8
 #define BUZZER_GPIO_Port GPIOI
+#define TOUCH_RST_Pin GPIO_PIN_7
+#define TOUCH_RST_GPIO_Port GPIOG
+#define TOUCH_INT_Pin GPIO_PIN_3
+#define TOUCH_INT_GPIO_Port GPIOG
 #define LCD_BL_Pin GPIO_PIN_13
 #define LCD_BL_GPIO_Port GPIOD
 #define LED_Pin GPIO_PIN_1

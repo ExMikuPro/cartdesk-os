@@ -27,6 +27,7 @@
 #include "quadspi.h"
 #include "rng.h"
 #include "sdmmc.h"
+#include "tim.h"
 #include "usart.h"
 #include "gpio.h"
 #include "fmc.h"
@@ -45,6 +46,7 @@
 #include "demos/lv_demos.h"
 
 /* Storage: QSPI NOR + littlefs */
+#include "../Driver/TOUCH/touch.h"
 #include "Core/APPS/LVGL/port/lvgl_init.h"
 #include "Core/APPS/LVGL/src/core/lv_obj_pos.h"
 #include "Core/APPS/LVGL/src/widgets/label/lv_label.h"
@@ -81,7 +83,9 @@ static FLASH_Handle g_flash;
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
+
 static void MPU_Config(void);
+
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -134,13 +138,11 @@ static void Storage_InitOrDie(void) {
 
 static lv_obj_t *g_box = NULL;
 
-static void box_anim_x(void *obj, int32_t v)
-{
-  lv_obj_set_x((lv_obj_t *)obj, v);
+static void box_anim_x(void *obj, int32_t v) {
+  lv_obj_set_x((lv_obj_t *) obj, v);
 }
 
-void ui_test_moving_box_start(void)
-{
+void ui_test_moving_box_start(void) {
   // 清空屏幕（可选，但建议排障时干净一点）
   lv_obj_clean(lv_screen_active());
 
@@ -178,15 +180,44 @@ void ui_test_moving_box_start(void)
   lv_anim_start(&a);
 }
 
+#define GT_ADDR7   0x5D              // 不通就换 0x14
+#define GT_ADDR    (GT_ADDR7 << 1)   // HAL 需要左移1位
+
+static void GT_TestRead_814D(void) {
+  HAL_StatusTypeDef st;
+  uint8_t n = 0;
+
+  // // 先确认设备在线
+  // st = HAL_I2C_IsDeviceReady(&hi2c1, GT_ADDR, 3, 1000);
+  // if (st != HAL_OK) {
+  //   __BKPT(0); // GDB看 st/hi2c1.ErrorCode
+  //   return;
+  // }
+
+  // 读 0x814D
+  st = HAL_I2C_Mem_Read(&hi2c1, GT_ADDR,
+                        0x814D, I2C_MEMADD_SIZE_16BIT,
+                        &n, 1, 100);
+
+  __BKPT(0); // 在这里用 GDB 看 n 和 st
+}
+
+static inline uint16_t tim17_us_now(void) {
+  return (uint16_t) __HAL_TIM_GET_COUNTER(&htim17);
+}
+
+void delay_us_tim17(uint16_t us) {
+  uint16_t start = tim17_us_now();
+  while ((uint16_t) (tim17_us_now() - start) < us) {
+  }
+}
 /* USER CODE END 0 */
 
 /**
   * @brief  The application entry point.
   * @retval int
   */
-int main(void)
-{
-
+int main(void) {
   /* USER CODE BEGIN 1 */
 
   /* USER CODE END 1 */
@@ -226,13 +257,31 @@ int main(void)
   MX_QUADSPI_Init();
   MX_I2C1_Init();
   MX_RNG_Init();
+  MX_I2C2_Init();
+  MX_TIM17_Init();
   /* USER CODE BEGIN 2 */
   /* 初始化 SDRAM */
   SDRAM_Init();
   /* 初始化 QSPI NOR + littlefs */
   Storage_InitOrDie();
+  HAL_TIM_Base_Start(&htim17);
   /* LCD/UI */
   // LCD_DoubleBufferInit();
+  // Touch_PollingMode_Example();
+  // GT917S_Init();
+  // int x;int y;
+  // GT917S_ReadOne(&x,&y);
+  // GT_TestRead_814D();
+  Touch_Init();
+  Touch_Test();
+
+  while (1) {
+    HAL_Delay(100);
+    Goodix_TS_Work_Func();
+  }
+
+
+
 
   lvgl_init();
   ui_test_moving_box_start();
@@ -245,7 +294,7 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1) {
     lvgl_task_handler();
-    HAL_Delay(5);  // 5ms调用一次
+    HAL_Delay(5); // 5ms调用一次
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -257,8 +306,7 @@ int main(void)
   * @brief System Clock Configuration
   * @retval None
   */
-void SystemClock_Config(void)
-{
+void SystemClock_Config(void) {
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
 
@@ -270,12 +318,13 @@ void SystemClock_Config(void)
   */
   __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE0);
 
-  while(!__HAL_PWR_GET_FLAG(PWR_FLAG_VOSRDY)) {}
+  while (!__HAL_PWR_GET_FLAG(PWR_FLAG_VOSRDY)) {
+  }
 
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI48|RCC_OSCILLATORTYPE_HSE;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI48 | RCC_OSCILLATORTYPE_HSE;
   RCC_OscInitStruct.HSEState = RCC_HSE_ON;
   RCC_OscInitStruct.HSI48State = RCC_HSI48_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
@@ -288,16 +337,15 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.PLL.PLLRGE = RCC_PLL1VCIRANGE_2;
   RCC_OscInitStruct.PLL.PLLVCOSEL = RCC_PLL1VCOWIDE;
   RCC_OscInitStruct.PLL.PLLFRACN = 0;
-  if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
-  {
+  if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK) {
     Error_Handler();
   }
 
   /** Initializes the CPU, AHB and APB buses clocks
   */
-  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
-                              |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2
-                              |RCC_CLOCKTYPE_D3PCLK1|RCC_CLOCKTYPE_D1PCLK1;
+  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK
+                                | RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2
+                                | RCC_CLOCKTYPE_D3PCLK1 | RCC_CLOCKTYPE_D1PCLK1;
   RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
   RCC_ClkInitStruct.SYSCLKDivider = RCC_SYSCLK_DIV1;
   RCC_ClkInitStruct.AHBCLKDivider = RCC_HCLK_DIV2;
@@ -306,8 +354,7 @@ void SystemClock_Config(void)
   RCC_ClkInitStruct.APB2CLKDivider = RCC_APB2_DIV2;
   RCC_ClkInitStruct.APB4CLKDivider = RCC_APB4_DIV2;
 
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_4) != HAL_OK)
-  {
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_4) != HAL_OK) {
     Error_Handler();
   }
 
@@ -320,10 +367,9 @@ void SystemClock_Config(void)
 
 /* USER CODE END 4 */
 
- /* MPU Configuration */
+/* MPU Configuration */
 
-void MPU_Config(void)
-{
+void MPU_Config(void) {
   MPU_Region_InitTypeDef MPU_InitStruct = {0};
 
   /* Disables the MPU */
@@ -422,15 +468,13 @@ void MPU_Config(void)
   HAL_MPU_ConfigRegion(&MPU_InitStruct);
   /* Enables the MPU */
   HAL_MPU_Enable(MPU_PRIVILEGED_DEFAULT);
-
 }
 
 /**
   * @brief  This function is executed in case of error occurrence.
   * @retval None
   */
-void Error_Handler(void)
-{
+void Error_Handler(void) {
   /* USER CODE BEGIN Error_Handler_Debug */
   /* User can add his own implementation to report the HAL error return state */
   __disable_irq();
@@ -446,8 +490,7 @@ void Error_Handler(void)
   * @param  line: assert_param error line source number
   * @retval None
   */
-void assert_failed(uint8_t *file, uint32_t line)
-{
+void assert_failed(uint8_t *file, uint32_t line) {
   /* USER CODE BEGIN 6 */
   /* User can add his own implementation to report the file name and line number,
      ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
