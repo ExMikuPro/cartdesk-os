@@ -341,9 +341,6 @@ int main(void)
   /* Enable D-Cache---------------------------------------------------------*/
   SCB_EnableDCache();
 
-  // SCB_DisableDCache();
-  // SCB_DisableICache(); // 可选
-
   /* MCU Configuration--------------------------------------------------------*/
 
   /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
