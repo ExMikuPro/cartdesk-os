@@ -22,6 +22,7 @@
 #include "stm32h7xx_it.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "lv_port_disp.h"
 #include "draw/dma2d/lv_draw_dma2d.h"
 #include "tick/lv_tick.h"
 /* USER CODE END Includes */
@@ -235,6 +236,7 @@ void LTDC_IRQHandler(void)
   /* USER CODE END LTDC_IRQn 0 */
   HAL_LTDC_IRQHandler(&hltdc);
   /* USER CODE BEGIN LTDC_IRQn 1 */
+  LTDC_IRQHandler_Callback();
 
   /* USER CODE END LTDC_IRQn 1 */
 }

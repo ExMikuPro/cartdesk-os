@@ -104,7 +104,7 @@
 #define LV_FONT_MONTSERRAT_48 0
 
 /* Default font */
-#define LV_FONT_DEFAULT &lv_font_montserrat_14
+// #define LV_FONT_DEFAULT &lv_font_montserrat_14
 
 /* 中文字体支持 (需要自行添加字体文件) */
 #define LV_FONT_CUSTOM_DECLARE
