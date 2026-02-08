@@ -22,6 +22,7 @@
 #include "stm32h7xx_it.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "lv_port_disp.h"
 #include "draw/dma2d/lv_draw_dma2d.h"
 #include "tick/lv_tick.h"
 /* USER CODE END Includes */
@@ -212,6 +213,20 @@ void SysTick_Handler(void)
 /******************************************************************************/
 
 /**
+  * @brief This function handles EXTI line3 interrupt.
+  */
+void EXTI3_IRQHandler(void)
+{
+  /* USER CODE BEGIN EXTI3_IRQn 0 */
+
+  /* USER CODE END EXTI3_IRQn 0 */
+  HAL_GPIO_EXTI_IRQHandler(TOUCH_INT_Pin);
+  /* USER CODE BEGIN EXTI3_IRQn 1 */
+
+  /* USER CODE END EXTI3_IRQn 1 */
+}
+
+/**
   * @brief This function handles LTDC global interrupt.
   */
 void LTDC_IRQHandler(void)
@@ -221,6 +236,7 @@ void LTDC_IRQHandler(void)
   /* USER CODE END LTDC_IRQn 0 */
   HAL_LTDC_IRQHandler(&hltdc);
   /* USER CODE BEGIN LTDC_IRQn 1 */
+  LTDC_IRQHandler_Callback();
 
   /* USER CODE END LTDC_IRQn 1 */
 }
