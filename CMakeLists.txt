@@ -72,6 +72,8 @@ add_executable(${CMAKE_PROJECT_NAME}
         Core/APPS/LVGL/port/lvgl_init.c
         Core/APPS/LVGL/port/lvgl_init.h
         Core/APPS/LVGL/lv_conf.h
+        Core/Driver/TOUCH/touch.c
+        Core/Driver/TOUCH/touch.h
 
 )
 
