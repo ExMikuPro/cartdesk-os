@@ -30,6 +30,8 @@
 #include <sys/time.h>
 #include <sys/times.h>
 
+#include "stm32h7xx_hal.h"
+
 
 /* Variables */
 extern int __io_putchar(int ch) __attribute__((weak));
@@ -173,6 +175,18 @@ int _execve(char *name, char **argv, char **env)
   (void)env;
   errno = ENOMEM;
   return -1;
+}
+
+
+int _gettimeofday(struct timeval *tv, void *tzvp)
+{
+  (void)tzvp;
+  if (tv) {
+    uint32_t ms = HAL_GetTick();
+    tv->tv_sec  = (time_t)(ms / 1000u);
+    tv->tv_usec = (suseconds_t)((ms % 1000u) * 1000u);
+  }
+  return 0;
 }
 
 // --- Picolibc Specific Section ---
