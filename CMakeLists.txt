@@ -75,6 +75,7 @@ add_executable(${CMAKE_PROJECT_NAME}
         Core/APPS/TASK/Task.h
         Core/APPS/TASK/LED.c
         Core/APPS/TASK/LVGL.c
+        Core/APPS/TASK/LUA.c
 
 )
 

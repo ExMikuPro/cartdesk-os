@@ -1,10 +1,12 @@
 #pragma once
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-void lua_demo_blink(void);
+  int  lua_init(void);
+  void lua_update_task(void);
 
 #ifdef __cplusplus
 }
