@@ -46,12 +46,14 @@
 #include "demos/lv_demos.h"
 
 /* Storage: QSPI NOR + littlefs */
+#include "lua_vm.h"
 #include "lv_port_disp.h"
 #include "lv_port_indev.h"
 #include "../Driver/TOUCH/touch.h"
 #include "Core/APPS/LVGL/port/lvgl_init.h"
 #include "Core/APPS/LVGL/src/core/lv_obj_pos.h"
 #include "Core/APPS/LVGL/src/widgets/label/lv_label.h"
+#include "Core/APPS/TASK/Task.h"
 #include "EEPROM/eeprom.h"
 #include "FLASH/flash.h"
 #include "FLASH/lfs_port.h"
@@ -216,112 +218,108 @@ void delay_us_tim17(uint16_t us) {
   * @brief EXTI外部中断回调函数
   * @param GPIO_Pin 触发中断的引脚
   */
-void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
-{
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
   if (GPIO_Pin == TOUCH_INT_Pin) {
     Touch_IRQHandler();
   }
 }
 
-static lv_obj_t * s_box = NULL;
-static lv_obj_t * s_label = NULL;
+static lv_obj_t *s_box = NULL;
+static lv_obj_t *s_label = NULL;
 
 static bool s_dragging = false;
-static int16_t s_off_x = 0;   // 手指点相对方块左上角的偏移
+static int16_t s_off_x = 0; // 手指点相对方块左上角的偏移
 static int16_t s_off_y = 0;
 
-static void drag_box_event_cb(lv_event_t * e)
-{
-    lv_event_code_t code = lv_event_get_code(e);
-    lv_obj_t * obj = lv_event_get_target(e);
-    lv_indev_t * indev = lv_event_get_indev(e);
-    if(!indev) return;
+static void drag_box_event_cb(lv_event_t *e) {
+  lv_event_code_t code = lv_event_get_code(e);
+  lv_obj_t *obj = lv_event_get_target(e);
+  lv_indev_t *indev = lv_event_get_indev(e);
+  if (!indev) return;
 
-    lv_point_t p;
-    lv_indev_get_point(indev, &p);
+  lv_point_t p;
+  lv_indev_get_point(indev, &p);
 
-    if(code == LV_EVENT_PRESSED) {
-        // 记录偏移：避免按下时方块“跳到手指中心”
-        s_dragging = true;
+  if (code == LV_EVENT_PRESSED) {
+    // 记录偏移：避免按下时方块“跳到手指中心”
+    s_dragging = true;
 
-        int16_t obj_x = lv_obj_get_x(obj);
-        int16_t obj_y = lv_obj_get_y(obj);
-        s_off_x = p.x - obj_x;
-        s_off_y = p.y - obj_y;
+    int16_t obj_x = lv_obj_get_x(obj);
+    int16_t obj_y = lv_obj_get_y(obj);
+    s_off_x = p.x - obj_x;
+    s_off_y = p.y - obj_y;
+  } else if (code == LV_EVENT_PRESSING) {
+    if (!s_dragging) return;
 
-    } else if(code == LV_EVENT_PRESSING) {
-        if(!s_dragging) return;
+    // 新位置 = 手指坐标 - 偏移
+    int16_t new_x = p.x - s_off_x;
+    int16_t new_y = p.y - s_off_y;
 
-        // 新位置 = 手指坐标 - 偏移
-        int16_t new_x = p.x - s_off_x;
-        int16_t new_y = p.y - s_off_y;
+    // 可选：限制不出屏幕（父对象一般是 screen）
+    lv_obj_t *parent = lv_obj_get_parent(obj);
+    int16_t pw = (int16_t) lv_obj_get_width(parent);
+    int16_t ph = (int16_t) lv_obj_get_height(parent);
+    int16_t ow = (int16_t) lv_obj_get_width(obj);
+    int16_t oh = (int16_t) lv_obj_get_height(obj);
 
-        // 可选：限制不出屏幕（父对象一般是 screen）
-        lv_obj_t * parent = lv_obj_get_parent(obj);
-        int16_t pw = (int16_t)lv_obj_get_width(parent);
-        int16_t ph = (int16_t)lv_obj_get_height(parent);
-        int16_t ow = (int16_t)lv_obj_get_width(obj);
-        int16_t oh = (int16_t)lv_obj_get_height(obj);
+    if (new_x < 0) new_x = 0;
+    if (new_y < 0) new_y = 0;
+    if (new_x > pw - ow) new_x = pw - ow;
+    if (new_y > ph - oh) new_y = ph - oh;
 
-        if(new_x < 0) new_x = 0;
-        if(new_y < 0) new_y = 0;
-        if(new_x > pw - ow) new_x = pw - ow;
-        if(new_y > ph - oh) new_y = ph - oh;
+    lv_obj_set_pos(obj, new_x, new_y);
 
-        lv_obj_set_pos(obj, new_x, new_y);
-
-        // 可选：显示坐标/状态
-        if(s_label) {
-            char buf[64];
-            lv_snprintf(buf, sizeof(buf), "x=%d y=%d (touch %d,%d)",
-                        (int)new_x, (int)new_y, (int)p.x, (int)p.y);
-            lv_label_set_text(s_label, buf);
-        }
-
-    } else if(code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
-        s_dragging = false;
+    // 可选：显示坐标/状态
+    if (s_label) {
+      char buf[64];
+      lv_snprintf(buf, sizeof(buf), "x=%d y=%d (touch %d,%d)",
+                  (int) new_x, (int) new_y, (int) p.x, (int) p.y);
+      lv_label_set_text(s_label, buf);
     }
+  } else if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
+    s_dragging = false;
+  }
 }
 
-void ui_test_touch_drag_start(void)
-{
-    lv_obj_t * scr = lv_scr_act();
+void ui_test_touch_drag_start(void) {
+  lv_obj_t *scr = lv_scr_act();
 
-    // 背景（可选）
-    lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
-    lv_obj_set_style_bg_color(scr, lv_color_hex(0x101018), 0);
+  // 背景（可选）
+  lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
+  lv_obj_set_style_bg_color(scr, lv_color_hex(0x101018), 0);
 
-    // 提示文字
-    s_label = lv_label_create(scr);
-    lv_label_set_text(s_label, "Hold the square and drag");
-    lv_obj_align(s_label, LV_ALIGN_TOP_MID, 0, 10);
+  // 提示文字
+  s_label = lv_label_create(scr);
+  lv_label_set_text(s_label, "Hold the square and drag");
+  lv_obj_align(s_label, LV_ALIGN_TOP_MID, 0, 10);
   lv_obj_set_style_text_color(s_label, lv_color_hex(0xFFCC00), LV_PART_MAIN);
 
-    // 可拖动方块
-    s_box = lv_obj_create(scr);
-    lv_obj_set_size(s_box, 120, 120);
-    lv_obj_set_pos(s_box, 50, 80);
+  // 可拖动方块
+  s_box = lv_obj_create(scr);
+  lv_obj_set_size(s_box, 120, 120);
+  lv_obj_set_pos(s_box, 50, 80);
 
-    // 让它更像一个块（可选）
-    lv_obj_set_style_radius(s_box, 12, 0);
-    lv_obj_set_style_bg_color(s_box, lv_color_hex(0x3DCCA3), 0);
-    lv_obj_set_style_border_width(s_box, 0, 0);
+  // 让它更像一个块（可选）
+  lv_obj_set_style_radius(s_box, 12, 0);
+  lv_obj_set_style_bg_color(s_box, lv_color_hex(0x3DCCA3), 0);
+  lv_obj_set_style_border_width(s_box, 0, 0);
 
-    // 关键：要能接收触摸事件
-    lv_obj_add_flag(s_box, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_flag(s_box, LV_OBJ_FLAG_PRESS_LOCK); // 按下后锁定目标，避免拖动时丢事件（很重要）
+  // 关键：要能接收触摸事件
+  lv_obj_add_flag(s_box, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_flag(s_box, LV_OBJ_FLAG_PRESS_LOCK); // 按下后锁定目标，避免拖动时丢事件（很重要）
 
-    // 绑定事件：按下/按住/松开
-    lv_obj_add_event_cb(s_box, drag_box_event_cb, LV_EVENT_PRESSED, NULL);
-    lv_obj_add_event_cb(s_box, drag_box_event_cb, LV_EVENT_PRESSING, NULL);
-    lv_obj_add_event_cb(s_box, drag_box_event_cb, LV_EVENT_RELEASED, NULL);
-    lv_obj_add_event_cb(s_box, drag_box_event_cb, LV_EVENT_PRESS_LOST, NULL);
+  // 绑定事件：按下/按住/松开
+  lv_obj_add_event_cb(s_box, drag_box_event_cb, LV_EVENT_PRESSED, NULL);
+  lv_obj_add_event_cb(s_box, drag_box_event_cb, LV_EVENT_PRESSING, NULL);
+  lv_obj_add_event_cb(s_box, drag_box_event_cb, LV_EVENT_RELEASED, NULL);
+  lv_obj_add_event_cb(s_box, drag_box_event_cb, LV_EVENT_PRESS_LOST, NULL);
 
-    // 方块内部文字（可选）
-    lv_obj_t * t = lv_label_create(s_box);
-    lv_label_set_text(t, "awa");
-    lv_obj_center(t);
+  // 方块内部文字（可选）
+  lv_obj_t *t = lv_label_create(s_box);
+  lv_label_set_text(t, "awa");
+  lv_obj_center(t);
 }
+
 /* USER CODE END 0 */
 
 /**
@@ -372,35 +370,42 @@ int main(void)
   MX_RNG_Init();
   MX_I2C2_Init();
   MX_TIM17_Init();
+  MX_TIM16_Init();
   /* USER CODE BEGIN 2 */
   /* 初始化 SDRAM */
   SDRAM_Init();
   /* 初始化 QSPI NOR + littlefs */
   Storage_InitOrDie();
   HAL_TIM_Base_Start(&htim17);
+  HAL_TIM_Base_Start_IT(&htim16);
   /* LCD/UI */
-  // LCD_DoubleBufferInit();
-  // Touch_PollingMode_Example();
-  // GT917S_Init();
-  // int x;int y;
-  // GT917S_ReadOne(&x,&y);
-  // GT_TestRead_814D();
   lv_init();
-  lv_port_disp_init();     // 显示端口初始化
-  lv_port_indev_init();    // ← 输入设备初始化
-  // ui_test_moving_box_start();
-  // lv_demo_widgets();
+  lv_port_disp_init(); // 显示端口初始化
+  lv_port_indev_init(); // ← 输入设备初始化
   ui_test_touch_drag_start();
   LCD_DisplayON();
+
+  lua_demo_blink();
   // Launcher_Init();
   // LauncherLVGL_Create(lv_display_get_default());
+  uint32_t t_lvgl = HAL_GetTick();
+  uint32_t t_lua = HAL_GetTick();
+  uint32_t t_fs = HAL_GetTick();
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1) {
-    lvgl_task_handler();
-    HAL_Delay(5); // 5ms调用一次
+    // uint32_t now = HAL_GetTick();
+    // if ((uint32_t)(now - t_lvgl) >= 5) {
+    //   // 最多追赶一次，避免 while 补帧
+    //   t_lvgl = now;
+    //   lv_timer_handler();
+    // }
+
+    Task_LED();
+    Task_LVGL();
+
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
