@@ -270,6 +270,7 @@ void TIM16_IRQHandler(void)
 
   if (TaskTicks_LED) TaskTicks_LED--;
   if (TaskTicks_LVGL) TaskTicks_LVGL--;
+  if (TaskTicks_LUA) TaskTicks_LUA--;
 
   /* USER CODE END TIM16_IRQn 1 */
 }
