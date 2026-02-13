@@ -58,6 +58,7 @@ void SysTick_Handler(void);
 void EXTI3_IRQHandler(void);
 void LTDC_IRQHandler(void);
 void DMA2D_IRQHandler(void);
+void TIM16_IRQHandler(void);
 void MDMA_IRQHandler(void);
 /* USER CODE BEGIN EFP */
 

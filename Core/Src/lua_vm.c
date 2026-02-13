@@ -49,7 +49,7 @@ static int lua_run_buffer(lua_State* L, const char* buf, size_t len, const char*
 }
 
 static const char* DEMO_LUA =
-"local f2 = sd.open(\"/data.bin\", \"w\")\n"
+"local f2 = sd.open(\"/aaa.bin\", \"w\")\n"
 "sd.wirte(f2, \"abc\")\n"
 "sd.close(f2)\n";
 

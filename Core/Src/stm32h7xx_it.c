@@ -25,6 +25,7 @@
 #include "lv_port_disp.h"
 #include "draw/dma2d/lv_draw_dma2d.h"
 #include "tick/lv_tick.h"
+#include "Core/APPS/TASK/Task.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -61,6 +62,7 @@
 extern DMA2D_HandleTypeDef hdma2d;
 extern LTDC_HandleTypeDef hltdc;
 extern MDMA_HandleTypeDef hmdma_mdma_channel0_sw_0;
+extern TIM_HandleTypeDef htim16;
 /* USER CODE BEGIN EV */
 
 /* USER CODE END EV */
@@ -253,6 +255,23 @@ void DMA2D_IRQHandler(void)
   /* USER CODE BEGIN DMA2D_IRQn 1 */
   lv_draw_dma2d_transfer_complete_interrupt_handler();
   /* USER CODE END DMA2D_IRQn 1 */
+}
+
+/**
+  * @brief This function handles TIM16 global interrupt.
+  */
+void TIM16_IRQHandler(void)
+{
+  /* USER CODE BEGIN TIM16_IRQn 0 */
+
+  /* USER CODE END TIM16_IRQn 0 */
+  HAL_TIM_IRQHandler(&htim16);
+  /* USER CODE BEGIN TIM16_IRQn 1 */
+
+  if (TaskTicks_LED) TaskTicks_LED--;
+  if (TaskTicks_LVGL) TaskTicks_LVGL--;
+
+  /* USER CODE END TIM16_IRQn 1 */
 }
 
 /**

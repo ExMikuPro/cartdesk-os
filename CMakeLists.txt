@@ -72,6 +72,9 @@ add_executable(${CMAKE_PROJECT_NAME}
         Core/APPS/LVGL/port/lvgl_init.c
         Core/APPS/LVGL/port/lvgl_init.h
         Core/APPS/LVGL/lv_conf.h
+        Core/APPS/TASK/Task.h
+        Core/APPS/TASK/LED.c
+        Core/APPS/TASK/LVGL.c
 
 )
 
