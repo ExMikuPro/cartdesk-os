@@ -382,7 +382,7 @@ int main(void) {
   lv_init();
   lv_port_disp_init(); // 显示端口初始化
   lv_port_indev_init(); // ← 输入设备初始化
-  ui_test_touch_drag_start();
+  // ui_test_touch_drag_start();
   LCD_DisplayON();
 
   // Launcher_Init();
