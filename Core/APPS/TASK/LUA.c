@@ -11,14 +11,14 @@ void Task_LUA() {
       if (TaskTicks_LUA == 0) {
         lua_update_task();
         LUA_Flag = 1;
-        TaskTicks_LUA = 500;
+        TaskTicks_LUA = 10;
       }
       break;
     case 1:
       if (TaskTicks_LUA == 0) {
         lua_update_task();
         LUA_Flag = 0;
-        TaskTicks_LUA = 500;
+        TaskTicks_LUA = 10;
       }
       break;
 

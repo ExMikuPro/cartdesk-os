@@ -34,15 +34,45 @@ void lua_rt_log(const char *s)
 __attribute__((weak))
 const char* lua_get_boot_script(size_t *out_len)
 {
-    /* 默认给一个空脚本，建议你在工程里覆盖此函数 */
-    static const char kEmpty[] =
-    "function start() end\n"
+    static const char kScript[] =
+    "-- 最小 LVGL 按钮测试脚本\n"
+    "\n"
+    "-- 按钮对象\n"
+    "local btn\n"
+    "\n"
+    "-- 初始化函数\n"
+    "function start()\n"
+    "  \n"
+    "  -- 创建按钮\n"
+    "  btn = ui.button.create()\n"
+    "  \n"
+    "  -- 设置按钮文本\n"
+    "  btn:set_text(\"Click Me\")\n"
+    "  \n"
+    "  -- 设置按钮大小\n"
+    "  btn:set_size(120, 50)\n"
+    "  \n"
+    "  -- 设置按钮位置（屏幕中心）\n"
+    "  btn:align(\"center\", 0, 0)\n"
+    "  \n"
+    "  -- 设置按钮样式\n"
+    "  btn:set_style_bg_color(0x2196F3, 255)  -- 蓝色背景\n"
+    "  btn:set_style_text_color(0xFFFFFF)     -- 白色文本\n"
+    "  btn:set_style_border(0x1976D2, 2)      -- 深蓝色边框\n"
+    "  btn:set_style_radius(8)                -- 圆角\n"
+    "  \n"
+    "end\n"
+    "\n"
+    "-- 更新函数\n"
     "function update(dt)\n"
-    "gpio.toggle('B', 1)   -- PB1 toggle\n"
+    "  -- 每帧执行，这里留空\n"
     "end\n";
-    if(out_len) *out_len = sizeof(kEmpty) - 1;
-    return kEmpty;
+
+    if(out_len) *out_len = sizeof(kScript) - 1;
+    return kScript;
 }
+
+
 
 /* -------------------- 内部状态 -------------------- */
 
@@ -120,9 +150,8 @@ int lua_init(void)
         return -1;
     }
 
-    // 关键：把外接模块（这里是 PB1 LED）绑定进 Lua，全局生成 gpio/tim/sd/delay 等
-    luaopen_gpio(g_L);
-    lua_setglobal(g_L, "gpio");   // _G.gpio = 模块表
+    // 关键：使用 lua_port_bind 绑定所有模块，包括 lvgl_btn
+    lua_port_bind(g_L, NULL);
 
     /* 你如果追求极简，可换成只开部分库 */
     // luaL_openlibs(g_L);
@@ -163,6 +192,8 @@ int lua_init(void)
     return 0;
 }
 
+#define LUA_RT_MAX_DT_MS 100u   // 最大 dt=100ms，按你需求可改 50/100/200
+
 void lua_update_task(void)
 {
     if (!g_L) return;
@@ -170,16 +201,8 @@ void lua_update_task(void)
     const uint32_t now = lua_rt_time_ms();
     uint32_t elapsed = (uint32_t)(now - g_last_ms);
 
-    /* 非阻塞：没到 10ms 直接返回 */
     if (elapsed < LUA_RT_PERIOD_MS) return;
 
-    /*
-     * 这里有两种策略：
-     * 1) “只跑一次”并把 last_ms 拉到 now：不会补帧，最不阻塞（默认用这个）
-     * 2) “有限补帧”：主循环偶尔卡顿时补跑几次（可能更平滑但更占用）
-     *
-     * 你现在明确要非阻塞、稳定，所以采用策略1。
-     */
     g_last_ms = now;
 
     if (!g_started) {
@@ -187,6 +210,8 @@ void lua_update_task(void)
         g_started = true;
     }
 
-    /* 固定 dt=0.010s（你要求每10ms一次） */
-    (void)lua_rt_call_update(g_L, (float)LUA_RT_PERIOD_MS / 1000.0f);
+    if (elapsed > LUA_RT_MAX_DT_MS) elapsed = LUA_RT_MAX_DT_MS;
+
+    float dt = (float)elapsed / 1000.0f;
+    (void)lua_rt_call_update(g_L, dt);
 }
