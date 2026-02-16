@@ -76,7 +76,8 @@ add_executable(${CMAKE_PROJECT_NAME}
         Core/APPS/TASK/LED.c
         Core/APPS/TASK/LVGL.c
         Core/APPS/TASK/LUA.c
-        Core/LuaPort/modules/lua_ui.c
+        Core/LuaPort/modules/lua_ui_button.c
+        Core/LuaPort/modules/lua_ui_slider.c
 
 )
 
