@@ -385,9 +385,12 @@ int main(void) {
   // ui_test_touch_drag_start();
   LCD_DisplayON();
 
+  DesignLauncher_Create(NULL); // 注释掉的启动器创建函数
+
   // Launcher_Init();
-  // LauncherLVGL_Create(lv_display_get_default());
-  lua_init();
+  // DesignLauncher_Create(lv_display_get_default());
+
+  // lua_init();
   /* USER CODE END 2 */
 
   /* Infinite loop */
