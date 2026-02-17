@@ -3,6 +3,10 @@
 
 #include "ui_screen_launcher.h"
 
+#include <string.h>
+
+#include "Core/Screen/utils/cart_reader.h"
+
 /* ------------------------------------------------------------------ */
 /*  常量配置                                                            */
 /* ------------------------------------------------------------------ */
@@ -34,6 +38,9 @@
 /* ------------------------------------------------------------------ */
 /*  私有状态                                                            */
 /* ------------------------------------------------------------------ */
+
+// 全局静态缓冲，用于存储 cart0 的标题
+static char s_cart0_title[65] = "LOADING";
 
 static const char *app_names[DESIGN_APP_COUNT] = {
     "appaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",  "app2",  "app3",  "app4",
@@ -161,7 +168,7 @@ static void prv_create_box_area(lv_obj_t *parent)
 
         /* 方块标题标签（默认隐藏，选中后显示） */
         lv_obj_t *label = lv_label_create(content_container);
-        lv_label_set_text(label, app_names[i]);
+        lv_label_set_text(label, (i==0) ? s_cart0_title : app_names[i]);
         lv_obj_set_style_text_color(label, lv_color_hex(COLOR_CYAN), 0);
         lv_obj_set_style_text_font(label, &lv_font_montserrat_20, 0);
         lv_label_set_long_mode(label, LV_LABEL_LONG_SCROLL_CIRCULAR);
@@ -231,6 +238,12 @@ void DesignLauncher_Create(lv_display_t *disp)
 
     /* 清除屏幕内边距 */
     lv_obj_set_style_pad_all(scr, 0, 0);
+
+    /* 读取 cart.bin 的 title */
+    int a = cart_read_title_from_sd("0:/cart.bin", s_cart0_title);
+    if (a != 0) {
+        strcpy(s_cart0_title, "ERR");
+    }
 
     /* 主容器 */
     s_main_container = lv_obj_create(scr);
