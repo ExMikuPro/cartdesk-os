@@ -1,41 +1,31 @@
-// ui_screen_launcher_lvgl.h
-#pragma once
+// ui_screen_launcher.h
+// 设计稿风格启动器头文件
+#ifndef UI_SCREEN_LAUNCHER_H
+#define UI_SCREEN_LAUNCHER_H
+
 #include "lvgl.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+/**
+ * @brief 创建设计稿风格的启动器界面
+ * @param disp LVGL 显示对象，为 NULL 时使用默认显示
+ */
+void DesignLauncher_Create(lv_display_t *disp);
 
-    /* 可选：如果你是“Layer0 背景 + Layer1(LVGL)透明叠加”模式
-     * 你可以在编译选项里 -DLAUNCHER_BG_TRANSPARENT=1
-     * 或在某个公共配置头里 #define LAUNCHER_BG_TRANSPARENT 1
-     */
-#ifndef LAUNCHER_BG_TRANSPARENT
-#define LAUNCHER_BG_TRANSPARENT 0
-#endif
+/**
+ * @brief 设置选中的应用
+ * @param app_index 应用索引，范围：0 到 DESIGN_APP_COUNT-1
+ */
+void DesignLauncher_SetSelected(int app_index);
 
-    /* 创建 Launcher UI（会创建并加载一个 screen）
-     * disp 传 NULL 会使用 lv_display_get_default()
-     */
-    void LauncherLVGL_Create(lv_display_t *disp);
+/**
+ * @brief 获取当前选中的应用
+ * @return 当前选中的应用索引
+ */
+int DesignLauncher_GetSelected(void);
 
-    /* 外部输入变化时调用：idx = 0..11 */
-    void LauncherLVGL_SetIndex(int idx);
+/**
+ * @brief 销毁启动器界面
+ */
+void DesignLauncher_Destroy(void);
 
-    /* 读取当前选择 */
-    int  LauncherLVGL_GetIndex(void);
-
-    /* （可选）兼容你原来的接口命名：不想改旧代码就用这些 */
-    static inline void Launcher_Init_LVGL(void)
-    {
-        LauncherLVGL_Create(NULL);
-    }
-
-    static inline void Launcher_SetIndex_LVGL(int idx)
-    {
-        LauncherLVGL_SetIndex(idx);
-    }
-
-#ifdef __cplusplus
-}
-#endif
+#endif // UI_SCREEN_LAUNCHER_H
