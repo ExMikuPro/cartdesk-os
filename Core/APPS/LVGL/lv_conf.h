@@ -1,7 +1,7 @@
 /**
  * @file lv_conf.h
  * @brief LVGL 9.4 配置文件 - 针对STM32H743优化
- * 
+ *
  * 配置说明:
  * - MCU: STM32H743 (Cortex-M7, 480MHz)
  * - RAM: 1MB SRAM + 8MB SDRAM
@@ -63,18 +63,18 @@
 /* 刷新模式 */
 #define LV_DISPLAY_RENDER_MODE LV_DISPLAY_RENDER_MODE_PARTIAL
 
-/* DMA2D硬件加速 (STM32专用) */
 #define LV_USE_DRAW_SW 1
 #if LV_USE_DRAW_SW
-    #define LV_DRAW_SW_ASM            LV_DRAW_SW_ASM_NONE
-    #define LV_DRAW_SW_COMPLEX        1
+    #define LV_DRAW_SW_ASM               LV_DRAW_SW_ASM_NONE
+    #define LV_DRAW_SW_COMPLEX           1
     #define LV_DRAW_SW_SHADOW_CACHE_SIZE 0
     #define LV_DRAW_SW_CIRCLE_CACHE_SIZE 4
     #define LV_DRAW_SW_GRADIENT_CACHE_SIZE 1
-#define LV_USE_DRAW_DMA2D               1
-#define LV_DRAW_DMA2D_HAL_INCLUDE       "stm32h7xx_hal.h"
-#define LV_USE_DRAW_DMA2D_INTERRUPT     1
-#endif
+#endif  // ← 先关掉 SW 的 #if
+
+#define LV_USE_DRAW_DMA2D           1
+#define LV_DRAW_DMA2D_HAL_INCLUDE   "stm32h7xx_hal.h"
+#define LV_USE_DRAW_DMA2D_INTERRUPT 1
 
 /*=================
    FONT USAGE
@@ -180,7 +180,7 @@
  *==================*/
 
 /* API日志 (调试用) */
-#define LV_USE_LOG 1
+#define LV_USE_LOG 0
 #if LV_USE_LOG
     #define LV_LOG_LEVEL LV_LOG_LEVEL_WARN
     #define LV_LOG_PRINTF 1
@@ -210,6 +210,8 @@
 #define LV_USE_DEMO_BENCHMARK  0
 #define LV_USE_DEMO_STRESS     0
 #define LV_USE_DEMO_MUSIC      0
+
+
 
 /** 1: Enable system monitor component */
 #define LV_USE_SYSMON   0

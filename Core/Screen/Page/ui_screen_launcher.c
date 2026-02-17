@@ -36,13 +36,13 @@
 /* ------------------------------------------------------------------ */
 
 static const char *app_names[DESIGN_APP_COUNT] = {
-    "app1",  "app2",  "app3",  "app4",
+    "appaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",  "app2",  "app3",  "app4",
     "app5",  "app6",  "app7",  "app8",
     "app9",  "app10", "app11", "app12"
 };
 
 static const char *circle_names[DESIGN_CIRCLE_COUNT] = {
-    "Gallery", "Handle", "Expansion", "Setting", "Sleep Mode"
+    "相册", "手柄", "拓展", "设置", "休眠模式"
 };
 
 static lv_obj_t *s_main_container  = NULL;
@@ -201,7 +201,7 @@ static void prv_create_circle_area(lv_obj_t *parent)
         lv_obj_t *label = lv_label_create(parent);
         lv_label_set_text(label, circle_names[i]);
         lv_obj_set_style_text_color(label, lv_color_hex(COLOR_CYAN), 0);
-        lv_obj_set_style_text_font(label, &lv_font_montserrat_16, 0);
+        lv_obj_set_style_text_font(label, &lv_menu_font, 0);
         lv_obj_set_pos(label, cx - 40, CIRCLE_Y + diameter + 5);
         lv_obj_set_width(label, diameter + 80);
         lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
