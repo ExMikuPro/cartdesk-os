@@ -130,7 +130,8 @@ file(GLOB_RECURSE LVGL_SOURCES CONFIGURE_DEPENDS
         ${LVGL_DIR}/demos/widgets/*.c
 )
 
-add_library(lvgl STATIC ${LVGL_SOURCES})
+add_library(lvgl STATIC ${LVGL_SOURCES}
+        Core/APPS/LVGL/font/lv_menu_font.c)
 
 target_include_directories(lvgl PUBLIC
         ${LVGL_DIR}
