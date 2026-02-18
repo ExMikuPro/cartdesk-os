@@ -80,6 +80,8 @@ add_executable(${CMAKE_PROJECT_NAME}
         Core/APPS/TASK/LUA.c
         Core/LuaPort/modules/lua_ui_button.c
         Core/LuaPort/modules/lua_ui_slider.c
+        Core/Screen/utils/preview_argb_current.c
+        Core/Screen/utils/preview_argb_current.h
 
 )
 
