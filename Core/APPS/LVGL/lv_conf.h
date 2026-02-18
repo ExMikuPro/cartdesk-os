@@ -30,8 +30,19 @@
 #define LV_USE_STDLIB_STRING    LV_STDLIB_CLIB
 #define LV_USE_STDLIB_SPRINTF   LV_STDLIB_CLIB
 
+#define LV_MEM_ADR 0xD0480000U
+
 /* LVGL内存池大小 (字节) - STM32H743有充足的SRAM */
-#define LV_MEM_SIZE    (128U * 1024U)  /* 128KB */
+#define LV_MEM_SIZE (16U * 1024U * 1024U)
+
+#define LV_CACHE_DEF_SIZE (4U * 1024U * 1024U)
+#define LV_IMAGE_HEADER_CACHE_DEF_CNT 64
+
+#define LV_USE_RLE 1
+
+#define LV_DRAW_BUF_ALIGN        32
+#define LV_DRAW_BUF_STRIDE_ALIGN 32
+
 
 #define LV_FONT_DEFAULT &lv_font_montserrat_20
 
@@ -60,6 +71,8 @@
    RENDERING CONFIGURATION
  *========================*/
 
+#define LV_BIN_DECODER_RAM_LOAD 1
+
 /* 刷新模式 */
 #define LV_DISPLAY_RENDER_MODE LV_DISPLAY_RENDER_MODE_PARTIAL
 
@@ -72,9 +85,9 @@
     #define LV_DRAW_SW_GRADIENT_CACHE_SIZE 1
 #endif  // ← 先关掉 SW 的 #if
 
-#define LV_USE_DRAW_DMA2D           1
+#define LV_USE_DRAW_DMA2D           0
 #define LV_DRAW_DMA2D_HAL_INCLUDE   "stm32h7xx_hal.h"
-#define LV_USE_DRAW_DMA2D_INTERRUPT 1
+#define LV_USE_DRAW_DMA2D_INTERRUPT 0
 
 /*=================
    FONT USAGE
