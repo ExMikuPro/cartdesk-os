@@ -334,10 +334,10 @@ int main(void) {
   /* USER CODE END 1 */
 
   /* MPU Configuration--------------------------------------------------------*/
-  MPU_Config();
+  // MPU_Config();
 
   /* Enable D-Cache---------------------------------------------------------*/
-  SCB_EnableDCache();
+  // SCB_EnableDCache();
 
   /* MCU Configuration--------------------------------------------------------*/
 

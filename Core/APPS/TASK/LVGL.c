@@ -9,15 +9,16 @@ void Task_LVGL() {
   switch (LVGL_Flag) {
     case 0:
       if (TaskTicks_LVGL == 0) {
-        lv_timer_handler();
+
         LVGL_Flag = 1;
-        TaskTicks_LVGL = 5;
+        TaskTicks_LVGL = 10;
       }
       break;
     case 1:
       if (TaskTicks_LVGL == 0) {
         LVGL_Flag = 0;
-        TaskTicks_LVGL = 0;
+        lv_timer_handler();
+        TaskTicks_LVGL = 10;
       }
       break;
 
