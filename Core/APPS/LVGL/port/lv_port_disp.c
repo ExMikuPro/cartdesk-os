@@ -120,21 +120,13 @@ static void disp_flush(lv_display_t *disp, const lv_area_t *area, uint8_t *px_ma
 #endif
 
 #if USE_DOUBLE_BUFFER
-    /* 双缓冲模式：切换显示和绘制缓冲 */
+    /* 双缓冲模式：DIRECT 渲染下，px_map 指向 LVGL 刚刚渲染完成的整屏 buffer。
+     * 直接把 LTDC Layer1 指到 px_map，避免和 LVGL 的 buffer 轮换逻辑不同步。 */
     extern LTDC_HandleTypeDef hltdc;
-    
-    /* 获取当前显示的帧缓冲 */
-    uint32_t current_fb = LTDC_Layer1->CFBAR;
-    
-    /* 切换到另一个缓冲 */
-    if (current_fb == (uint32_t)g_fb0) {
-        /* 当前显示fb0，切换到fb1 */
-        HAL_LTDC_SetAddress(&hltdc, (uint32_t)g_fb1, 1);
-    } else {
-        /* 当前显示fb1，切换到fb0 */
-        HAL_LTDC_SetAddress(&hltdc, (uint32_t)g_fb0, 1);
-    }
-    
+
+    /* 切换到 LVGL 刚渲染完成的 buffer */
+    HAL_LTDC_SetAddress(&hltdc, (uint32_t)px_map, 1);
+
     /* 等待地址重载完成 */
     HAL_LTDC_Reload(&hltdc, LTDC_RELOAD_VERTICAL_BLANKING);
 #else
@@ -145,10 +137,10 @@ static void disp_flush(lv_display_t *disp, const lv_area_t *area, uint8_t *px_ma
 
     /* 通知LVGL刷新完成 */
     lv_display_flush_ready(disp);
-    
+
     /* 更新帧计数 */
     g_frame_count++;
-    
+
     /* 每秒计算一次FPS */
     uint32_t current_time = HAL_GetTick();
     if (current_time - g_last_fps_time >= 1000) {
@@ -166,13 +158,13 @@ static void disp_wait_for_vsync(void)
 #if USE_VSYNC
     /* 清除标志 */
     g_vsync_flag = false;
-    
+
     /* 等待VSync中断 */
     uint32_t timeout = HAL_GetTick() + VSYNC_WAIT_TIMEOUT;
     while (!g_vsync_flag && (HAL_GetTick() < timeout)) {
         __NOP();  // 空操作，等待中断
     }
-    
+
     /* 超时处理 */
     if (!g_vsync_flag) {
         // VSync超时，可以记录日志或采取其他措施
@@ -221,12 +213,12 @@ void LTDC_IRQHandler_Callback(void)
 {
 #if USE_VSYNC
     extern LTDC_HandleTypeDef hltdc;
-    
+
     /* 检查是否是行中断 */
     if (__HAL_LTDC_GET_FLAG(&hltdc, LTDC_FLAG_LI) != RESET) {
         /* 清除行中断标志 */
         __HAL_LTDC_CLEAR_FLAG(&hltdc, LTDC_FLAG_LI);
-        
+
         /* 设置VSync标志 */
         g_vsync_flag = true;
     }

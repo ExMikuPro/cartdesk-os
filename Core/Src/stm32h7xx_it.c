@@ -250,10 +250,21 @@ void DMA2D_IRQHandler(void)
 {
   /* USER CODE BEGIN DMA2D_IRQn 0 */
 
+  /* Capture ISR flags before HAL clears them */
+  uint32_t isr = DMA2D->ISR;
+
   /* USER CODE END DMA2D_IRQn 0 */
   HAL_DMA2D_IRQHandler(&hdma2d);
   /* USER CODE BEGIN DMA2D_IRQn 1 */
-  // lv_draw_dma2d_transfer_complete_interrupt_handler();
+
+#if (LV_USE_DRAW_DMA2D && LV_USE_DRAW_DMA2D_INTERRUPT)
+  /* Notify LVGL when a DMA2D transfer started by LVGL is complete */
+  if (isr & DMA2D_ISR_TCIF) {
+    lv_draw_dma2d_transfer_complete_interrupt_handler();
+  }
+#else
+  (void)isr;
+#endif
   /* USER CODE END DMA2D_IRQn 1 */
 }
 
