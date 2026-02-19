@@ -152,16 +152,20 @@
 /*
 ** largest types available for C89 ('long' and 'double')
 */
-#define LUA_INT_TYPE	LUA_INT_LONG
-#define LUA_FLOAT_TYPE	LUA_FLOAT_DOUBLE
+#define LUA_INT_TYPE    LUA_INT_LONG
+#define LUA_FLOAT_TYPE  LUA_FLOAT_DOUBLE
 
-#else		/* }{ */
-/* use defaults */
+#else           /* }{ */
+/* STM32H743: int(32) + double(H743 has hw double FPU) */
 
-#define LUA_INT_TYPE	LUA_INT_DEFAULT
-#define LUA_FLOAT_TYPE	LUA_FLOAT_DEFAULT
+#ifndef LUA_INT_TYPE
+#define LUA_INT_TYPE    LUA_INT_INT
+#endif
+#ifndef LUA_FLOAT_TYPE
+#define LUA_FLOAT_TYPE  LUA_FLOAT_DOUBLE
+#endif
 
-#endif				/* } */
+#endif                          /* } */
 
 
 /* }================================================================== */

@@ -189,6 +189,8 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
 # Add project symbols (macros)
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined symbols
+        LV_CONF_INCLUDE_SIMPLE=1    # ← 加这一行
+        STM32H743xx                 # ← 加这一行（如果主程序也需要）
 )
 
 # Remove wrong libob.a library dependency when using cpp files

@@ -629,6 +629,10 @@ lv_theme_t * lv_theme_default_init(lv_display_t * disp, lv_color_t color_primary
      *styles' data if LVGL is used in a binding (e.g. MicroPython)
      *In a general case styles could be in a simple `static lv_style_t my_style...` variables*/
 
+
+    LV_LOG_WARN("sizeof my_theme_t = %d", (int)sizeof(my_theme_t));
+    (int)sizeof(my_theme_t);
+
     if(!lv_theme_default_is_inited()) {
         theme_def = lv_malloc_zeroed(sizeof(my_theme_t));
         LV_ASSERT_MALLOC(theme_def);
@@ -1226,6 +1230,8 @@ static void resolution_change_event_cb(lv_event_t * e)
     lv_display_t * disp = lv_event_get_target(e);
     my_theme_t * theme = lv_event_get_user_data(e);
 
+
+    LV_LOG_WARN("sizeof my_theme_t = %d", (int)sizeof(my_theme_t));
     lv_theme_default_init(disp, theme->base.color_primary, theme->base.color_secondary, theme->base.flags,
                           theme->base.font_normal);
 
