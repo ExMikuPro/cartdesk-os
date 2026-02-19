@@ -61,14 +61,7 @@ RAM_D2 (xrw)      : ORIGIN = 0x30000000, LENGTH = 288K
 RAM_D3 (xrw)      : ORIGIN = 0x38000000, LENGTH = 64K
 ITCMRAM (xrw)      : ORIGIN = 0x00000000, LENGTH = 64K
 FLASH (rx)      : ORIGIN = 0x8000000, LENGTH = 2048K
-/* SDRAM 固定分区 - 依据 SDRAM_Layout_Spec_v1.0, 物理范围: 0xD0000000~0xD3FFFFFF */
-SDRAM_LAYER1_FB0 (xrw) : ORIGIN = 0xD0000000, LENGTH = 0x00177000  /* 1.46 MiB - 主图层缓冲0 */
-SDRAM_LAYER1_FB1 (xrw) : ORIGIN = 0xD0177000, LENGTH = 0x00177000  /* 1.46 MiB - 主图层缓冲1 */
-SDRAM_LAYER2_FB0 (xrw) : ORIGIN = 0xD02EE000, LENGTH = 0x00177000  /* 1.46 MiB - 背景层单缓冲 */
-SDRAM_LVGL_HEAP  (xrw) : ORIGIN = 0xD0465000, LENGTH = 0x01000000  /* 16   MiB - UI对象内存  */
-SDRAM_DMA_POOL   (xrw) : ORIGIN = 0xD1465000, LENGTH = 0x00400000  /*  4   MiB - DMA专用区   */
-SDRAM_LAUNCHER   (xrw) : ORIGIN = 0xD1865000, LENGTH = 0x00400000  /*  4   MiB - 图标缓存    */
-SDRAM_APP_ARENA  (xrw) : ORIGIN = 0xD1C65000, LENGTH = 0x0239B000  /* ~35.6MiB - 资源加载    */
+SDRAM (xrw) : ORIGIN = 0xC0000000, LENGTH = 64M
 }
 
 /* Highest address of the user mode stack */
@@ -114,79 +107,13 @@ SECTIONS
     . = ALIGN(4);
   } >FLASH
 
-  /* ------------------------------------------------------------------ */
-  /* SDRAM 固定分区 sections - 依据 SDRAM_Layout_Spec_v1.0              */
-  /* ------------------------------------------------------------------ */
-
-  /* Layer1_FB0: 主图层双缓冲 帧0  1.46 MiB  256字节对齐 */
-  .sdram_layer1_fb0 (NOLOAD) :
-  {
-    . = ALIGN(256);
-    _sLayer1_FB0 = .;
-    *(.layer1_fb0)
-    *(.layer1_fb0*)
-    _eLayer1_FB0 = .;
-  } >SDRAM_LAYER1_FB0
-
-  /* Layer1_FB1: 主图层双缓冲 帧1  1.46 MiB  256字节对齐 */
-  .sdram_layer1_fb1 (NOLOAD) :
-  {
-    . = ALIGN(256);
-    _sLayer1_FB1 = .;
-    *(.layer1_fb1)
-    *(.layer1_fb1*)
-    _eLayer1_FB1 = .;
-  } >SDRAM_LAYER1_FB1
-
-  /* Layer2_FB0: 背景层单缓冲  1.46 MiB  256字节对齐 */
-  .sdram_layer2_fb0 (NOLOAD) :
-  {
-    . = ALIGN(256);
-    _sLayer2_FB0 = .;
-    *(.layer2_fb0)
-    *(.layer2_fb0*)
-    _eLayer2_FB0 = .;
-  } >SDRAM_LAYER2_FB0
-
-  /* LVGL_HEAP: UI对象内存  16 MiB  32字节对齐 */
-  .sdram_lvgl_heap (NOLOAD) :
+  .sdram (NOLOAD) :
   {
     . = ALIGN(32);
-    _sLvglHeap = .;
-    *(.lvgl_heap)
-    *(.lvgl_heap*)
-    _eLvglHeap = .;
-  } >SDRAM_LVGL_HEAP
-
-  /* DMA_POOL: DMA专用区  4 MiB  64字节对齐 */
-  .sdram_dma_pool (NOLOAD) :
-  {
-    . = ALIGN(64);
-    _sDmaPool = .;
-    *(.dma_pool)
-    *(.dma_pool*)
-    _eDmaPool = .;
-  } >SDRAM_DMA_POOL
-
-  /* LAUNCHER_CACHE: 图标缓存  4 MiB  32字节对齐 */
-  .sdram_launcher_cache (NOLOAD) :
-  {
+    *(.sdram)
+    *(.sdram*)
     . = ALIGN(32);
-    _sLauncherCache = .;
-    *(.launcher_cache)
-    *(.launcher_cache*)
-    _eLauncherCache = .;
-  } >SDRAM_LAUNCHER
-
-  /* APP_ARENA_REST: 资源加载 ~35.6 MiB  32字节对齐  线性分配 */
-  .sdram_app_arena (NOLOAD) :
-  {
-    . = ALIGN(32);
-    _sAppArena = .;
-    *(.app_arena)
-    *(.app_arena*)
-    _eAppArena = .;
-  } >SDRAM_APP_ARENA
+  } >SDRAM
 
 
   .ARM.extab (READONLY) : /* The "READONLY" keyword is only supported in GCC11 and later, remove it if using GCC10 or earlier. */
