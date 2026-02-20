@@ -87,9 +87,7 @@ static FLASH_Handle g_flash;
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
-
 static void MPU_Config(void);
-
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -322,13 +320,109 @@ void ui_test_touch_drag_start(void) {
   lv_obj_center(t);
 }
 
+#define TEST_OFF   (0x00000000u)   // 更保守：最后 64KB 的起始（对齐）
+#define TEST_LEN   (256u)
+
+static uint8_t tx[TEST_LEN];
+static uint8_t rx[TEST_LEN];
+
+void flash_write_smoke(void)
+{
+  for (uint32_t i = 0; i < TEST_LEN; i++) tx[i] = (uint8_t)(i ^ 0xA5);
+
+  // 1) 退出映射（写/擦前必须）
+  (void)FLASH_DisableMemoryMapped(&g_flash);
+
+  // 2) 先读一次擦前内容，确认当前区域状态
+  memset(rx, 0, TEST_LEN);
+  FLASH_Status st = FLASH_Read(&g_flash, TEST_OFF, rx, TEST_LEN);
+  if (st != FLASH_OK) goto fail;
+  printf("[FLASH] before erase [0..7]: %02X %02X %02X %02X %02X %02X %02X %02X\r\n",
+         rx[0],rx[1],rx[2],rx[3],rx[4],rx[5],rx[6],rx[7]);
+
+  // 3) 擦 4KB 扇区（地址必须 4K 对齐）
+  st = FLASH_Erase4K(&g_flash, TEST_OFF);
+  if (st != FLASH_OK) goto fail;
+
+  // 4) 擦后读回，确认全 0xFF
+  memset(rx, 0, TEST_LEN);
+  st = FLASH_Read(&g_flash, TEST_OFF, rx, TEST_LEN);
+  if (st != FLASH_OK) goto fail;
+  {
+    bool all_ff = true;
+    for (uint32_t i = 0; i < TEST_LEN; i++) if (rx[i] != 0xFF) { all_ff = false; break; }
+    printf("[FLASH] after erase: %s (rx[0]=%02X)\r\n", all_ff ? "all 0xFF OK" : "ERASE FAIL!", rx[0]);
+    if (!all_ff) goto fail; // 擦除本身有问题，停在这里
+  }
+
+  // 5) 写入 256B（刚好一页）
+  st = FLASH_Prog(&g_flash, TEST_OFF, tx, TEST_LEN);
+  if (st != FLASH_OK) goto fail;
+
+  // 6) 单线读回比对（READ 0x03，0 dummy，最可靠，排除 dummy cycles 干扰）
+  memset(rx, 0, TEST_LEN);
+  st = FLASH_Read(&g_flash, TEST_OFF, rx, TEST_LEN);
+  if (st != FLASH_OK) goto fail;
+
+  if (memcmp(tx, rx, TEST_LEN) == 0) {
+    printf("[FLASH] single-line read: PASS\r\n");
+    // goto done;
+  } else {
+    printf("[FLASH] single-line read: FAIL — first diff: tx[i]=%02X rx[i]=%02X\r\n",
+           tx[0], rx[0]);
+    // 打印前 16 字节帮助对比
+    printf("[FLASH]   tx[0..7]: %02X %02X %02X %02X %02X %02X %02X %02X\r\n",
+           tx[0],tx[1],tx[2],tx[3],tx[4],tx[5],tx[6],tx[7]);
+    printf("[FLASH]   rx[0..7]: %02X %02X %02X %02X %02X %02X %02X %02X\r\n",
+           rx[0],rx[1],rx[2],rx[3],rx[4],rx[5],rx[6],rx[7]);
+    goto fail;
+  }
+
+  // 7) 四线快速读回比对（测试 dummy cycles 是否正确）
+  memset(rx, 0, TEST_LEN);
+  st = FLASH_ReadFastQuad(&g_flash, TEST_OFF, rx, TEST_LEN);
+  if (st != FLASH_OK) goto fail;
+
+  if (memcmp(tx, rx, TEST_LEN) == 0) {
+    printf("[FLASH] quad fast read: PASS\r\n");
+    printf("[FLASH] write smoke ALL OK\r\n");
+  } else {
+    printf("[FLASH] quad fast read: FAIL (dummy cycles or AlternateBytes issue)\r\n");
+    printf("[FLASH]   tx[0..7]: %02X %02X %02X %02X %02X %02X %02X %02X\r\n",
+           tx[0],tx[1],tx[2],tx[3],tx[4],tx[5],tx[6],tx[7]);
+    printf("[FLASH]   rx[0..7]: %02X %02X %02X %02X %02X %02X %02X %02X\r\n",
+           rx[0],rx[1],rx[2],rx[3],rx[4],rx[5],rx[6],rx[7]);
+    printf("[FLASH]   --> 请修改 flash.c FLASH_ReadFastQuad:\r\n");
+    printf("[FLASH]       加 AlternateByteMode=4_LINES, AlternateBytesSize=8_BITS, AlternateBytes=0x00\r\n");
+    printf("[FLASH]       DummyCycles 改为 4\r\n");
+    goto fail;
+  }
+
+  done:
+  // 8) 写完重新开映射
+  (void)FLASH_EnableMemoryMapped(&g_flash);
+  return;
+
+  fail:
+  {
+    const FLASH_ErrorInfo *e = FLASH_LastError(&g_flash);
+    if (e) printf("[FLASH] HAL fail code=%u step=%s line=%lu addr=0x%08lX\r\n",
+                  (unsigned)e->code, e->step ? e->step : "?",
+                  (unsigned long)e->line, (unsigned long)e->addr);
+  }
+  (void)FLASH_EnableMemoryMapped(&g_flash);
+}
+
+
 /* USER CODE END 0 */
 
 /**
   * @brief  The application entry point.
   * @retval int
   */
-int main(void) {
+int main(void)
+{
+
   /* USER CODE BEGIN 1 */
 
   /* USER CODE END 1 */
@@ -337,7 +431,7 @@ int main(void) {
   MPU_Config();
 
   /* Enable D-Cache---------------------------------------------------------*/
-  SCB_EnableDCache();
+   // SCB_EnableDCache();
 
   /* MCU Configuration--------------------------------------------------------*/
 
@@ -374,12 +468,36 @@ int main(void) {
   /* USER CODE BEGIN 2 */
   /* 初始化 SDRAM */
   SDRAM_Init();
+
+
   /* 初始化 QSPI NOR + littlefs */
   Storage_InitOrDie();
   HAL_TIM_Base_Start(&htim17);
+
+
+  uint32_t jedec = 0;
+  FLASH_Status st = FLASH_ReadJEDEC(&g_flash, &jedec);
+  printf("[FLASH] JEDEC = 0x%06lX (期望 Winbond W25Q256: 0xEF4019)\r\n", (unsigned long)jedec);
+  while (st != FLASH_OK) {}
+
+  // 注意：FLASH_ReadJEDEC() 走命令模式，会自动退出映射
+  // 所以要重新打开映射
+  (void)FLASH_EnableMemoryMapped(&g_flash);
+
+  volatile const uint8_t *mm = (volatile const uint8_t *)FLASH_MM_BASE;
+  printf("[FLASH] MM[0..15] =");
+  for (int i = 0; i < 16; i++) printf(" %02X", mm[i]);
+  printf("\r\n");
+
+  flash_write_smoke();
+
   HAL_TIM_Base_Start_IT(&htim16);
   /* LCD/UI */
   lv_init();
+
+  lv_mem_monitor_t mon;
+  lv_mem_monitor(&mon);
+
   lv_port_disp_init(); // 显示端口初始化
   lv_port_indev_init(); // ← 输入设备初始化
   // ui_test_touch_drag_start();
@@ -418,7 +536,8 @@ int main(void) {
   * @brief System Clock Configuration
   * @retval None
   */
-void SystemClock_Config(void) {
+void SystemClock_Config(void)
+{
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
 
@@ -430,13 +549,12 @@ void SystemClock_Config(void) {
   */
   __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE0);
 
-  while (!__HAL_PWR_GET_FLAG(PWR_FLAG_VOSRDY)) {
-  }
+  while(!__HAL_PWR_GET_FLAG(PWR_FLAG_VOSRDY)) {}
 
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI48 | RCC_OSCILLATORTYPE_HSE;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI48|RCC_OSCILLATORTYPE_HSE;
   RCC_OscInitStruct.HSEState = RCC_HSE_ON;
   RCC_OscInitStruct.HSI48State = RCC_HSI48_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
@@ -449,15 +567,16 @@ void SystemClock_Config(void) {
   RCC_OscInitStruct.PLL.PLLRGE = RCC_PLL1VCIRANGE_2;
   RCC_OscInitStruct.PLL.PLLVCOSEL = RCC_PLL1VCOWIDE;
   RCC_OscInitStruct.PLL.PLLFRACN = 0;
-  if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK) {
+  if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
+  {
     Error_Handler();
   }
 
   /** Initializes the CPU, AHB and APB buses clocks
   */
-  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK
-                                | RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2
-                                | RCC_CLOCKTYPE_D3PCLK1 | RCC_CLOCKTYPE_D1PCLK1;
+  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
+                              |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2
+                              |RCC_CLOCKTYPE_D3PCLK1|RCC_CLOCKTYPE_D1PCLK1;
   RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
   RCC_ClkInitStruct.SYSCLKDivider = RCC_SYSCLK_DIV1;
   RCC_ClkInitStruct.AHBCLKDivider = RCC_HCLK_DIV2;
@@ -466,7 +585,8 @@ void SystemClock_Config(void) {
   RCC_ClkInitStruct.APB2CLKDivider = RCC_APB2_DIV2;
   RCC_ClkInitStruct.APB4CLKDivider = RCC_APB4_DIV2;
 
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_4) != HAL_OK) {
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_4) != HAL_OK)
+  {
     Error_Handler();
   }
 
@@ -479,9 +599,10 @@ void SystemClock_Config(void) {
 
 /* USER CODE END 4 */
 
-/* MPU Configuration */
+ /* MPU Configuration */
 
-void MPU_Config(void) {
+void MPU_Config(void)
+{
   MPU_Region_InitTypeDef MPU_InitStruct = {0};
 
   /* Disables the MPU */
@@ -580,13 +701,15 @@ void MPU_Config(void) {
   HAL_MPU_ConfigRegion(&MPU_InitStruct);
   /* Enables the MPU */
   HAL_MPU_Enable(MPU_PRIVILEGED_DEFAULT);
+
 }
 
 /**
   * @brief  This function is executed in case of error occurrence.
   * @retval None
   */
-void Error_Handler(void) {
+void Error_Handler(void)
+{
   /* USER CODE BEGIN Error_Handler_Debug */
   /* User can add his own implementation to report the HAL error return state */
   __disable_irq();
@@ -602,7 +725,8 @@ void Error_Handler(void) {
   * @param  line: assert_param error line source number
   * @retval None
   */
-void assert_failed(uint8_t *file, uint32_t line) {
+void assert_failed(uint8_t *file, uint32_t line)
+{
   /* USER CODE BEGIN 6 */
   /* User can add his own implementation to report the file name and line number,
      ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */

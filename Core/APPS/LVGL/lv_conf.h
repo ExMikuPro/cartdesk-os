@@ -4,15 +4,44 @@
  *
  * 配置说明:
  * - MCU: STM32H743 (Cortex-M7, 480MHz)
- * - RAM: 1MB SRAM + 8MB SDRAM
+ * - RAM: 1MB SRAM + 64MB SDRAM
  * - 显示: 800x480 ARGB8888
  * - 特性: DMA2D硬件加速, 双缓冲, VBlank同步
  */
+
+
 
 #ifndef LV_CONF_H
 #define LV_CONF_H
 
 #include <stdint.h>
+
+/*====================
+   COMPILER SETTINGS
+ *====================*/
+
+/*
+ * 关键修复（你现在的 HardFault 根因）：
+ * 当 LV_USE_STDLIB_MALLOC = LV_STDLIB_BUILTIN 时，LVGL 会使用自己的内存池。
+ * 如果内存池未按字对齐，在 Cortex-M7 上会触发 UNALIGNED UsageFault（CFSR bit24），
+ * 最终进入 HardFault_Handler。
+ *
+ * 这里统一对齐到 32 字节：同时对 DMA2D/D-Cache 也更友好。
+ */
+#ifndef LV_ATTRIBUTE_MEM_ALIGN_SIZE
+#  define LV_ATTRIBUTE_MEM_ALIGN_SIZE 32
+#endif
+#ifndef LV_ATTRIBUTE_MEM_ALIGN
+#  define LV_ATTRIBUTE_MEM_ALIGN __attribute__((aligned(LV_ATTRIBUTE_MEM_ALIGN_SIZE)))
+#endif
+
+/* draw buffer/stride 对齐（DMA2D & M7 更稳） */
+#ifndef LV_DRAW_BUF_ALIGN
+#  define LV_DRAW_BUF_ALIGN 32
+#endif
+#ifndef LV_DRAW_BUF_STRIDE_ALIGN
+#  define LV_DRAW_BUF_STRIDE_ALIGN 32
+#endif
 
 /*====================
    COLOR SETTINGS
@@ -25,19 +54,30 @@
    MEMORY SETTINGS
  *=========================*/
 
-/* 使用自定义malloc/free (可选: 使用FreeRTOS的内存管理) */
-#define LV_USE_STDLIB_MALLOC    LV_STDLIB_CLIB
+/* 使用 LVGL 内建 malloc（才能使用 LV_MEM_ADR/LV_MEM_SIZE 固定堆地址） */
+#define LV_USE_STDLIB_MALLOC    LV_STDLIB_CLIB // todo 找出LV_STDLIB_BUILTIN的问题
 #define LV_USE_STDLIB_STRING    LV_STDLIB_CLIB
 #define LV_USE_STDLIB_SPRINTF   LV_STDLIB_CLIB
 
-/* LVGL内存池大小 (字节) - STM32H743有充足的SRAM */
-#define LV_MEM_SIZE    (128U * 1024U)  /* 128KB */
+/*
+ * SDRAM 0xD0000000 起。
+ * 你工程里图片槽从 0xD0465000 开始（ui_screen_launcher.c），
+ * 所以 LVGL heap 必须避开 0xD0465000~0xD075xxxx 这段区域。
+ *
+ * 选择 0xD0800000 作为 LVGL heap 起点（32B 对齐），在 64MB SDRAM 内非常安全。
+ */
+#define LV_MEM_ADR 0xD0800000U
+
+/* LVGL内存池大小 (字节) */
+#define LV_MEM_SIZE (16U * 1024U * 1024U)
+
+/* 图片缓存：默认 0=不缓存，会导致反复解码/反复打开文件 -> "巨卡" */
+#define LV_CACHE_DEF_SIZE (4U * 1024U * 1024U)
+#define LV_IMAGE_HEADER_CACHE_DEF_CNT 64
+
+#define LV_USE_RLE 1
 
 #define LV_FONT_DEFAULT &lv_font_montserrat_20
-
-/* 内存池缓冲区位置 (可选: 放到SDRAM以节省SRAM) */
-// #define LV_MEM_POOL_INCLUDE your_alloc_declaration
-// #define LV_MEM_POOL_ALLOC   your_alloc_function
 
 /*=========================
    HAL SETTINGS
@@ -60,8 +100,10 @@
    RENDERING CONFIGURATION
  *========================*/
 
-/* 刷新模式 */
-#define LV_DISPLAY_RENDER_MODE LV_DISPLAY_RENDER_MODE_PARTIAL
+#define LV_BIN_DECODER_RAM_LOAD 1
+
+/* 刷新模式：你实际用的是 Layer1 双缓冲 + 直接换 FB，所以用 DIRECT */
+#define LV_DISPLAY_RENDER_MODE LV_DISPLAY_RENDER_MODE_DIRECT
 
 #define LV_USE_DRAW_SW 1
 #if LV_USE_DRAW_SW
@@ -70,11 +112,12 @@
     #define LV_DRAW_SW_SHADOW_CACHE_SIZE 0
     #define LV_DRAW_SW_CIRCLE_CACHE_SIZE 4
     #define LV_DRAW_SW_GRADIENT_CACHE_SIZE 1
-#endif  // ← 先关掉 SW 的 #if
+#endif
 
-#define LV_USE_DRAW_DMA2D           1
+/* DMA2D 加速（你关掉后花屏消失，说明同步链路没接好；修好 IRQ 回调后可开回） */
+#define LV_USE_DRAW_DMA2D           0
 #define LV_DRAW_DMA2D_HAL_INCLUDE   "stm32h7xx_hal.h"
-#define LV_USE_DRAW_DMA2D_INTERRUPT 1
+#define LV_USE_DRAW_DMA2D_INTERRUPT 0
 
 /*=================
    FONT USAGE
@@ -83,13 +126,13 @@
 /* Montserrat fonts with various styles and bpp */
 #define LV_FONT_MONTSERRAT_8  0
 #define LV_FONT_MONTSERRAT_10 0
-#define LV_FONT_MONTSERRAT_12 1
-#define LV_FONT_MONTSERRAT_14 1
+#define LV_FONT_MONTSERRAT_12 0
+#define LV_FONT_MONTSERRAT_14 0
 #define LV_FONT_MONTSERRAT_16 1
 #define LV_FONT_MONTSERRAT_18 0
 #define LV_FONT_MONTSERRAT_20 1
 #define LV_FONT_MONTSERRAT_22 0
-#define LV_FONT_MONTSERRAT_24 1
+#define LV_FONT_MONTSERRAT_24 0
 #define LV_FONT_MONTSERRAT_26 0
 #define LV_FONT_MONTSERRAT_28 0
 #define LV_FONT_MONTSERRAT_30 0
@@ -103,21 +146,14 @@
 #define LV_FONT_MONTSERRAT_46 0
 #define LV_FONT_MONTSERRAT_48 0
 
-/* Default font */
-// #define LV_FONT_DEFAULT &lv_font_montserrat_14
-
 /* 中文字体支持 (需要自行添加字体文件) */
 #define LV_FONT_CUSTOM_DECLARE
-// LV_FONT_DECLARE(my_chinese_font_16)
 
 /*===================
    TEXT SETTINGS
  *===================*/
 
-/* 文本编码 */
 #define LV_TXT_ENC LV_TXT_ENC_UTF8
-
-/* 文本选择支持 */
 #define LV_TXT_BREAK_CHARS " ,.;:-_"
 
 #define LV_USE_ST_LTDC 1
@@ -126,7 +162,6 @@
    WIDGET USAGE
  ==================*/
 
-/* 启用所有常用控件 */
 #define LV_USE_ANIMIMG      1
 #define LV_USE_ARC          1
 #define LV_USE_BAR          1
@@ -179,66 +214,37 @@
    OTHERS
  *==================*/
 
-/* API日志 (调试用) */
 #define LV_USE_LOG 0
 #if LV_USE_LOG
     #define LV_LOG_LEVEL LV_LOG_LEVEL_WARN
     #define LV_LOG_PRINTF 1
-    /* 日志输出函数 (使用printf输出到串口) */
-    // #define LV_LOG_USER_CB(msg) printf("%s\n", msg)
 #endif
 
-/* 断言 */
 #define LV_USE_ASSERT_NULL          1
 #define LV_USE_ASSERT_MALLOC        1
 #define LV_USE_ASSERT_STYLE         0
 #define LV_USE_ASSERT_MEM_INTEGRITY 0
 #define LV_USE_ASSERT_OBJ           0
 
-/* 用户数据 */
 #define LV_USE_USER_DATA 1
 
-/*==================
-   EXAMPLES
- *==================*/
 #define LV_BUILD_EXAMPLES 0
 
-/*==================
-   DEMOS
- *==================*/
 #define LV_USE_DEMO_WIDGETS    1
 #define LV_USE_DEMO_BENCHMARK  0
 #define LV_USE_DEMO_STRESS     0
 #define LV_USE_DEMO_MUSIC      0
 
-
-
-/** 1: Enable system monitor component */
 #define LV_USE_SYSMON   0
 #if LV_USE_SYSMON
-    /** Get the idle percentage. E.g. uint32_t my_get_idle(void); */
     #define LV_SYSMON_GET_IDLE lv_os_get_idle_percent
-    /** 1: Enable usage of lv_os_get_proc_idle_percent.*/
     #define LV_SYSMON_PROC_IDLE_AVAILABLE 0
-    #if LV_SYSMON_PROC_IDLE_AVAILABLE
-        /** Get the applications idle percentage.
-         * - Requires `LV_USE_OS == LV_OS_PTHREAD` */
-        #define LV_SYSMON_GET_PROC_IDLE lv_os_get_proc_idle_percent
-    #endif
-
-    /** 1: Show CPU usage and FPS count.
-     *  - Requires `LV_USE_SYSMON = 1` */
     #define LV_USE_PERF_MONITOR 1
     #if LV_USE_PERF_MONITOR
         #define LV_USE_PERF_MONITOR_POS LV_ALIGN_BOTTOM_RIGHT
-
-        /** 0: Displays performance data on the screen; 1: Prints performance data using log. */
         #define LV_USE_PERF_MONITOR_LOG_MODE 0
     #endif
 
-    /** 1: Show used memory and memory fragmentation.
-     *     - Requires `LV_USE_STDLIB_MALLOC = LV_STDLIB_BUILTIN`
-     *     - Requires `LV_USE_SYSMON = 1`*/
     #define LV_USE_MEM_MONITOR 0
     #if LV_USE_MEM_MONITOR
         #define LV_USE_MEM_MONITOR_POS LV_ALIGN_BOTTOM_LEFT

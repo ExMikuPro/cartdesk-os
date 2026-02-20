@@ -1,5 +1,6 @@
 #pragma once
 #include "stm32h7xx_hal.h"
+#include "stm32h7xx_hal_qspi.h"
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
@@ -209,6 +210,47 @@ FLASH_Status FLASH_DisableMemoryMapped(FLASH_Handle *h);
  * @retval 错误信息指针
  */
 const FLASH_ErrorInfo *FLASH_LastError(FLASH_Handle *h);
+
+/* ===== 兼容层 API（可选） =====
+ * 这组接口用于兼容你之前提取出来的 FLASH.c/FLASH.h 的命名方式。
+ * 不影响你现在的主 API（FLASH_Open / FLASH_Prog / FLASH_EnableMemoryMapped ...）。
+ */
+
+/**
+ * @brief  兼容：初始化(= FLASH_Open + 设置 dummy)
+ * @param  flash_size_bytes: Flash总容量(字节)
+ * @param  dummy_cycles_fast_read: Quad Fast Read DummyCycles
+ */
+FLASH_Status FLASH_Init(FLASH_Handle *h, QSPI_HandleTypeDef *hqspi,
+                        uint32_t flash_size_bytes, uint32_t dummy_cycles_fast_read);
+
+/** 兼容：退出 Memory-Mapped 模式（写/擦前需要） */
+static inline FLASH_Status FLASH_ExitMemoryMapped(FLASH_Handle *h) {
+    return FLASH_DisableMemoryMapped(h);
+}
+
+/** 兼容：进入 Memory-Mapped 模式（Quad Fast Read） */
+static inline FLASH_Status FLASH_EnterMemoryMappedFastQuad(FLASH_Handle *h) {
+    return FLASH_EnableMemoryMapped(h);
+}
+
+/**
+ * @brief  兼容：读取 JEDEC ID（三字节数组）
+ * @param  out_id3: [0]=Manufacturer, [1]=MemoryType, [2]=Capacity
+ */
+FLASH_Status FLASH_ReadJedecId(FLASH_Handle *h, uint8_t out_id3[3]);
+
+/**
+ * @brief  兼容：擦除范围 [addr, addr+len)
+ * @note   策略：尽量用 64KB 擦除，否则用 4KB
+ */
+FLASH_Status FLASH_EraseRange(FLASH_Handle *h, uint32_t addr, uint32_t len);
+
+/**
+ * @brief  兼容：编程范围（内部自动分页）
+ * @note   等价于 FLASH_Prog
+ */
+FLASH_Status FLASH_Program(FLASH_Handle *h, uint32_t addr, const void *buf, uint32_t len);
 
 #ifdef __cplusplus
 }
