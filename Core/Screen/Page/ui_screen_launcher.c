@@ -8,7 +8,7 @@
 
 #include "stm32h743xx.h"
 #include "Core/Screen/utils/cart_reader.h"
-#include "Core/Screen/utils/preview_argb_current.h"
+
 
 /* ------------------------------------------------------------------ */
 /*  SDRAM 地址布局                                                      */
@@ -29,16 +29,7 @@
  *       把起始地址 SDRAM_IMG_BASE 配置进你的 heap 区域即可；
  *       如果是静态分配，直接用下面的宏指针访问没有问题。
  */
-#define SDRAM_IMG_BASE    0xD0465000UL
-#define IMG_W             200
-#define IMG_H             200
-#define IMG_BPP           4                          /* ARGB8888 */
-#define IMG_STRIDE        (IMG_W * IMG_BPP)
-#define IMG_SIZE          (IMG_W * IMG_H * IMG_BPP)  /* 0x3E800 */
-#define IMG_SLOT_STRIDE   IMG_SIZE                   /* 每槽间距，可对齐到 0x40000 */
 
-/* 第 i 个图片槽在 SDRAM 中的起始地址 */
-#define SDRAM_IMG_SLOT(i) (SDRAM_IMG_BASE + (uint32_t)(i) * IMG_SLOT_STRIDE)
 
 /* ------------------------------------------------------------------ */
 /*  常量配置                                                            */
@@ -79,7 +70,7 @@ static char s_cart0_title[65] = "LOADING";
  * NULL 表示该槽无图片。
  */
 static const uint8_t *s_slot_flash_src[DESIGN_APP_COUNT] = {
-    preview_argb_current_map,
+    NULL,  // 预览图片现在从 SD 卡读取
     NULL, NULL, NULL, NULL, NULL,
     NULL, NULL, NULL, NULL, NULL, NULL
 };
@@ -109,13 +100,13 @@ static lv_image_dsc_t s_image_dsc[DESIGN_APP_COUNT];
 static int s_selected_index = 0;
 
 /* ------------------------------------------------------------------ */
-/*  内部工具：DMA2D 从 Flash 搬运到 SDRAM                              */
+/*  内部工具：DMA2D 从内存搬运到 SDRAM                                */
 /* ------------------------------------------------------------------ */
 
 /*
  * prv_copy_img_to_sdram()
  *
- * 用 DMA2D 的 M2M 模式把图片从 Flash（或任意只读区）
+ * 用 DMA2D 的 M2M 模式把图片从内存（Flash 或 RAM）
  * 搬运到 SDRAM。DMA2D 支持直接读 Flash AXI 地址，CPU 完全不参与，
  * 搬运期间 CPU 可以继续跑其他初始化逻辑。
  *
@@ -126,7 +117,7 @@ static void prv_copy_img_to_sdram(uint32_t dst, const uint8_t *src, uint32_t siz
 {
     /* 逐行搬运，每行 IMG_STRIDE 字节，共 IMG_H 行 */
     DMA2D->CR      = 0x00000000UL;          /* M2M 模式，无色彩转换 */
-    DMA2D->FGMAR   = (uint32_t)src;         /* 源：Flash 地址 */
+    DMA2D->FGMAR   = (uint32_t)src;         /* 源：内存地址 */
     DMA2D->OMAR    = dst;                    /* 目标：SDRAM 地址 */
     DMA2D->FGOR    = 0;                      /* 源行偏移 0（连续） */
     DMA2D->OOR     = 0;                      /* 目标行偏移 0 */
@@ -240,8 +231,7 @@ static void prv_create_box_area(lv_obj_t *parent)
          * Flash→SDRAM 的搬运，这里直接用 SDRAM 地址作为图片数据源。
          * LVGL 渲染时 DMA2D 读 SDRAM，带宽充足，CPU 完全不参与。
          */
-        if (s_slot_flash_src[i] != NULL) {
-            /* s_image_dsc[i] 已在 DesignLauncher_Create 里初始化好 */
+        if (s_image_dsc[i].data != NULL) {
             lv_obj_t *img_obj = lv_img_create(slot_container);
             lv_obj_set_size(img_obj, BOX_WIDTH, BOX_HEIGHT);
             lv_obj_center(img_obj);
@@ -328,17 +318,36 @@ void DesignLauncher_Create(lv_display_t *disp)
 
     /*
      * ----------------------------------------------------------------
-     * 图片预加载：Flash → SDRAM（DMA2D M2M，CPU 不参与数据搬运）
+     * 图片预加载：
+     *   - 槽 0：从 SD 卡读取预览图片 → SDRAM
+     *   - 其他槽：从 Flash → SDRAM（DMA2D M2M，CPU 不参与数据搬运）
      *
      * 对于每个有图片的槽：
-     *   1. 用 DMA2D 把 Flash 里的像素数据搬到 SDRAM heap 对应槽地址
+     *   1. 用 DMA2D 把像素数据搬到 SDRAM heap 对应槽地址
      *   2. 初始化该槽的 lv_image_dsc_t，.data 直接指向 SDRAM 地址
      *
      * 完成后 LVGL 渲染时 DMA2D 读写的全是 SDRAM，
      * 不再访问 Flash，彻底消除卡顿和撕裂。
      * ----------------------------------------------------------------
      */
-    for (int i = 0; i < DESIGN_APP_COUNT; i++) {
+    // 槽 0：从 SD 卡读取预览图片
+    {
+        uint32_t dst = SDRAM_IMG_SLOT(0);
+
+        int ret = cart_read_preview_from_sd("0:/cart.bin", (uint8_t*)dst, IMG_SIZE);
+        if (ret == 0) {
+            /* 初始化独立描述符，指向 SDRAM，magic 必须设置 */
+            s_image_dsc[0].header.magic = LV_IMAGE_HEADER_MAGIC;
+            s_image_dsc[0].header.cf    = LV_COLOR_FORMAT_ARGB8888;
+            s_image_dsc[0].header.w     = IMG_W;
+            s_image_dsc[0].header.h     = IMG_H;
+            s_image_dsc[0].data_size    = IMG_SIZE;
+            s_image_dsc[0].data         = (const uint8_t *)dst;  /* SDRAM 地址 */
+        }
+    }
+
+    // 其他槽：从 Flash 读取
+    for (int i = 1; i < DESIGN_APP_COUNT; i++) {
         if (s_slot_flash_src[i] == NULL) continue;
 
         uint32_t dst = SDRAM_IMG_SLOT(i);

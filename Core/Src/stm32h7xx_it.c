@@ -93,12 +93,13 @@ void HardFault_Handler(void)
 {
   /* USER CODE BEGIN HardFault_IRQn 0 */
 
-  volatile uint32_t CFSR  = SCB->CFSR;   // 0xE000ED28
-  volatile uint32_t HFSR  = SCB->HFSR;   // 0xE000ED2C
-  volatile uint32_t MMFAR = SCB->MMFAR;  // 0xE000ED34
-  volatile uint32_t BFAR  = SCB->BFAR;   // 0xE000ED38
-  (void)CFSR; (void)HFSR; (void)MMFAR; (void)BFAR;
-  __BKPT(0);
+  // __asm volatile (
+  //     "TST LR, #4          \n"
+  //     "ITE EQ              \n"
+  //     "MRSEQ R0, MSP       \n"  // 主栈
+  //     "MRSNE R0, PSP       \n"  // 进程栈
+  //     "B prvGetRegistersFromStack \n"
+  // );
 
   /* USER CODE END HardFault_IRQn 0 */
   while (1)
@@ -249,11 +250,19 @@ void LTDC_IRQHandler(void)
 void DMA2D_IRQHandler(void)
 {
   /* USER CODE BEGIN DMA2D_IRQn 0 */
-
+  /* Capture ISR flags before HAL clears them */
+  uint32_t isr = DMA2D->ISR;
   /* USER CODE END DMA2D_IRQn 0 */
   HAL_DMA2D_IRQHandler(&hdma2d);
   /* USER CODE BEGIN DMA2D_IRQn 1 */
-  lv_draw_dma2d_transfer_complete_interrupt_handler();
+#if (LV_USE_DRAW_DMA2D && LV_USE_DRAW_DMA2D_INTERRUPT)
+  /* LVGL DMA2D backend needs this notification when TC (transfer complete) happens */
+  if (isr & DMA2D_ISR_TCIF) {
+    lv_draw_dma2d_transfer_complete_interrupt_handler();
+  }
+#else
+  (void)isr;
+#endif
   /* USER CODE END DMA2D_IRQn 1 */
 }
 
