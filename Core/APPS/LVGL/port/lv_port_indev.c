@@ -9,7 +9,7 @@
  *********************/
 #include "lv_port_indev.h"
 #include "lvgl.h"
-#include "TOUCH/touch.h"
+#include "touch.h"
 
 /*********************
  *      宏定义

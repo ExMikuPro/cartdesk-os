@@ -40,7 +40,7 @@
 
 #include "../Driver/LCD/lcd.h"
 #include "../Driver/SDRAM/sdram.h"
-#include "Core/Screen/Page/ui_screen_launcher.h"
+#include "ui_screen_launcher.h"
 
 
 #include "demos/lv_demos.h"
@@ -50,10 +50,9 @@
 #include "lv_port_disp.h"
 #include "lv_port_indev.h"
 #include "../Driver/TOUCH/touch.h"
-#include "Core/APPS/LVGL/port/lvgl_init.h"
-#include "Core/APPS/LVGL/src/core/lv_obj_pos.h"
-#include "Core/APPS/LVGL/src/widgets/label/lv_label.h"
-#include "Core/APPS/TASK/Task.h"
+#include "lvgl_init.h"
+#include "lvgl.h"
+#include "Task.h"
 #include "EEPROM/eeprom.h"
 #include "FLASH/flash.h"
 #include "FLASH/lfs_port.h"

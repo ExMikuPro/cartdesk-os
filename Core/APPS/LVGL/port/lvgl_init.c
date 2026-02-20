@@ -2,7 +2,7 @@
 *      INCLUDES
  *********************/
 #include "lvgl_init.h"
-#include "Core/APPS/LVGL/lvgl.h"
+#include "lvgl.h"
 #include "lv_port_disp.h"
 #include "lv_port_tick.h"
 #include "lv_port_indev.h"

@@ -25,7 +25,7 @@
 #include "lv_port_disp.h"
 #include "draw/dma2d/lv_draw_dma2d.h"
 #include "tick/lv_tick.h"
-#include "Core/APPS/TASK/Task.h"
+#include "Task.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/

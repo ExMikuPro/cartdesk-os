@@ -6,7 +6,7 @@
 
 #include "lv_port_disp.h"
 #include "lvgl.h"
-#include "Core/APPS/LVGL/src/drivers/display/st_ltdc/lv_st_ltdc.h"
+#include "src/drivers/display/st_ltdc/lv_st_ltdc.h"
 #include "../Driver/LCD/lcd.h"
 
 /*********************

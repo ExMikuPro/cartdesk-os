@@ -2,9 +2,9 @@
 *      INCLUDES
  *********************/
 #include "lv_port_tick.h"
-#include "Core/APPS/LVGL/lvgl.h"
+#include "lvgl.h"
 #include "stm32h7xx_hal.h"
-#include "Core/APPS/LVGL/src/tick/lv_tick.h"
+#include "src/tick/lv_tick.h"
 
 /*********************
  *      DEFINES
