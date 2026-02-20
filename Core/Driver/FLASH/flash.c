@@ -335,7 +335,7 @@ FLASH_Status FLASH_Open(FLASH_Handle *h, QSPI_HandleTypeDef *hqspi,
     if (!h || !hqspi) FLASH_FAIL(h, FLASH_E_PARAM, HAL_ERROR, "FLASH_Open:param", 0, 0);
 
     memset(h, 0, sizeof(*h));
-    
+
     h->qspi = hqspi;
     h->total_size_bytes = total_size_bytes;
     h->erase4k_bytes    = 4096u;
@@ -715,4 +715,70 @@ FLASH_Status FLASH_DisableMemoryMapped(FLASH_Handle *h) {
  */
 const FLASH_ErrorInfo *FLASH_LastError(FLASH_Handle *h) {
     return h ? &h->last : NULL;
+}
+
+/* ==================== 兼容层 API 实现（可选） ==================== */
+
+FLASH_Status FLASH_Init(FLASH_Handle *h, QSPI_HandleTypeDef *hqspi,
+                        uint32_t flash_size_bytes, uint32_t dummy_cycles_fast_read) {
+    FLASH_Status st = FLASH_Open(h, hqspi, flash_size_bytes);
+    if (st != FLASH_OK) return st;
+
+    /* dummy_cycles_fast_read 在 W25Q256 上通常是 6~10，用户自定义 */
+    if (dummy_cycles_fast_read > 255u) dummy_cycles_fast_read = 255u;
+    h->dummy_cycles_fast_read = (uint8_t)dummy_cycles_fast_read;
+    return FLASH_OK;
+}
+
+FLASH_Status FLASH_ReadJedecId(FLASH_Handle *h, uint8_t out_id3[3]) {
+    if (!out_id3) FLASH_FAIL(h, FLASH_E_PARAM, HAL_ERROR, "ReadJedecId:param", 0, 0);
+
+    uint32_t jedec = 0;
+    FLASH_Status st = FLASH_ReadJEDEC(h, &jedec);
+    if (st != FLASH_OK) return st;
+
+    out_id3[0] = (uint8_t)((jedec >> 16) & 0xFFu);
+    out_id3[1] = (uint8_t)((jedec >> 8)  & 0xFFu);
+    out_id3[2] = (uint8_t)((jedec >> 0)  & 0xFFu);
+    return FLASH_OK;
+}
+
+FLASH_Status FLASH_EraseRange(FLASH_Handle *h, uint32_t addr, uint32_t len) {
+    if (!h || !h->qspi) FLASH_FAIL(h, FLASH_E_PARAM, HAL_ERROR, "EraseRange:param", addr, len);
+    FLASH_Status st = flash_range_check(h, addr, len);
+    if (st != FLASH_OK) return st;
+    if (len == 0) return FLASH_OK;
+
+    /* 向上对齐到 4K（擦除必须覆盖整个范围） */
+    const uint32_t erase4k = h->erase4k_bytes;
+    const uint32_t erase64k = h->erase64k_bytes;
+
+    uint32_t end = addr + len;
+    uint32_t end_aligned = (end + erase4k - 1u) / erase4k * erase4k;
+
+    while (addr < end_aligned) {
+        /* 优先使用 64K：对齐 + 剩余 >= 64K */
+        if ((addr % erase64k) == 0u && (end_aligned - addr) >= erase64k) {
+            st = FLASH_Erase64K(h, addr);
+            if (st != FLASH_OK) return st;
+            addr += erase64k;
+            continue;
+        }
+
+        /* 否则使用 4K */
+        if ((addr % erase4k) != 0u) {
+            /* 这里理论上不会发生，因为 end_aligned 是 4K 对齐，而 addr 可能不是 4K 对齐。
+             * 为了安全，向下对齐到 4K（覆盖更大范围）。 */
+            addr = (addr / erase4k) * erase4k;
+        }
+        st = FLASH_Erase4K(h, addr);
+        if (st != FLASH_OK) return st;
+        addr += erase4k;
+    }
+
+    return FLASH_OK;
+}
+
+FLASH_Status FLASH_Program(FLASH_Handle *h, uint32_t addr, const void *buf, uint32_t len) {
+    return FLASH_Prog(h, addr, buf, len);
 }
