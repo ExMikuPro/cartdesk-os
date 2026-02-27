@@ -1,0 +1,17 @@
+# 自动处理行尾符
+* text=auto
+
+# CubeMX 生成文件强制 CRLF（Windows风格，不参与diff比较）
+*.ioc text eol=crlf
+Core/Src/*.c text eol=crlf
+Core/Inc/*.h text eol=crlf
+Drivers/**/*.c text eol=crlf
+Drivers/**/*.h text eol=crlf
+FATFS/**/*.c text eol=crlf
+FATFS/**/*.h text eol=crlf
+Middlewares/**/*.c text eol=crlf
+Middlewares/**/*.h text eol=crlf
+
+# 你自己的源文件用 LF
+App/**/*.c text eol=lf
+App/**/*.h text eol=lf
