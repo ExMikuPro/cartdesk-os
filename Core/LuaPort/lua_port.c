@@ -8,8 +8,6 @@ int  luaopen_gpio(lua_State* L);
 int  luaopen_tim(lua_State* L);
 int  luaopen_sd(lua_State* L);
 void lua_register_delay(lua_State* L);
-int luaopen_ui_button(lua_State* L);
-int luaopen_ui_slider(lua_State* L);
 
 void lua_port_bind(lua_State* L, const lua_port_config_t* cfg)
 {
@@ -31,17 +29,7 @@ void lua_port_bind(lua_State* L, const lua_port_config_t* cfg)
 
   // ui 命名空间
   lua_newtable(L);
-  
-  // ui.button 模块
-  luaopen_ui_button(L);
-  lua_setfield(L, -2, "button");
 
-  // ui.slider 模块  <-- 添加这部分
-  luaopen_ui_slider(L);
-  lua_setfield(L, -2, "slider");
-  
-  // 设置 ui 为全局变量
-  lua_setglobal(L, "ui");
 
   // delay(ms) -> HAL_Delay(ms)
   lua_register_delay(L);

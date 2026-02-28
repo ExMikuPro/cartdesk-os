@@ -82,34 +82,6 @@ target_include_directories(lua PUBLIC ${LUA_SRC_DIR})
 # ==============================================================================
 # 目标 2: lvgl —— LVGL v9.x GUI 库
 # ==============================================================================
-set(LVGL_DIR ${CMAKE_SOURCE_DIR}/Core/APPS/LVGL)
-
-file(GLOB_RECURSE LVGL_SOURCES CONFIGURE_DEPENDS
-        ${LVGL_DIR}/src/*.c
-        ${LVGL_DIR}/demos/widgets/*.c
-)
-
-add_library(lvgl STATIC
-        ${LVGL_SOURCES}
-        Core/APPS/LVGL/font/lv_menu_font.c
-)
-
-# LVGL v9 内部头文件通过相对路径互相引用，只需暴露根目录和 src 即可。
-# 不要用 glob 递归收集子目录——会把 thorvg/rapidjson/msinttypes 等
-# 仅兼容 MSVC 的第三方库路径也加进来，导致 GCC 编译失败。
-target_include_directories(lvgl PUBLIC
-        ${LVGL_DIR}
-        ${LVGL_DIR}/src
-        ${LVGL_DIR}/src/core
-        ${LVGL_DIR}/port
-        ${CMAKE_SOURCE_DIR}/Core/Inc
-        ${CMAKE_SOURCE_DIR}/Drivers/STM32H7xx_HAL_Driver/Inc
-        ${CMAKE_SOURCE_DIR}/Drivers/STM32H7xx_HAL_Driver/Inc/Legacy
-        ${CMAKE_SOURCE_DIR}/Drivers/CMSIS/Include
-        ${CMAKE_SOURCE_DIR}/Drivers/CMSIS/Device/ST/STM32H7xx/Include
-)
-
-target_compile_definitions(lvgl PUBLIC ${COMMON_DEFINES})
 
 # ==============================================================================
 # 目标 3: drv_display —— 显示相关硬件驱动（LCD / SDRAM / LVGL Port）
@@ -118,18 +90,6 @@ add_library(drv_display STATIC
         # LCD 驱动
         Core/Driver/LCD/lcd.c
         Core/Driver/LCD/lcd.h
-        # SDRAM 驱动
-        Core/Driver/SDRAM/sdram.c
-        Core/Driver/SDRAM/sdram.h
-        # LVGL 移植层
-        Core/APPS/LVGL/port/lv_port_disp.c
-        Core/APPS/LVGL/port/lv_port_disp.h
-        Core/APPS/LVGL/port/lv_port_tick.c
-        Core/APPS/LVGL/port/lv_port_tick.h
-        Core/APPS/LVGL/port/lv_port_indev.c
-        Core/APPS/LVGL/port/lv_port_indev.h
-        Core/APPS/LVGL/port/lvgl_init.c
-        Core/APPS/LVGL/port/lvgl_init.h
         # 触摸驱动
         Core/Driver/TOUCH/touch.c
 )
@@ -139,13 +99,10 @@ target_include_directories(drv_display PUBLIC
         Core/Driver/LCD
         Core/Driver/SDRAM
         Core/Driver/TOUCH
-        Core/APPS/LVGL/port
-        Core/APPS/LVGL
         ${STM32_HAL_INCLUDES}
 )
 
 target_compile_definitions(drv_display PUBLIC ${COMMON_DEFINES})
-target_link_libraries(drv_display PUBLIC lvgl)
 
 # ==============================================================================
 # 目标 4: drv_storage —— 存储相关驱动（Flash/LittleFS / EEPROM / SD）
@@ -182,6 +139,7 @@ add_library(drv_misc STATIC
         Core/Driver/UID/uid.h
         Core/Driver/RNG/rng_port.c
         Core/Driver/RNG/rng_port.h
+        Core/Driver/SDRAM/sdram.c
 )
 
 target_include_directories(drv_misc PUBLIC
@@ -208,9 +166,6 @@ add_library(lua_port STATIC
         Core/LuaPort/modules/lua_delay.c
         Core/LuaPort/modules/lua_tim.c
         Core/LuaPort/modules/Lua_sd.c
-        # UI 组件绑定
-        Core/LuaPort/modules/lua_ui_button.c
-        Core/LuaPort/modules/lua_ui_slider.c
 )
 
 target_include_directories(lua_port PUBLIC
@@ -224,39 +179,13 @@ target_include_directories(lua_port PUBLIC
 )
 
 target_compile_definitions(lua_port PUBLIC ${COMMON_DEFINES})
-target_link_libraries(lua_port PUBLIC lua lvgl)
+target_link_libraries(lua_port PUBLIC lua)
 
 # ==============================================================================
 # 目标 7: app_screen —— 应用层 UI 界面（启动器 / 缓存 / 预览）
 # ==============================================================================
-add_library(app_screen STATIC
-        # 启动器页面
-        Core/Screen/Page/ui_screen_launcher.c
-        Core/Screen/Page/ui_screen_launcher.h
-        Core/Screen/Page/jbm_el_20px.h
-        # 缓存
-        Core/Screen/Page/ui_launcher_cache.c
-        Core/Screen/Page/ui_launcher_cache.h
-        # 工具：卡带读取 / 预览图
-        Core/Screen/utils/cart_reader.c
-        Core/Screen/utils/cart_reader.h
-        Core/Screen/utils/preview_argb_current.c
-        Core/Screen/utils/preview_argb_current.h
-)
 
-target_include_directories(app_screen PUBLIC
-        Core/Inc
-        Core/Screen/Page
-        Core/Screen/utils
-        Core/Driver/LCD
-        ${CMAKE_SOURCE_DIR}/Middlewares/Third_Party/FatFs/src
-        ${CMAKE_SOURCE_DIR}/FATFS/Target
-        ${CMAKE_SOURCE_DIR}/FATFS/App
-        ${STM32_HAL_INCLUDES}
-)
 
-target_compile_definitions(app_screen PUBLIC ${COMMON_DEFINES})
-target_link_libraries(app_screen PUBLIC lvgl drv_storage)
 
 # ==============================================================================
 # 目标 8: app_task —— RTOS / 裸机任务（LED / LVGL / LUA 任务）
@@ -264,7 +193,6 @@ target_link_libraries(app_screen PUBLIC lvgl drv_storage)
 add_library(app_task STATIC
         Core/APPS/TASK/Task.h
         Core/APPS/TASK/LED.c
-        Core/APPS/TASK/LVGL.c
         Core/APPS/TASK/LUA.c
 )
 
@@ -275,7 +203,7 @@ target_include_directories(app_task PUBLIC
 )
 
 target_compile_definitions(app_task PUBLIC ${COMMON_DEFINES})
-target_link_libraries(app_task PUBLIC lvgl lua_port)
+target_link_libraries(app_task PUBLIC lua_port)
 
 # ==============================================================================
 # 主可执行目标：链接所有子目标
@@ -304,9 +232,7 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
         drv_storage
         drv_misc
         lua_port
-        app_screen
         app_task
-        lvgl
         lua
         -Wl,--end-group
         m                # libm 放在 group 外且最后，保证所有库的数学符号都能被解析

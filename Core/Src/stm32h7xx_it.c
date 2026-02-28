@@ -22,9 +22,6 @@
 #include "stm32h7xx_it.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "lv_port_disp.h"
-#include "draw/dma2d/lv_draw_dma2d.h"
-#include "tick/lv_tick.h"
 #include "Task.h"
 /* USER CODE END Includes */
 
@@ -203,7 +200,7 @@ void SysTick_Handler(void)
   /* USER CODE END SysTick_IRQn 0 */
   HAL_IncTick();
   /* USER CODE BEGIN SysTick_IRQn 1 */
-  lv_tick_inc(1);
+  // lv_tick_inc(1);
 
   /* USER CODE END SysTick_IRQn 1 */
 }
@@ -239,7 +236,7 @@ void LTDC_IRQHandler(void)
   /* USER CODE END LTDC_IRQn 0 */
   HAL_LTDC_IRQHandler(&hltdc);
   /* USER CODE BEGIN LTDC_IRQn 1 */
-  LTDC_IRQHandler_Callback();
+//   LTDC_IRQHandler_Callback();
 
   /* USER CODE END LTDC_IRQn 1 */
 }
@@ -278,7 +275,7 @@ void TIM16_IRQHandler(void)
   /* USER CODE BEGIN TIM16_IRQn 1 */
 
   if (TaskTicks_LED) TaskTicks_LED--;
-  if (TaskTicks_LVGL) TaskTicks_LVGL--;
+  // if (TaskTicks_LVGL) TaskTicks_LVGL--;
   if (TaskTicks_LUA) TaskTicks_LUA--;
 
   /* USER CODE END TIM16_IRQn 1 */

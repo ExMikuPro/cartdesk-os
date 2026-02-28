@@ -11,7 +11,7 @@ extern uint32_t TaskTicks_LVGL;
 extern uint32_t TaskTicks_LUA;
 
 void Task_LED();
-void Task_LVGL();
+// void Task_LVGL();
 void Task_LUA();
 
 

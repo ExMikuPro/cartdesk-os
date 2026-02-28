@@ -40,18 +40,10 @@
 
 #include "../Driver/LCD/lcd.h"
 #include "../Driver/SDRAM/sdram.h"
-#include "ui_screen_launcher.h"
-
-
-#include "demos/lv_demos.h"
 
 /* Storage: QSPI NOR + littlefs */
 #include "lua_vm.h"
-#include "lv_port_disp.h"
-#include "lv_port_indev.h"
 #include "../Driver/TOUCH/touch.h"
-#include "lvgl_init.h"
-#include "lvgl.h"
 #include "Task.h"
 #include "EEPROM/eeprom.h"
 #include "FLASH/flash.h"
@@ -137,50 +129,6 @@ static void Storage_InitOrDie(void) {
   // (void)LFS_EnableMappedRead(1);
 }
 
-static lv_obj_t *g_box = NULL;
-
-static void box_anim_x(void *obj, int32_t v) {
-  lv_obj_set_x((lv_obj_t *) obj, v);
-}
-
-void ui_test_moving_box_start(void) {
-  // 清空屏幕（可选，但建议排障时干净一点）
-  lv_obj_clean(lv_screen_active());
-
-  // 背景设为不透明纯黑（避免透明叠加引起“看起来像重影”）
-  lv_obj_set_style_bg_opa(lv_screen_active(), LV_OPA_COVER, 0);
-  lv_obj_set_style_bg_color(lv_screen_active(), lv_color_hex(0x000000), 0);
-
-  // 创建小方块
-  const int32_t box_w = 40;
-  const int32_t box_h = 40;
-
-  g_box = lv_obj_create(lv_screen_active());
-  lv_obj_set_size(g_box, box_w, box_h);
-  lv_obj_set_style_bg_opa(g_box, LV_OPA_COVER, 0);
-  lv_obj_set_style_bg_color(g_box, lv_color_hex(0x00FF00), 0); // 亮绿色方便观察
-  lv_obj_set_style_border_width(g_box, 0, 0);
-  lv_obj_set_style_radius(g_box, 0, 0);
-
-  // 初始位置：垂直居中，x=0
-  lv_obj_set_y(g_box, (LCD_H - box_h) / 2);
-  lv_obj_set_x(g_box, 0);
-
-  // 做左右往返动画
-  lv_anim_t a;
-  lv_anim_init(&a);
-  lv_anim_set_var(&a, g_box);
-  lv_anim_set_exec_cb(&a, box_anim_x);
-  lv_anim_set_values(&a, 0, LCD_W - box_w);
-
-  // 速度：这里 1000ms 从左到右；再 1000ms 从右到左
-  lv_anim_set_time(&a, 1000);
-  lv_anim_set_playback_time(&a, 1000);
-
-  lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
-  lv_anim_start(&a);
-}
-
 #define GT_ADDR7   0x5D              // 不通就换 0x14
 #define GT_ADDR    (GT_ADDR7 << 1)   // HAL 需要左移1位
 
@@ -221,102 +169,6 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
   if (GPIO_Pin == TOUCH_INT_Pin) {
     Touch_IRQHandler();
   }
-}
-
-static lv_obj_t *s_box = NULL;
-static lv_obj_t *s_label = NULL;
-
-static bool s_dragging = false;
-static int16_t s_off_x = 0; // 手指点相对方块左上角的偏移
-static int16_t s_off_y = 0;
-
-static void drag_box_event_cb(lv_event_t *e) {
-  lv_event_code_t code = lv_event_get_code(e);
-  lv_obj_t *obj = lv_event_get_target(e);
-  lv_indev_t *indev = lv_event_get_indev(e);
-  if (!indev) return;
-
-  lv_point_t p;
-  lv_indev_get_point(indev, &p);
-
-  if (code == LV_EVENT_PRESSED) {
-    // 记录偏移：避免按下时方块“跳到手指中心”
-    s_dragging = true;
-
-    int16_t obj_x = lv_obj_get_x(obj);
-    int16_t obj_y = lv_obj_get_y(obj);
-    s_off_x = p.x - obj_x;
-    s_off_y = p.y - obj_y;
-  } else if (code == LV_EVENT_PRESSING) {
-    if (!s_dragging) return;
-
-    // 新位置 = 手指坐标 - 偏移
-    int16_t new_x = p.x - s_off_x;
-    int16_t new_y = p.y - s_off_y;
-
-    // 可选：限制不出屏幕（父对象一般是 screen）
-    lv_obj_t *parent = lv_obj_get_parent(obj);
-    int16_t pw = (int16_t) lv_obj_get_width(parent);
-    int16_t ph = (int16_t) lv_obj_get_height(parent);
-    int16_t ow = (int16_t) lv_obj_get_width(obj);
-    int16_t oh = (int16_t) lv_obj_get_height(obj);
-
-    if (new_x < 0) new_x = 0;
-    if (new_y < 0) new_y = 0;
-    if (new_x > pw - ow) new_x = pw - ow;
-    if (new_y > ph - oh) new_y = ph - oh;
-
-    lv_obj_set_pos(obj, new_x, new_y);
-
-    // 可选：显示坐标/状态
-    if (s_label) {
-      char buf[64];
-      lv_snprintf(buf, sizeof(buf), "x=%d y=%d (touch %d,%d)",
-                  (int) new_x, (int) new_y, (int) p.x, (int) p.y);
-      lv_label_set_text(s_label, buf);
-    }
-  } else if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
-    s_dragging = false;
-  }
-}
-
-void ui_test_touch_drag_start(void) {
-  lv_obj_t *scr = lv_scr_act();
-
-  // 背景（可选）
-  lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
-  lv_obj_set_style_bg_color(scr, lv_color_hex(0x101018), 0);
-
-  // 提示文字
-  s_label = lv_label_create(scr);
-  lv_label_set_text(s_label, "Hold the square and drag");
-  lv_obj_align(s_label, LV_ALIGN_TOP_MID, 0, 10);
-  lv_obj_set_style_text_color(s_label, lv_color_hex(0xFFCC00), LV_PART_MAIN);
-
-  // 可拖动方块
-  s_box = lv_obj_create(scr);
-  lv_obj_set_size(s_box, 120, 120);
-  lv_obj_set_pos(s_box, 50, 80);
-
-  // 让它更像一个块（可选）
-  lv_obj_set_style_radius(s_box, 12, 0);
-  lv_obj_set_style_bg_color(s_box, lv_color_hex(0x3DCCA3), 0);
-  lv_obj_set_style_border_width(s_box, 0, 0);
-
-  // 关键：要能接收触摸事件
-  lv_obj_add_flag(s_box, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_add_flag(s_box, LV_OBJ_FLAG_PRESS_LOCK); // 按下后锁定目标，避免拖动时丢事件（很重要）
-
-  // 绑定事件：按下/按住/松开
-  lv_obj_add_event_cb(s_box, drag_box_event_cb, LV_EVENT_PRESSED, NULL);
-  lv_obj_add_event_cb(s_box, drag_box_event_cb, LV_EVENT_PRESSING, NULL);
-  lv_obj_add_event_cb(s_box, drag_box_event_cb, LV_EVENT_RELEASED, NULL);
-  lv_obj_add_event_cb(s_box, drag_box_event_cb, LV_EVENT_PRESS_LOST, NULL);
-
-  // 方块内部文字（可选）
-  lv_obj_t *t = lv_label_create(s_box);
-  lv_label_set_text(t, "awa");
-  lv_obj_center(t);
 }
 
 #define TEST_OFF   (0x00000000u)   // 更保守：最后 64KB 的起始（对齐）
@@ -492,17 +344,10 @@ int main(void)
 
   HAL_TIM_Base_Start_IT(&htim16);
   /* LCD/UI */
-  lv_init();
-
-  lv_mem_monitor_t mon;
-  lv_mem_monitor(&mon);
-
-  lv_port_disp_init(); // 显示端口初始化
-  lv_port_indev_init(); // ← 输入设备初始化
   // ui_test_touch_drag_start();
   LCD_DisplayON();
 
-  DesignLauncher_Create(NULL); // 注释掉的启动器创建函数
+  // DesignLauncher_Create(NULL); // 注释掉的启动器创建函数
 
   // Launcher_Init();
   // DesignLauncher_Create(lv_display_get_default());
@@ -521,7 +366,7 @@ int main(void)
     // }
 
     // Task_LED();
-    Task_LVGL();
+    // Task_LVGL();
     Task_LUA();
 
     /* USER CODE END WHILE */
@@ -661,13 +506,39 @@ void MPU_Config(void)
 
   HAL_MPU_ConfigRegion(&MPU_InitStruct);
 
-  /** Initializes and configures the Region and the memory to be protected
-  */
+  /**
+   * Region 5: SDRAM 帧缓冲区 0xD0000000, 8MB
+   * LTDC 是 DMA，直接读物理内存，不经过 CPU Cache。
+   * 必须配成 Non-Cacheable，否则 CPU 写进 Cache 后
+   * LTDC 读到的还是旧数据，导致画面撕裂/花屏。
+   * Write-Buffer 开启让 CPU 写操作不阻塞。
+   */
   MPU_InitStruct.Number = MPU_REGION_NUMBER5;
   MPU_InitStruct.BaseAddress = 0xD0000000;
-  MPU_InitStruct.Size = MPU_REGION_SIZE_64MB;
+  MPU_InitStruct.Size = MPU_REGION_SIZE_8MB;       /* 覆盖三个帧缓冲共 4.38MB，取 8MB */
   MPU_InitStruct.AccessPermission = MPU_REGION_FULL_ACCESS;
-  MPU_InitStruct.DisableExec = MPU_INSTRUCTION_ACCESS_ENABLE;
+  MPU_InitStruct.DisableExec = MPU_INSTRUCTION_ACCESS_DISABLE;
+  MPU_InitStruct.IsShareable = MPU_ACCESS_NOT_SHAREABLE;
+  MPU_InitStruct.IsCacheable = MPU_ACCESS_NOT_CACHEABLE;  /* ← 关键：关 Cache */
+  MPU_InitStruct.IsBufferable = MPU_ACCESS_BUFFERABLE;    /* Write-Buffer 加速 CPU 写 */
+  MPU_InitStruct.TypeExtField = MPU_TEX_LEVEL0;
+
+  HAL_MPU_ConfigRegion(&MPU_InitStruct);
+
+  /**
+   * Region 9: SDRAM 图片/Heap 区 0xD0465000, 剩余空间
+   * DMA2D 搬运完成后 CPU 只读，配 Write-Through。
+   * 比 Non-Cacheable 快，且不会有 CPU 写脏数据的问题。
+   */
+  MPU_InitStruct.Number = MPU_REGION_NUMBER9;
+  MPU_InitStruct.BaseAddress = 0xD0400000;         /* 对齐到 4MB 边界 */
+  MPU_InitStruct.Size = MPU_REGION_SIZE_64MB;      /* 覆盖剩余 SDRAM */
+  MPU_InitStruct.AccessPermission = MPU_REGION_FULL_ACCESS;
+  MPU_InitStruct.DisableExec = MPU_INSTRUCTION_ACCESS_DISABLE;
+  MPU_InitStruct.IsShareable = MPU_ACCESS_NOT_SHAREABLE;
+  MPU_InitStruct.IsCacheable = MPU_ACCESS_CACHEABLE;
+  MPU_InitStruct.IsBufferable = MPU_ACCESS_NOT_BUFFERABLE; /* Write-Through，不写分配 */
+  MPU_InitStruct.TypeExtField = MPU_TEX_LEVEL0;
 
   HAL_MPU_ConfigRegion(&MPU_InitStruct);
 
