@@ -26,6 +26,7 @@
 #include "lcd.h"
 #include "ltdc.h"
 #include "dma2d.h"
+#include "lv_port_disp.h"
 #include <string.h>
 #include <math.h>
 
@@ -1305,6 +1306,9 @@ uint8_t LCD_IsPendingSwap(uint8_t Layer) {
 void HAL_LTDC_LineEventCallback(LTDC_HandleTypeDef *hltdc_param) {
     // VBlank计数+1（用于上层按帧节流）
     g_ltdc_vblank_cnt++;
+
+    // 直接通知LVGL移植层：当前已经进入LineEvent/VBlank阶段
+    lv_port_disp_signal_vsync();
 
     // 检查每个layer是否有pending swap
     for (uint8_t layer = 0; layer < 2; layer++) {

@@ -63,8 +63,14 @@ void disp_wait_vsync(void);
 uint32_t disp_get_fps(void);
 
 /**
+ * @brief 通知LVGL移植层已进入VSync/LineEvent阶段
+ * @note  供HAL_LTDC_LineEventCallback直接调用，避免在IRQ尾部二次读硬件标志
+ */
+void lv_port_disp_signal_vsync(void);
+
+/**
  * @brief LTDC行中断回调
- * @note  在stm32h7xx_it.c中调用此函数
+ * @note  兼容旧调用点，保留为空实现
  */
 void LTDC_IRQHandler_Callback(void);
 

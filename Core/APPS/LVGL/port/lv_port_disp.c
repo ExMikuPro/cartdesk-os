@@ -206,21 +206,22 @@ uint32_t disp_get_fps(void)
 }
 
 /**
+ * @brief 通知LVGL移植层当前已进入VSync/LineEvent阶段
+ */
+void lv_port_disp_signal_vsync(void)
+{
+#if USE_VSYNC
+    g_vsync_flag = true;
+#endif
+}
+
+/**
  * @brief LTDC中断回调函数
- * @note  在LTDC_IRQHandler中调用
+ * @note  兼容旧调用点，实际VSync通知已在HAL_LTDC_LineEventCallback中完成
  */
 void LTDC_IRQHandler_Callback(void)
 {
 #if USE_VSYNC
-    extern LTDC_HandleTypeDef hltdc;
-
-    /* 检查是否是行中断 */
-    if (__HAL_LTDC_GET_FLAG(&hltdc, LTDC_FLAG_LI) != RESET) {
-        /* 清除行中断标志 */
-        __HAL_LTDC_CLEAR_FLAG(&hltdc, LTDC_FLAG_LI);
-
-        /* 设置VSync标志 */
-        g_vsync_flag = true;
-    }
+    /* VSync 标志已在 HAL_LTDC_LineEventCallback 里直接置位，这里不再二次读/清硬件标志。 */
 #endif
 }
