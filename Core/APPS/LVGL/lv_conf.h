@@ -1,6 +1,6 @@
 /**
  * @file lv_conf.h
- * @brief LVGL 9.4 配置文件 - 针对STM32H743优化
+ * @brief LVGL 9.5 配置文件 - 针对STM32H743优化
  *
  * 配置说明:
  * - MCU: STM32H743 (Cortex-M7, 480MHz)
@@ -13,8 +13,6 @@
 
 #ifndef LV_CONF_H
 #define LV_CONF_H
-
-#include <stdint.h>
 
 /*====================
    COMPILER SETTINGS

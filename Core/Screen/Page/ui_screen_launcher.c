@@ -154,7 +154,7 @@ static void prv_set_selection(lv_obj_t *selected_obj)
 
     for (int i = 0; i < DESIGN_APP_COUNT; i++) {
         if (s_slots[i] == selected_obj) {
-            lv_obj_clear_flag(s_slot_labels[i], LV_OBJ_FLAG_HIDDEN);
+            lv_obj_remove_flag(s_slot_labels[i], LV_OBJ_FLAG_HIDDEN);
             s_selected_index = i;
             return;
         }
@@ -162,7 +162,7 @@ static void prv_set_selection(lv_obj_t *selected_obj)
     for (int i = 0; i < DESIGN_CIRCLE_COUNT; i++) {
         if (s_circles[i] == selected_obj) {
             lv_obj_set_style_border_width(s_circles[i], 3, 0);
-            lv_obj_clear_flag(s_circle_labels[i], LV_OBJ_FLAG_HIDDEN);
+            lv_obj_remove_flag(s_circle_labels[i], LV_OBJ_FLAG_HIDDEN);
             s_selected_index = -(i + 1);
             return;
         }
@@ -201,7 +201,7 @@ static void prv_create_box_area(lv_obj_t *parent)
     lv_obj_set_scrollbar_mode(box_container, LV_SCROLLBAR_MODE_OFF);
     lv_obj_set_scroll_dir(box_container, LV_DIR_HOR);
     lv_obj_set_style_anim_duration(box_container, 0, 0);
-    lv_obj_clear_flag(box_container, LV_OBJ_FLAG_SCROLL_ELASTIC);
+    lv_obj_remove_flag(box_container, LV_OBJ_FLAG_SCROLL_ELASTIC);
 
     lv_obj_t *content_container = lv_obj_create(box_container);
     lv_obj_set_size(content_container, content_width, container_height + 60);
@@ -209,7 +209,7 @@ static void prv_create_box_area(lv_obj_t *parent)
     lv_obj_set_style_border_width(content_container, 0, 0);
     lv_obj_set_style_pad_all(content_container, 0, 0);
     lv_obj_set_scrollbar_mode(content_container, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_clear_flag(content_container, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(content_container, LV_OBJ_FLAG_SCROLLABLE);
 
     for (int i = 0; i < DESIGN_APP_COUNT; i++) {
         const int box_x = 20 + i * (BOX_WIDTH + BOX_SPACING);
@@ -222,7 +222,7 @@ static void prv_create_box_area(lv_obj_t *parent)
         lv_obj_set_style_radius(slot_container, 0, LV_PART_MAIN);
         lv_obj_set_style_border_color(slot_container,
             (i == 0) ? lv_color_hex(COLOR_CYAN) : lv_color_hex(COLOR_BLACK), LV_PART_MAIN);
-        lv_obj_clear_flag(slot_container, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_remove_flag(slot_container, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_set_scrollbar_mode(slot_container, LV_SCROLLBAR_MODE_OFF);
         lv_obj_add_flag(slot_container, LV_OBJ_FLAG_CLICKABLE);
 
@@ -232,12 +232,12 @@ static void prv_create_box_area(lv_obj_t *parent)
          * LVGL 渲染时 DMA2D 读 SDRAM，带宽充足，CPU 完全不参与。
          */
         if (s_image_dsc[i].data != NULL) {
-            lv_obj_t *img_obj = lv_img_create(slot_container);
+            lv_obj_t *img_obj = lv_image_create(slot_container);
             lv_obj_set_size(img_obj, BOX_WIDTH, BOX_HEIGHT);
             lv_obj_center(img_obj);
-            lv_img_set_src(img_obj, &s_image_dsc[i]);
+            lv_image_set_src(img_obj, &s_image_dsc[i]);
             lv_obj_set_style_border_width(img_obj, 0, LV_PART_MAIN);
-            lv_obj_clear_flag(img_obj, LV_OBJ_FLAG_SCROLLABLE);
+            lv_obj_remove_flag(img_obj, LV_OBJ_FLAG_SCROLLABLE);
         }
 
         lv_obj_add_event_cb(slot_container, prv_box_clicked_cb, LV_EVENT_CLICKED, NULL);
@@ -255,7 +255,7 @@ static void prv_create_box_area(lv_obj_t *parent)
         s_slot_labels[i] = label;
     }
 
-    lv_obj_clear_flag(s_slot_labels[0], LV_OBJ_FLAG_HIDDEN);
+    lv_obj_remove_flag(s_slot_labels[0], LV_OBJ_FLAG_HIDDEN);
 }
 
 static void prv_create_circle_area(lv_obj_t *parent)
@@ -307,7 +307,7 @@ void DesignLauncher_Create(lv_display_t *disp)
 {
     lv_obj_t *scr = (disp != NULL)
                     ? lv_display_get_screen_active(disp)
-                    : lv_scr_act();
+                    : lv_screen_active();
 
     lv_obj_set_style_pad_all(scr, 0, 0);
 
@@ -371,7 +371,7 @@ void DesignLauncher_Create(lv_display_t *disp)
     lv_obj_set_style_bg_color(s_main_container, lv_color_hex(COLOR_BG), 0);
     lv_obj_set_style_border_width(s_main_container, 0, 0);
     lv_obj_set_style_pad_all(s_main_container, 0, 0);
-    lv_obj_clear_flag(s_main_container, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(s_main_container, LV_OBJ_FLAG_SCROLLABLE);
 
     prv_create_box_area(s_main_container);
     prv_create_circle_area(s_main_container);

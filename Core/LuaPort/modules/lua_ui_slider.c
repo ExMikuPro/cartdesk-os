@@ -1,5 +1,5 @@
 // lua_ui_slider.c
-// LVGL 9.4 滑块模块
+// LVGL 9.5 滑块模块
 
 #include "lua.h"
 #include "lauxlib.h"
@@ -250,7 +250,7 @@ static int l_slider_delete(lua_State* L) {
   ui_slider_ud_t* ud = (ui_slider_ud_t*)luaL_checkudata(L, 1, UI_SLIDER_MT);
 
   if (ud->slider) {
-    lv_obj_del(ud->slider);
+    lv_obj_delete(ud->slider);
     ud->slider = NULL;
   }
 
@@ -324,7 +324,7 @@ static int l_slider_create(lua_State* L) {
     parent = (lv_obj_t*)lua_touserdata(L, 1);
   } else if (lua_isnil(L, 1) || lua_gettop(L) == 0) {
     // 使用当前活动屏幕
-    parent = lv_scr_act();
+    parent = lv_screen_active();
   } else {
     return luaL_error(L, "invalid parent object");
   }
@@ -361,7 +361,7 @@ static int l_slider_draw(lua_State* L) {
     parent = (lv_obj_t*)lua_touserdata(L, 1);
   } else if (lua_isnil(L, 1) || lua_gettop(L) == 0) {
     // 使用当前活动屏幕
-    parent = lv_scr_act();
+    parent = lv_screen_active();
   } else {
     return luaL_error(L, "invalid parent object");
   }
@@ -401,7 +401,7 @@ static int l_slider_draw(lua_State* L) {
 
 // ui.slider.get_screen() -> screen_object
 static int l_slider_get_screen(lua_State* L) {
-  lv_obj_t* scr = lv_scr_act();
+  lv_obj_t* scr = lv_screen_active();
   lua_pushlightuserdata(L, scr);
   return 1;
 }

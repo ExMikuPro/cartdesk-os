@@ -1,4 +1,4 @@
-# GT911触摸屏 + LVGL 9.4 集成指南
+# GT911触摸屏 + LVGL 9.5 集成指南
 
 ## 📋 文件说明
 
@@ -39,7 +39,7 @@ bool GT911_Get_Point(uint8_t index, uint16_t *x, uint16_t *y);
 bool GT911_Read_TouchData(GT911_TouchData_t *touch_data);
 ```
 
-### 2. lv_port_indev.c/h 优化 (LVGL 9.4)
+### 2. lv_port_indev.c/h 优化 (LVGL 9.5)
 
 #### ✅ 改进之处:
 - **LVGL 9.x API兼容**: 使用新的 `lv_indev_create()` 和 `lv_indev_set_*` API
@@ -296,7 +296,7 @@ void Test_Touch_Response(void) {
 ### 3. LVGL集成测试
 在LVGL中显示坐标:
 ```c
-lv_obj_t *label = lv_label_create(lv_scr_act());
+lv_obj_t *label = lv_label_create(lv_screen_active());
 lv_label_set_text_fmt(label, "X:%d Y:%d", x, y);
 ```
 
@@ -314,11 +314,11 @@ lv_label_set_text_fmt(label, "X:%d Y:%d", x, y);
 ## 📚 参考资料
 
 - [GT911 数据手册](https://github.com/goodix)
-- [LVGL 9.x 文档](https://docs.lvgl.io/9.0/)
-- [LVGL 输入设备移植](https://docs.lvgl.io/9.0/porting/indev.html)
+- [LVGL 9.5 文档](https://docs.lvgl.io/9.5/)
+- [LVGL 输入设备](https://docs.lvgl.io/9.5/main-modules/indev/index.html)
 - STM32H7 HAL库文档
 
 ## 📝 版本历史
 
-- v2.0 - LVGL 9.4兼容版本,完全重构
+- v2.1 - LVGL 9.5兼容版本,完全重构
 - v1.0 - 原始版本(包含中文乱码)

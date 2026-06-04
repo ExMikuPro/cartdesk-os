@@ -1,4 +1,4 @@
-# LVGL 9.4 移植文件包 - STM32H743
+# LVGL 9.5 移植文件包 - STM32H743
 
 ## 文件列表
 
@@ -60,7 +60,7 @@ int main(void)
     
     /* 创建UI示例 */
     lv_obj_t *label = lv_label_create(lv_screen_active());
-    lv_label_set_text(label, "Hello LVGL 9.4!");
+    lv_label_set_text(label, "Hello LVGL 9.5!");
     lv_obj_center(label);
     
     /* 主循环 */
@@ -196,7 +196,7 @@ printf("VBlank count: %lu\n", vblank_count);
 
 ## 版本信息
 
-- LVGL版本: 9.4
+- LVGL版本: 9.5
 - MCU: STM32H743
 - 屏幕: 800x480 ARGB8888
 - 作者: Claude
@@ -204,7 +204,7 @@ printf("VBlank count: %lu\n", vblank_count);
 
 ## 下一步
 
-1. 从LVGL官方仓库下载LVGL 9.4源码
+1. 从LVGL官方仓库下载LVGL 9.5源码
 2. 将本移植文件包放到对应目录
 3. 在main.c中调用lvgl_init()
 4. 开始创建UI界面

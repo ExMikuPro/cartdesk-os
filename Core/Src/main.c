@@ -281,7 +281,7 @@ static void drag_box_event_cb(lv_event_t *e) {
 }
 
 void ui_test_touch_drag_start(void) {
-  lv_obj_t *scr = lv_scr_act();
+  lv_obj_t *scr = lv_screen_active();
 
   // 背景（可选）
   lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);

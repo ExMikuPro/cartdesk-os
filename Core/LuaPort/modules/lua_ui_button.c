@@ -1,5 +1,5 @@
 // lua_lvgl_btn.c
-// LVGL 9.4 按钮模块 - 重构版本
+// LVGL 9.5 按钮模块 - 重构版本
 
 #include "lua.h"
 #include "lauxlib.h"
@@ -273,7 +273,7 @@ static int l_btn_clear_flag(lua_State* L) {
 
   lv_obj_flag_t flag = parse_flag(flag_str);
   if (flag != 0) {
-    lv_obj_clear_flag(ud->btn, flag);
+    lv_obj_remove_flag(ud->btn, flag);
   }
 
   return 0;
@@ -289,7 +289,7 @@ static int l_btn_set_checkable(lua_State* L) {
   if (enable) {
     lv_obj_add_flag(ud->btn, LV_OBJ_FLAG_CHECKABLE);
   } else {
-    lv_obj_clear_flag(ud->btn, LV_OBJ_FLAG_CHECKABLE);
+    lv_obj_remove_flag(ud->btn, LV_OBJ_FLAG_CHECKABLE);
   }
 
   return 0;
@@ -332,7 +332,7 @@ static int l_btn_delete(lua_State* L) {
   lvgl_btn_ud_t* ud = check_btn_userdata(L, 1);
 
   if (ud->btn) {
-    lv_obj_del(ud->btn);
+    lv_obj_delete(ud->btn);
     ud->btn = NULL;
     ud->label = NULL;
   }
@@ -376,7 +376,7 @@ static int l_lvgl_btn_create(lua_State* L) {
     parent = (lv_obj_t*)lua_touserdata(L, 1);
   } else if (lua_isnil(L, 1) || lua_gettop(L) == 0) {
     // 使用当前活动屏幕
-    parent = lv_scr_act();
+    parent = lv_screen_active();
   } else {
     return luaL_error(L, "invalid parent object");
   }
@@ -388,7 +388,7 @@ static int l_lvgl_btn_create(lua_State* L) {
   ud->L = L;
 
   // 创建 LVGL 按钮
-  ud->btn = lv_btn_create(parent);
+  ud->btn = lv_button_create(parent);
   ud->label = NULL;
 
   if (!ud->btn) {
@@ -414,7 +414,7 @@ static int l_lvgl_btn_draw(lua_State* L) {
     parent = (lv_obj_t*)lua_touserdata(L, 1);
   } else if (lua_isnil(L, 1) || lua_gettop(L) == 0) {
     // 使用当前活动屏幕
-    parent = lv_scr_act();
+    parent = lv_screen_active();
   } else {
     return luaL_error(L, "invalid parent object");
   }
@@ -433,7 +433,7 @@ static int l_lvgl_btn_draw(lua_State* L) {
   ud->L = L;
 
   // 创建 LVGL 按钮
-  ud->btn = lv_btn_create(parent);
+  ud->btn = lv_button_create(parent);
 
   if (!ud->btn) {
     return luaL_error(L, "failed to create button");
@@ -460,7 +460,7 @@ static int l_lvgl_btn_draw(lua_State* L) {
 
 // lvgl_btn.get_screen() -> screen_object
 static int l_lvgl_btn_get_screen(lua_State* L) {
-  lv_obj_t* scr = lv_scr_act();
+  lv_obj_t* scr = lv_screen_active();
   lua_pushlightuserdata(L, scr);
   return 1;
 }
