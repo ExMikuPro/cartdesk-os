@@ -265,13 +265,33 @@ target_link_libraries(lua_port PUBLIC cartdesk_common lua lvgl)
 add_library(cart_core STATIC
         ${CART_DIR}/cart_bin.c
         ${CART_DIR}/cart_bin.h
+        ${CART_DIR}/xhgc_cart.c
+        ${CART_DIR}/xhgc_cart.h
 )
 
 target_include_directories(cart_core
-        PUBLIC ${CART_DIR}
-        PRIVATE ${FATFS_INCLUDES}
+        PUBLIC
+        ${CART_DIR}
+        ${FATFS_INCLUDES}
 )
-target_link_libraries(cart_core PUBLIC cartdesk_common)
+target_link_libraries(cart_core
+        PUBLIC cartdesk_common drv_storage
+)
+
+option(CARTDESK_BUILD_HOST_TESTS "Build host-side parser tests with a native toolchain" OFF)
+if(CARTDESK_BUILD_HOST_TESTS)
+    add_executable(xhgc_cart_host_test
+            ${PROJECT_ROOT}/tests/xhgc_cart_host_test.c
+            ${CART_DIR}/xhgc_cart.c
+            ${CART_DIR}/xhgc_cart.h
+    )
+    target_compile_definitions(xhgc_cart_host_test PRIVATE
+            XHGC_CART_NO_FATFS=1
+            XHGC_CART_NO_FLASH=1
+            XHGC_CART_NO_HW_CRC=1
+    )
+    target_include_directories(xhgc_cart_host_test PRIVATE ${CART_DIR})
+endif()
 
 # ==============================================================================
 # 目标 8: app_screen —— 应用层 UI 界面（启动器 / 缓存 / 预览）
