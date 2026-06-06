@@ -38,8 +38,8 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "../Driver/LCD/lcd.h"
-#include "../Driver/SDRAM/sdram.h"
+#include "lcd.h"
+#include "sdram.h"
 #include "ui_screen_launcher.h"
 
 
@@ -49,15 +49,15 @@
 #include "lua_vm.h"
 #include "lv_port_disp.h"
 #include "lv_port_indev.h"
-#include "../Driver/TOUCH/touch.h"
+#include "touch.h"
 #include "lvgl_init.h"
 #include "lvgl.h"
 #include "Task.h"
-#include "EEPROM/eeprom.h"
-#include "FLASH/flash.h"
-#include "FLASH/lfs_port.h"
-#include "RNG/rng_port.h"
-#include "UID/uid.h"
+#include "eeprom.h"
+#include "flash.h"
+#include "lfs_port.h"
+#include "rng_port.h"
+#include "uid.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/

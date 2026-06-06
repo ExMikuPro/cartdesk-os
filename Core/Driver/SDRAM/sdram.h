@@ -1,8 +1,8 @@
 #ifndef __SDRAM_H
 #define __SDRAM_H
 
-#include "../../Inc/main.h"
-#include "../../Inc/sdram_layout.h"
+#include "main.h"
+#include "sdram_layout.h"
 #include <stddef.h>
 
 extern SDRAM_HandleTypeDef hsdram1;

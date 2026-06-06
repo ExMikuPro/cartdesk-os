@@ -5,45 +5,77 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS ON)
 
-# Define the build type
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE "Debug")
 endif()
 
-# Set the project name
-set(CMAKE_PROJECT_NAME cartdeck-os)
+set(CMAKE_PROJECT_NAME cartdesk-os)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# Enable compile command to ease indexing with e.g. clangd
-set(CMAKE_EXPORT_COMPILE_COMMANDS TRUE)
-
-# Core project settings
-project(${CMAKE_PROJECT_NAME})
-message("Build type: " ${CMAKE_BUILD_TYPE})
-
-# Enable CMake support for ASM and C languages
-enable_language(C ASM)
+project(${CMAKE_PROJECT_NAME} C ASM)
+message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 
 # ==============================================================================
-# 公共宏定义 & 公共头文件路径（所有驱动/应用目标共用）
+# Project paths
+# ==============================================================================
+set(PROJECT_ROOT ${CMAKE_CURRENT_SOURCE_DIR})
+set(CORE_DIR ${PROJECT_ROOT}/Core)
+set(CORE_INC_DIR ${CORE_DIR}/Inc)
+set(CORE_SRC_DIR ${CORE_DIR}/Src)
+set(DRIVER_DIR ${CORE_DIR}/Driver)
+set(LUA_PORT_DIR ${CORE_DIR}/LuaPort)
+set(LUA_SRC_DIR ${LUA_PORT_DIR}/src)
+set(LVGL_DIR ${CORE_DIR}/APPS/LVGL)
+set(LVGL_PORT_DIR ${LVGL_DIR}/port)
+set(TASK_DIR ${CORE_DIR}/APPS/TASK)
+set(SCREEN_DIR ${CORE_DIR}/Screen)
+set(SCREEN_PAGE_DIR ${SCREEN_DIR}/Page)
+set(SCREEN_UTILS_DIR ${SCREEN_DIR}/utils)
+set(FATFS_DIR ${PROJECT_ROOT}/FATFS)
+set(FATFS_APP_DIR ${FATFS_DIR}/App)
+set(FATFS_TARGET_DIR ${FATFS_DIR}/Target)
+set(FATFS_MIDDLEWARE_DIR ${PROJECT_ROOT}/Middlewares/Third_Party/FatFs/src)
+
+set(STM32_HAL_INCLUDES
+        ${PROJECT_ROOT}/Drivers/STM32H7xx_HAL_Driver/Inc
+        ${PROJECT_ROOT}/Drivers/STM32H7xx_HAL_Driver/Inc/Legacy
+        ${PROJECT_ROOT}/Drivers/CMSIS/Include
+        ${PROJECT_ROOT}/Drivers/CMSIS/Device/ST/STM32H7xx/Include
+)
+
+set(FATFS_INCLUDES
+        ${FATFS_MIDDLEWARE_DIR}
+        ${FATFS_TARGET_DIR}
+        ${FATFS_APP_DIR}
+)
+
+set(LVGL_PUBLIC_INCLUDES
+        ${LVGL_DIR}
+        ${LVGL_DIR}/src
+        ${LVGL_DIR}/src/core
+        ${LVGL_PORT_DIR}
+)
+
+# ==============================================================================
+# Common compile interface
 # ==============================================================================
 set(COMMON_DEFINES
         LV_CONF_INCLUDE_SIMPLE=1
+        USE_HAL_DRIVER
+        USE_PWR_LDO_SUPPLY
         STM32H743xx
 )
 
-# STM32 HAL + CMSIS 路径，所有依赖 HAL 的子目标都需要它
-set(STM32_HAL_INCLUDES
-        ${CMAKE_SOURCE_DIR}/Drivers/STM32H7xx_HAL_Driver/Inc
-        ${CMAKE_SOURCE_DIR}/Drivers/STM32H7xx_HAL_Driver/Inc/Legacy
-        ${CMAKE_SOURCE_DIR}/Drivers/CMSIS/Include
-        ${CMAKE_SOURCE_DIR}/Drivers/CMSIS/Device/ST/STM32H7xx/Include
+add_library(cartdesk_common INTERFACE)
+target_compile_definitions(cartdesk_common INTERFACE ${COMMON_DEFINES})
+target_include_directories(cartdesk_common INTERFACE
+        ${CORE_INC_DIR}
+        ${STM32_HAL_INCLUDES}
 )
 
 # ==============================================================================
 # 目标 1: lua —— Lua 5.x 解释器核心
 # ==============================================================================
-set(LUA_SRC_DIR ${CMAKE_SOURCE_DIR}/Core/LuaPort/src)
-
 add_library(lua STATIC
         ${LUA_SRC_DIR}/lapi.c
         ${LUA_SRC_DIR}/lcode.c
@@ -82,8 +114,6 @@ target_include_directories(lua PUBLIC ${LUA_SRC_DIR})
 # ==============================================================================
 # 目标 2: lvgl —— LVGL v9.x GUI 库
 # ==============================================================================
-set(LVGL_DIR ${CMAKE_SOURCE_DIR}/Core/APPS/LVGL)
-
 file(GLOB_RECURSE LVGL_SOURCES CONFIGURE_DEPENDS
         ${LVGL_DIR}/src/*.c
         ${LVGL_DIR}/demos/widgets/*.c
@@ -91,191 +121,136 @@ file(GLOB_RECURSE LVGL_SOURCES CONFIGURE_DEPENDS
 
 add_library(lvgl STATIC
         ${LVGL_SOURCES}
-        Core/APPS/LVGL/font/lv_menu_font.c
+        ${LVGL_DIR}/font/lv_menu_font.c
 )
 
-# LVGL v9 内部头文件通过相对路径互相引用，只需暴露根目录和 src 即可。
-# 不要用 glob 递归收集子目录——会把 thorvg/rapidjson/msinttypes 等
-# 仅兼容 MSVC 的第三方库路径也加进来，导致 GCC 编译失败。
-target_include_directories(lvgl PUBLIC
-        ${LVGL_DIR}
-        ${LVGL_DIR}/src
-        ${LVGL_DIR}/src/core
-        ${LVGL_DIR}/port
-        ${CMAKE_SOURCE_DIR}/Core/Inc
-        ${CMAKE_SOURCE_DIR}/Drivers/STM32H7xx_HAL_Driver/Inc
-        ${CMAKE_SOURCE_DIR}/Drivers/STM32H7xx_HAL_Driver/Inc/Legacy
-        ${CMAKE_SOURCE_DIR}/Drivers/CMSIS/Include
-        ${CMAKE_SOURCE_DIR}/Drivers/CMSIS/Device/ST/STM32H7xx/Include
-)
-
-target_compile_definitions(lvgl PUBLIC ${COMMON_DEFINES})
+# LVGL v9 内部头文件通过相对路径互相引用，只暴露根目录、src 和移植层。
+# 不递归添加子目录，避免把 thorvg/rapidjson/msinttypes 等第三方路径带进 GCC。
+target_include_directories(lvgl PUBLIC ${LVGL_PUBLIC_INCLUDES})
+target_link_libraries(lvgl PUBLIC cartdesk_common)
 
 # ==============================================================================
 # 目标 3: drv_display —— 显示相关硬件驱动（LCD / SDRAM / LVGL Port）
 # ==============================================================================
 add_library(drv_display STATIC
-        # LCD 驱动
-        Core/Driver/LCD/lcd.c
-        Core/Driver/LCD/lcd.h
-        # SDRAM 驱动
-        Core/Driver/SDRAM/sdram.c
-        Core/Driver/SDRAM/sdram.h
-        # LVGL 移植层
-        Core/APPS/LVGL/port/lv_port_disp.c
-        Core/APPS/LVGL/port/lv_port_disp.h
-        Core/APPS/LVGL/port/lv_port_tick.c
-        Core/APPS/LVGL/port/lv_port_tick.h
-        Core/APPS/LVGL/port/lv_port_indev.c
-        Core/APPS/LVGL/port/lv_port_indev.h
-        Core/APPS/LVGL/port/lvgl_init.c
-        Core/APPS/LVGL/port/lvgl_init.h
-        # 触摸驱动
-        Core/Driver/TOUCH/touch.c
+        ${DRIVER_DIR}/LCD/lcd.c
+        ${DRIVER_DIR}/LCD/lcd.h
+        ${DRIVER_DIR}/SDRAM/sdram.c
+        ${DRIVER_DIR}/SDRAM/sdram.h
+        ${LVGL_PORT_DIR}/lv_port_disp.c
+        ${LVGL_PORT_DIR}/lv_port_disp.h
+        ${LVGL_PORT_DIR}/lv_port_tick.c
+        ${LVGL_PORT_DIR}/lv_port_tick.h
+        ${LVGL_PORT_DIR}/lv_port_indev.c
+        ${LVGL_PORT_DIR}/lv_port_indev.h
+        ${LVGL_PORT_DIR}/lvgl_init.c
+        ${LVGL_PORT_DIR}/lvgl_init.h
+        ${DRIVER_DIR}/TOUCH/touch.c
 )
 
 target_include_directories(drv_display PUBLIC
-        Core/Inc
-        Core/Driver/LCD
-        Core/Driver/SDRAM
-        Core/Driver/TOUCH
-        Core/APPS/LVGL/port
-        Core/APPS/LVGL
-        ${STM32_HAL_INCLUDES}
+        ${DRIVER_DIR}/LCD
+        ${DRIVER_DIR}/SDRAM
+        ${DRIVER_DIR}/TOUCH
+        ${LVGL_PORT_DIR}
 )
-
-target_compile_definitions(drv_display PUBLIC ${COMMON_DEFINES})
-target_link_libraries(drv_display PUBLIC lvgl)
+target_link_libraries(drv_display PUBLIC cartdesk_common lvgl)
 
 # ==============================================================================
 # 目标 4: drv_storage —— 存储相关驱动（Flash/LittleFS / EEPROM / SD）
 # ==============================================================================
 add_library(drv_storage STATIC
-        # SPI NOR Flash + LittleFS
-        Core/Driver/FLASH/flash.c
-        Core/Driver/FLASH/flash.h
-        Core/Driver/FLASH/lfs.c
-        Core/Driver/FLASH/lfs.h
-        Core/Driver/FLASH/lfs_util.c
-        Core/Driver/FLASH/lfs_util.h
-        Core/Driver/FLASH/lfs_port.c
-        Core/Driver/FLASH/lfs_port.h
-        # EEPROM
-        Core/Driver/EEPROM/eeprom.c
-        Core/Driver/EEPROM/eeprom.h
+        ${DRIVER_DIR}/FLASH/flash.c
+        ${DRIVER_DIR}/FLASH/flash.h
+        ${DRIVER_DIR}/FLASH/lfs.c
+        ${DRIVER_DIR}/FLASH/lfs.h
+        ${DRIVER_DIR}/FLASH/lfs_util.c
+        ${DRIVER_DIR}/FLASH/lfs_util.h
+        ${DRIVER_DIR}/FLASH/lfs_port.c
+        ${DRIVER_DIR}/FLASH/lfs_port.h
+        ${DRIVER_DIR}/EEPROM/eeprom.c
+        ${DRIVER_DIR}/EEPROM/eeprom.h
 )
 
 target_include_directories(drv_storage PUBLIC
-        Core/Inc
-        Core/Driver/FLASH
-        Core/Driver/EEPROM
-        ${STM32_HAL_INCLUDES}
+        ${DRIVER_DIR}/FLASH
+        ${DRIVER_DIR}/EEPROM
 )
-
-target_compile_definitions(drv_storage PUBLIC ${COMMON_DEFINES})
+target_link_libraries(drv_storage PUBLIC cartdesk_common)
 
 # ==============================================================================
-# 目标 5: drv_misc —— 其他外设驱动（UID / RNG / CRC）
+# 目标 5: drv_misc —— 其他外设驱动（UID / RNG）
 # ==============================================================================
 add_library(drv_misc STATIC
-        Core/Driver/UID/uid.c
-        Core/Driver/UID/uid.h
-        Core/Driver/RNG/rng_port.c
-        Core/Driver/RNG/rng_port.h
+        ${DRIVER_DIR}/UID/uid.c
+        ${DRIVER_DIR}/UID/uid.h
+        ${DRIVER_DIR}/RNG/rng_port.c
+        ${DRIVER_DIR}/RNG/rng_port.h
 )
 
 target_include_directories(drv_misc PUBLIC
-        Core/Inc
-        Core/Driver/UID
-        Core/Driver/RNG
-        Core/Driver/CRC
-        ${STM32_HAL_INCLUDES}
+        ${DRIVER_DIR}/UID
+        ${DRIVER_DIR}/RNG
 )
-
-target_compile_definitions(drv_misc PUBLIC ${COMMON_DEFINES})
+target_link_libraries(drv_misc PUBLIC cartdesk_common)
 
 # ==============================================================================
 # 目标 6: lua_port —— Lua 与硬件的绑定层（C 模块 + VM 封装）
 # ==============================================================================
 add_library(lua_port STATIC
-        # VM 封装
-        Core/Inc/lua_vm.h
-        Core/Src/lua_vm.c
-        # 移植入口
-        Core/LuaPort/lua_port.c
-        # 硬件模块绑定
-        Core/LuaPort/modules/lua_gpio.c
-        Core/LuaPort/modules/lua_delay.c
-        Core/LuaPort/modules/lua_tim.c
-        Core/LuaPort/modules/Lua_sd.c
-        # UI 组件绑定
-        Core/LuaPort/modules/lua_ui_button.c
-        Core/LuaPort/modules/lua_ui_slider.c
+        ${CORE_INC_DIR}/lua_vm.h
+        ${CORE_SRC_DIR}/lua_vm.c
+        ${LUA_PORT_DIR}/lua_port.c
+        ${LUA_PORT_DIR}/modules/lua_gpio.c
+        ${LUA_PORT_DIR}/modules/lua_delay.c
+        ${LUA_PORT_DIR}/modules/lua_tim.c
+        ${LUA_PORT_DIR}/modules/lua_sd.c
+        ${LUA_PORT_DIR}/modules/lua_ui_button.c
+        ${LUA_PORT_DIR}/modules/lua_ui_slider.c
 )
 
 target_include_directories(lua_port PUBLIC
-        Core/Inc
-        Core/LuaPort
-        Core/LuaPort/modules
-        ${CMAKE_SOURCE_DIR}/Middlewares/Third_Party/FatFs/src
-        ${CMAKE_SOURCE_DIR}/FATFS/Target
-        ${CMAKE_SOURCE_DIR}/FATFS/App
-        ${STM32_HAL_INCLUDES}
+        ${LUA_PORT_DIR}
+        ${LUA_PORT_DIR}/modules
+        ${FATFS_INCLUDES}
 )
-
-target_compile_definitions(lua_port PUBLIC ${COMMON_DEFINES})
-target_link_libraries(lua_port PUBLIC lua lvgl)
+target_link_libraries(lua_port PUBLIC cartdesk_common lua lvgl)
 
 # ==============================================================================
 # 目标 7: app_screen —— 应用层 UI 界面（启动器 / 缓存 / 预览）
 # ==============================================================================
 add_library(app_screen STATIC
-        # 启动器页面
-        Core/Screen/Page/ui_screen_launcher.c
-        Core/Screen/Page/ui_screen_launcher.h
-        Core/Screen/Page/jbm_el_20px.h
-        # 缓存
-        Core/Screen/Page/ui_launcher_cache.c
-        Core/Screen/Page/ui_launcher_cache.h
-        # 工具：卡带读取 / 预览图
-        Core/Screen/utils/cart_reader.c
-        Core/Screen/utils/cart_reader.h
-        Core/Screen/utils/preview_argb_current.c
-        Core/Screen/utils/preview_argb_current.h
+        ${SCREEN_PAGE_DIR}/ui_screen_launcher.c
+        ${SCREEN_PAGE_DIR}/ui_screen_launcher.h
+        ${SCREEN_PAGE_DIR}/jbm_el_20px.h
+        ${SCREEN_PAGE_DIR}/ui_launcher_cache.c
+        ${SCREEN_PAGE_DIR}/ui_launcher_cache.h
+        ${SCREEN_UTILS_DIR}/cart_reader.c
+        ${SCREEN_UTILS_DIR}/cart_reader.h
+        ${SCREEN_UTILS_DIR}/preview_argb_current.c
+        ${SCREEN_UTILS_DIR}/preview_argb_current.h
 )
 
 target_include_directories(app_screen PUBLIC
-        Core/Inc
-        Core/Screen/Page
-        Core/Screen/utils
-        Core/Driver/LCD
-        ${CMAKE_SOURCE_DIR}/Middlewares/Third_Party/FatFs/src
-        ${CMAKE_SOURCE_DIR}/FATFS/Target
-        ${CMAKE_SOURCE_DIR}/FATFS/App
-        ${STM32_HAL_INCLUDES}
+        ${SCREEN_PAGE_DIR}
+        ${SCREEN_UTILS_DIR}
+        ${DRIVER_DIR}/LCD
+        ${FATFS_INCLUDES}
 )
-
-target_compile_definitions(app_screen PUBLIC ${COMMON_DEFINES})
-target_link_libraries(app_screen PUBLIC lvgl drv_storage)
+target_link_libraries(app_screen PUBLIC cartdesk_common lvgl drv_storage)
 
 # ==============================================================================
 # 目标 8: app_task —— RTOS / 裸机任务（LED / LVGL / LUA 任务）
 # ==============================================================================
 add_library(app_task STATIC
-        Core/APPS/TASK/Task.h
-        Core/APPS/TASK/LED.c
-        Core/APPS/TASK/LVGL.c
-        Core/APPS/TASK/LUA.c
+        ${TASK_DIR}/Task.h
+        ${TASK_DIR}/LED.c
+        ${TASK_DIR}/LVGL.c
+        ${TASK_DIR}/LUA.c
 )
 
-target_include_directories(app_task PUBLIC
-        Core/Inc
-        Core/APPS/TASK
-        ${STM32_HAL_INCLUDES}
-)
-
-target_compile_definitions(app_task PUBLIC ${COMMON_DEFINES})
-target_link_libraries(app_task PUBLIC lvgl lua_port)
+target_include_directories(app_task PUBLIC ${TASK_DIR})
+target_link_libraries(app_task PUBLIC cartdesk_common lvgl lua_port)
 
 # ==============================================================================
 # 主可执行目标：链接所有子目标
@@ -285,20 +260,15 @@ add_executable(${CMAKE_PROJECT_NAME})
 # 添加 STM32CubeMX 生成的源（main.c / 外设初始化 / 启动文件等）
 add_subdirectory(cmake/stm32cubemx)
 
-target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
-        Core/Inc
-        Core/Driver/
-)
-
-target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE ${COMMON_DEFINES})
-
 # 去掉 CMake 自动添加的 libob.a（使用 C++ 时的遗留问题）
 list(REMOVE_ITEM CMAKE_C_IMPLICIT_LINK_LIBRARIES ob)
 
 target_link_libraries(${CMAKE_PROJECT_NAME}
-        stm32cubemx      # CubeMX 生成的 HAL / BSP
+        PRIVATE
+        cartdesk_common
+        stm32cubemx
         # 用 --start-group/--end-group 让链接器对组内静态库多遍扫描，
-        # 彻底解决库之间的循环引用问题（如 lua 依赖 m，lvgl 依赖 m 等）
+        # 彻底解决库之间的循环引用问题（如 lua 依赖 m，lvgl 依赖 m 等）。
         -Wl,--start-group
         drv_display
         drv_storage
@@ -309,5 +279,5 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
         lvgl
         lua
         -Wl,--end-group
-        m                # libm 放在 group 外且最后，保证所有库的数学符号都能被解析
+        m
 )

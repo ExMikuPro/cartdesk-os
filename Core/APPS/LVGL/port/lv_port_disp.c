@@ -6,7 +6,7 @@
 
 #include "lv_port_disp.h"
 #include "lvgl.h"
-#include "../Driver/LCD/lcd.h"
+#include "lcd.h"
 
 /*********************
  *      宏定义
