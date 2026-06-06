@@ -430,7 +430,8 @@ int main(void)
   MPU_Config();
 
   /* Enable D-Cache---------------------------------------------------------*/
-   SCB_EnableDCache();
+  SCB_EnableDCache();
+  SCB_EnableICache();
 
   /* MCU Configuration--------------------------------------------------------*/
 
