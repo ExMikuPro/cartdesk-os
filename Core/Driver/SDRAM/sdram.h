@@ -9,7 +9,7 @@ extern SDRAM_HandleTypeDef hsdram1;
 
 #define FMC_SDRAM_ADDR   ((uint32_t)(SDRAM_BASE_ADDR)) /* SDRAM base address */
 
-#define EXT_SDRAM_SIZE	 (64*1024*1024)
+#define EXT_SDRAM_SIZE   ((uint32_t)SDRAM_TOTAL_SIZE)
 
 
 /* SDRAM���ò��� */
@@ -26,6 +26,15 @@ extern SDRAM_HandleTypeDef hsdram1;
 #define SDRAM_MODEREG_WRITEBURST_MODE_SINGLE     ((uint16_t)0x0200)
 
 void SDRAM_Init(void);
+
+/**
+ * @brief Validate the fixed SDRAM partition layout and APP_ARENA_REST split.
+ *
+ * Call after SDRAM initialization succeeds and before SDRAM-backed allocators
+ * are used. The function enters Error_Handler() if any boundary or alignment
+ * check fails.
+ */
+void sdram_layout_check(void);
 void FMC_SDRAM_Write_Buffer(uint8_t *pBuffer, uint32_t WriteAddr, uint32_t n);
 void FMC_SDRAM_Read_Buffer(uint8_t *pBuffer, uint32_t ReadAddr, uint32_t n);
 void FMC_SDRAM_Test(void);

@@ -16,6 +16,7 @@ project(${CMAKE_PROJECT_NAME} C ASM)
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 
 option(CARTDESK_ENABLE_BOARD_TESTS "Run board-level test diagnostics at startup" OFF)
+find_package(Python3 QUIET COMPONENTS Interpreter)
 
 # ==============================================================================
 # Project paths
@@ -177,6 +178,8 @@ add_library(drv_display STATIC
         ${DRIVER_DIR}/LCD/lcd.h
         ${DRIVER_DIR}/SDRAM/sdram.c
         ${DRIVER_DIR}/SDRAM/sdram.h
+        ${DRIVER_DIR}/SDRAM/sdram_cold_pool.c
+        ${CORE_INC_DIR}/sdram_cold_pool.h
         ${LVGL_PORT_DIR}/lv_port_disp.c
         ${LVGL_PORT_DIR}/lv_port_disp.h
         ${LVGL_PORT_DIR}/lv_port_tick.c
@@ -350,3 +353,15 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
         -Wl,--end-group
         m
 )
+
+if(Python3_Interpreter_FOUND)
+    add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
+            COMMAND ${Python3_EXECUTABLE}
+                    ${PROJECT_ROOT}/cmake/print_sdram_usage.py
+                    --map $<TARGET_FILE_DIR:${CMAKE_PROJECT_NAME}>/${CMAKE_PROJECT_NAME}.map
+            COMMENT "Printing SDRAM usage summary"
+            VERBATIM
+    )
+else()
+    message(WARNING "Python3 not found; SDRAM usage summary will not be printed after build")
+endif()

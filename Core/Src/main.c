@@ -41,6 +41,7 @@
 #include "board_test.h"
 #include "lcd.h"
 #include "sdram.h"
+#include "sdram_cold_pool.h"
 #include "ui_screen_launcher.h"
 
 
@@ -278,6 +279,8 @@ int main(void)
 
   /* 初始化 SDRAM */
   SDRAM_Init();
+  sdram_layout_check();
+  cold_pool_init();
 
 
   /* 初始化 QSPI NOR + littlefs */
@@ -445,7 +448,7 @@ void MPU_Config(void)
   /** Initializes and configures the Region and the memory to be protected
   */
   MPU_InitStruct.Number = MPU_REGION_NUMBER5;
-  MPU_InitStruct.BaseAddress = 0xD0000000;
+  MPU_InitStruct.BaseAddress = SDRAM_BASE_ADDR;
   MPU_InitStruct.Size = MPU_REGION_SIZE_64MB;
   MPU_InitStruct.AccessPermission = MPU_REGION_FULL_ACCESS;
   MPU_InitStruct.DisableExec = MPU_INSTRUCTION_ACCESS_ENABLE;
