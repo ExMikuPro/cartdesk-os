@@ -303,6 +303,12 @@ static void prv_create_divider_line(lv_obj_t *parent)
 /*  公开 API                                                            */
 /* ------------------------------------------------------------------ */
 
+void Launcher_Init(void)
+{
+    DesignLauncher_Destroy();
+    DesignLauncher_Create(NULL);
+}
+
 void DesignLauncher_Create(lv_display_t *disp)
 {
     lv_obj_t *scr = (disp != NULL)

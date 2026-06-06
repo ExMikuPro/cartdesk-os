@@ -283,8 +283,8 @@ uint8_t Touch_GetAllPoints(Touch_Point_t *points, uint8_t max_points)
 void Touch_EnableIRQ(void)
 {
     /* 配置NVIC */
-    HAL_NVIC_SetPriority(EXTI15_10_IRQn, 5, 0);
-    HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
+    HAL_NVIC_SetPriority(TOUCH_INT_EXTI_IRQn, 5, 0);
+    HAL_NVIC_EnableIRQ(TOUCH_INT_EXTI_IRQn);
 }
 
 /**
@@ -292,7 +292,7 @@ void Touch_EnableIRQ(void)
  */
 void Touch_DisableIRQ(void)
 {
-    HAL_NVIC_DisableIRQ(EXTI15_10_IRQn);
+    HAL_NVIC_DisableIRQ(TOUCH_INT_EXTI_IRQn);
 }
 
 /**

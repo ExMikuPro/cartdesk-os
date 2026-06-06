@@ -1,6 +1,6 @@
 /**
  * @file lv_port_disp.h
- * @brief LVGL 9.5 显示驱动接口 - 支持LTDC VSync
+ * @brief LVGL 9.5.0 显示驱动接口 - 支持LTDC VSync
  */
 
 #ifndef LV_PORT_DISP_H

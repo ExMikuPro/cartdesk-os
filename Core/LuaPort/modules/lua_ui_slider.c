@@ -1,5 +1,5 @@
 // lua_ui_slider.c
-// LVGL 9.5 滑块模块
+// LVGL 9.5.0 滑块模块
 
 #include "lua.h"
 #include "lauxlib.h"

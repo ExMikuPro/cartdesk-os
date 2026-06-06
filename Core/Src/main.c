@@ -430,7 +430,7 @@ int main(void)
   MPU_Config();
 
   /* Enable D-Cache---------------------------------------------------------*/
-   // SCB_EnableDCache();
+   SCB_EnableDCache();
 
   /* MCU Configuration--------------------------------------------------------*/
 
@@ -499,12 +499,9 @@ int main(void)
 
   lv_port_disp_init(); // 显示端口初始化
   lv_port_indev_init(); // ← 输入设备初始化
-  // ui_test_touch_drag_start();
   LCD_DisplayON();
 
-  DesignLauncher_Create(NULL); // 注释掉的启动器创建函数
-
-  // Launcher_Init();
+  Launcher_Init();
   // DesignLauncher_Create(lv_display_get_default());
 
   // lua_init();
@@ -513,16 +510,10 @@ int main(void)
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1) {
-    // uint32_t now = HAL_GetTick();
-    // if ((uint32_t)(now - t_lvgl) >= 5) {
-    //   // 最多追赶一次，避免 while 补帧
-    //   t_lvgl = now;
-    //   lv_timer_handler();
-    // }
-
-    // Task_LED();
-    Task_LVGL();
+    /* 保持与 8ba7abf 历史可用版本一致，直接周期驱动 LVGL。 */
+    lvgl_task_handler();
     Task_LUA();
+    HAL_Delay(5);
 
     /* USER CODE END WHILE */
 

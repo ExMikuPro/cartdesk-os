@@ -8,6 +8,11 @@
 extern const lv_font_t lv_menu_font;
 
 /**
+ * @brief 兼容旧入口，初始化并显示 Launcher
+ */
+void Launcher_Init(void);
+
+/**
  * @brief 创建设计稿风格的启动器界面
  * @param disp LVGL 显示对象，为 NULL 时使用默认显示
  */

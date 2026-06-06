@@ -1,6 +1,6 @@
 /**
  * @file lv_port_tick.h
- * @brief LVGL 9.5 系统时钟驱动头文件
+ * @brief LVGL 9.5.0 系统时钟驱动头文件
  */
 
 #ifndef LV_PORT_TICK_H

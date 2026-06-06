@@ -1,5 +1,5 @@
 // lua_lvgl_btn.c
-// LVGL 9.5 按钮模块 - 重构版本
+// LVGL 9.5.0 按钮模块 - 重构版本
 
 #include "lua.h"
 #include "lauxlib.h"

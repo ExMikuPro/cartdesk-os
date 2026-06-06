@@ -1,6 +1,6 @@
 /**
  * @file lv_port_disp.c
- * @brief LVGL 9.5 显示驱动实现 - 支持LTDC VSync和双缓冲
+ * @brief LVGL 9.5.0 显示驱动实现 - 支持LTDC VSync和双缓冲
  * @note  解决画面撕裂问题
  */
 
