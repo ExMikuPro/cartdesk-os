@@ -20,8 +20,12 @@ set(MX_Include_Dirs
     ${CUBEMX_ROOT}/Drivers/STM32H7xx_HAL_Driver/Inc
     ${CUBEMX_ROOT}/Drivers/STM32H7xx_HAL_Driver/Inc/Legacy
     ${CUBEMX_ROOT}/Middlewares/Third_Party/FatFs/src
+    ${CUBEMX_ROOT}/Middlewares/Third_Party/FreeRTOS/Source/include
+    ${CUBEMX_ROOT}/Middlewares/Third_Party/FreeRTOS/Source/portable/GCC/ARM_CM4F
+    ${CUBEMX_ROOT}/Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2/include
     ${CUBEMX_ROOT}/Drivers/CMSIS/Device/ST/STM32H7xx/Include
     ${CUBEMX_ROOT}/Drivers/CMSIS/Include
+    ${CUBEMX_ROOT}/Drivers/CMSIS/RTOS2/Include
 )
 
 # STM32CubeMX generated application sources
@@ -44,6 +48,7 @@ set(MX_Application_Src
     ${CUBEMX_ROOT}/Core/Src/usart.c
     ${CUBEMX_ROOT}/Core/Src/stm32h7xx_it.c
     ${CUBEMX_ROOT}/Core/Src/stm32h7xx_hal_msp.c
+    ${CUBEMX_ROOT}/Core/Src/freertos_hooks.c
     ${CUBEMX_ROOT}/Core/Src/sysmem.c
     ${CUBEMX_ROOT}/Core/Src/syscalls.c
     ${CUBEMX_ROOT}/startup_stm32h743xx.s

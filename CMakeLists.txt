@@ -39,6 +39,7 @@ set(FATFS_DIR ${PROJECT_ROOT}/FATFS)
 set(FATFS_APP_DIR ${FATFS_DIR}/App)
 set(FATFS_TARGET_DIR ${FATFS_DIR}/Target)
 set(FATFS_MIDDLEWARE_DIR ${PROJECT_ROOT}/Middlewares/Third_Party/FatFs/src)
+set(FREERTOS_DIR ${PROJECT_ROOT}/Middlewares/Third_Party/FreeRTOS/Source)
 
 set(STM32_HAL_INCLUDES
         ${PROJECT_ROOT}/Drivers/STM32H7xx_HAL_Driver/Inc
@@ -51,6 +52,13 @@ set(FATFS_INCLUDES
         ${FATFS_MIDDLEWARE_DIR}
         ${FATFS_TARGET_DIR}
         ${FATFS_APP_DIR}
+)
+
+set(FREERTOS_INCLUDES
+        ${FREERTOS_DIR}/include
+        ${FREERTOS_DIR}/portable/GCC/ARM_CM4F
+        ${FREERTOS_DIR}/CMSIS_RTOS_V2/include
+        ${PROJECT_ROOT}/Drivers/CMSIS/RTOS2/Include
 )
 
 set(LVGL_PUBLIC_INCLUDES
@@ -79,7 +87,31 @@ target_compile_definitions(cartdesk_common INTERFACE ${COMMON_DEFINES})
 target_include_directories(cartdesk_common INTERFACE
         ${CORE_INC_DIR}
         ${STM32_HAL_INCLUDES}
+        ${FREERTOS_INCLUDES}
 )
+
+# ==============================================================================
+# FreeRTOS Kernel + CMSIS-RTOS2 wrapper
+# ==============================================================================
+add_library(freertos_kernel STATIC
+        ${FREERTOS_DIR}/tasks.c
+        ${FREERTOS_DIR}/queue.c
+        ${FREERTOS_DIR}/list.c
+        ${FREERTOS_DIR}/timers.c
+        ${FREERTOS_DIR}/event_groups.c
+        ${FREERTOS_DIR}/stream_buffer.c
+        ${FREERTOS_DIR}/croutine.c
+        ${FREERTOS_DIR}/portable/GCC/ARM_CM4F/port.c
+        ${FREERTOS_DIR}/portable/MemMang/heap_4.c
+        ${FREERTOS_DIR}/CMSIS_RTOS_V2/cmsis_os2.c
+        ${FREERTOS_DIR}/CMSIS_RTOS_V2/os_systick.c
+)
+
+target_compile_definitions(freertos_kernel PUBLIC
+        CMSIS_OS2_CUSTOM_SYSTICK_HANDLER
+        CMSIS_device_header="stm32h7xx.h"
+)
+target_link_libraries(freertos_kernel PUBLIC cartdesk_common)
 
 # ==============================================================================
 # 目标 1: lua —— Lua 5.x 解释器核心
@@ -262,7 +294,7 @@ target_link_libraries(app_screen PUBLIC cartdesk_common lvgl drv_storage cart_co
 # 目标 9: app_task —— RTOS / 裸机任务（LED / LVGL / LUA 任务）
 # ==============================================================================
 add_library(app_task STATIC
-        ${TASK_DIR}/Task.h
+        ${TASK_DIR}/cartdesk_task.h
         ${TASK_DIR}/LED.c
         ${TASK_DIR}/LVGL.c
         ${TASK_DIR}/LUA.c
@@ -312,6 +344,7 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
         app_screen
         app_task
         board_test
+        freertos_kernel
         lvgl
         lua
         -Wl,--end-group

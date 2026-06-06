@@ -2,8 +2,8 @@
 // Created by Hatsune Miku on 2026/2/13.
 //
 
-#ifndef XIH6_DISPLAY_TASK_H
-#define XIH6_DISPLAY_TASK_H
+#ifndef CARTDESK_TASK_H
+#define CARTDESK_TASK_H
 #include <main.h>
 
 extern uint32_t TaskTicks_LED;
@@ -18,4 +18,4 @@ void Task_LUA();
 
 
 
-#endif //XIH6_DISPLAY_TASK_H
+#endif //CARTDESK_TASK_H
