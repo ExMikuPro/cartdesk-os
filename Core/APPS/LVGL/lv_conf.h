@@ -116,9 +116,10 @@
     #define LV_DRAW_SW_GRADIENT_CACHE_SIZE 1
 #endif
 
-/* DMA2D 加速（你关掉后花屏消失，说明同步链路没接好；修好 IRQ 回调后可开回） */
-#define LV_USE_DRAW_DMA2D           0
+/* DMA2D 绘制加速：direct + LTDC 双缓冲场景下由 LVGL 的 DMA2D draw unit 接管 fill/blend/image。 */
+#define LV_USE_DRAW_DMA2D           1
 #define LV_DRAW_DMA2D_HAL_INCLUDE   "stm32h7xx_hal.h"
+/* 当前工程仍是裸机模式，DMA2D draw unit 会以同步方式运行，因此无需开中断异步。 */
 #define LV_USE_DRAW_DMA2D_INTERRUPT 0
 
 /*=================

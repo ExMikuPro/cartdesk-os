@@ -206,19 +206,40 @@ void lv_draw_dma2d_configure_and_start_transfer(const lv_draw_dma2d_configuratio
 }
 
 #if LV_DRAW_DMA2D_CACHE
+static void cache_align_range(const void * addr, uint32_t size, uintptr_t * aligned_start, uint32_t * aligned_size)
+{
+    uintptr_t start = (uintptr_t)addr;
+    uintptr_t end = start + size;
+
+    *aligned_start = start & ~(uintptr_t)31U;
+    *aligned_size = (uint32_t)(((end + 31U) & ~(uintptr_t)31U) - *aligned_start);
+}
+
 void lv_draw_dma2d_invalidate_cache(const lv_draw_dma2d_cache_area_t * mem_area)
 {
     if(SCB->CCR & SCB_CCR_DC_Msk) {
-        SCB_InvalidateDCache_by_Addr((uint32_t *)mem_area->first_byte,
-                                     mem_area->stride * mem_area->height);
+        const uint8_t * row = (const uint8_t *)mem_area->first_byte;
+        for(uint32_t y = 0; y < mem_area->height; y++) {
+            uintptr_t aligned_start;
+            uint32_t aligned_size;
+            cache_align_range(row, mem_area->width_bytes, &aligned_start, &aligned_size);
+            SCB_InvalidateDCache_by_Addr((uint32_t *)aligned_start, (int32_t)aligned_size);
+            row += mem_area->stride;
+        }
     }
 }
 
 void lv_draw_dma2d_clean_cache(const lv_draw_dma2d_cache_area_t * mem_area)
 {
     if(SCB->CCR & SCB_CCR_DC_Msk) {
-        SCB_CleanDCache_by_Addr((uint32_t *)mem_area->first_byte,
-                                mem_area->stride * mem_area->height);
+        const uint8_t * row = (const uint8_t *)mem_area->first_byte;
+        for(uint32_t y = 0; y < mem_area->height; y++) {
+            uintptr_t aligned_start;
+            uint32_t aligned_size;
+            cache_align_range(row, mem_area->width_bytes, &aligned_start, &aligned_size);
+            SCB_CleanDCache_by_Addr((uint32_t *)aligned_start, (int32_t)aligned_size);
+            row += mem_area->stride;
+        }
     }
 }
 #endif
@@ -244,6 +265,9 @@ static int32_t evaluate_cb(lv_draw_unit_t * draw_unit, lv_draw_task_t * task)
             break;
         case LV_DRAW_TASK_TYPE_IMAGE: {
                 lv_draw_image_dsc_t * dsc = task->draw_dsc;
+                /* 仅允许完全不透明、且源图本身不带 alpha 的图片走 DMA2D。
+                 * 这样可以避开当前 H743 + LTDC + SDRAM 场景下不稳定的 image/blend 路径，
+                 * 同时为纯 RGB/XRGB 资源保留部分硬件加速收益。 */
                 if(!(dsc->header.cf < LV_COLOR_FORMAT_PROPRIETARY_START
                      && dsc->clip_radius == 0
                      && dsc->bitmap_mask_src == NULL
@@ -256,12 +280,12 @@ static int32_t evaluate_cb(lv_draw_unit_t * draw_unit, lv_draw_task_t * task)
                      && dsc->scale_x == 256
                      && dsc->scale_y == 256
                      && dsc->rotation == 0
+                     && dsc->opa >= LV_OPA_MAX
                      && lv_image_src_get_type(dsc->src) == LV_IMAGE_SRC_VARIABLE
-                     && (dsc->header.cf == LV_COLOR_FORMAT_ARGB8888
-                         || dsc->header.cf == LV_COLOR_FORMAT_XRGB8888
+                     && !lv_color_format_has_alpha(dsc->header.cf)
+                     && (dsc->header.cf == LV_COLOR_FORMAT_XRGB8888
                          || dsc->header.cf == LV_COLOR_FORMAT_RGB888
-                         || dsc->header.cf == LV_COLOR_FORMAT_RGB565
-                         || dsc->header.cf == LV_COLOR_FORMAT_ARGB1555)
+                         || dsc->header.cf == LV_COLOR_FORMAT_RGB565)
                      && (dsc->base.layer->color_format == LV_COLOR_FORMAT_ARGB8888
                          || dsc->base.layer->color_format == LV_COLOR_FORMAT_XRGB8888
                          || dsc->base.layer->color_format == LV_COLOR_FORMAT_RGB888
