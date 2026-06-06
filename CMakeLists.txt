@@ -15,6 +15,8 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 project(${CMAKE_PROJECT_NAME} C ASM)
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 
+option(CARTDESK_ENABLE_BOARD_TESTS "Run board-level test diagnostics at startup" OFF)
+
 # ==============================================================================
 # Project paths
 # ==============================================================================
@@ -31,6 +33,7 @@ set(TASK_DIR ${CORE_DIR}/APPS/TASK)
 set(SCREEN_DIR ${CORE_DIR}/Screen)
 set(SCREEN_PAGE_DIR ${SCREEN_DIR}/Page)
 set(SCREEN_UTILS_DIR ${SCREEN_DIR}/utils)
+set(DEBUG_DIR ${CORE_DIR}/Debug)
 set(FATFS_DIR ${PROJECT_ROOT}/FATFS)
 set(FATFS_APP_DIR ${FATFS_DIR}/App)
 set(FATFS_TARGET_DIR ${FATFS_DIR}/Target)
@@ -65,6 +68,10 @@ set(COMMON_DEFINES
         USE_PWR_LDO_SUPPLY
         STM32H743xx
 )
+
+if(CARTDESK_ENABLE_BOARD_TESTS)
+    list(APPEND COMMON_DEFINES CARTDESK_ENABLE_BOARD_TESTS=1)
+endif()
 
 add_library(cartdesk_common INTERFACE)
 target_compile_definitions(cartdesk_common INTERFACE ${COMMON_DEFINES})
@@ -253,6 +260,22 @@ target_include_directories(app_task PUBLIC ${TASK_DIR})
 target_link_libraries(app_task PUBLIC cartdesk_common lvgl lua_port)
 
 # ==============================================================================
+# 目标 9: board_test —— 板级 bring-up / smoke test 入口（默认不在 main 中执行）
+# ==============================================================================
+add_library(board_test STATIC
+        ${DEBUG_DIR}/board_test.c
+        ${DEBUG_DIR}/board_test.h
+)
+
+target_include_directories(board_test PUBLIC
+        ${DEBUG_DIR}
+        ${DRIVER_DIR}/FLASH
+        ${DRIVER_DIR}/LCD
+        ${DRIVER_DIR}/TOUCH
+)
+target_link_libraries(board_test PUBLIC cartdesk_common lvgl drv_display drv_storage)
+
+# ==============================================================================
 # 主可执行目标：链接所有子目标
 # ==============================================================================
 add_executable(${CMAKE_PROJECT_NAME})
@@ -276,6 +299,7 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
         lua_port
         app_screen
         app_task
+        board_test
         lvgl
         lua
         -Wl,--end-group

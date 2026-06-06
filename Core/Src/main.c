@@ -36,14 +36,12 @@
 /* USER CODE BEGIN Includes */
 #include <stdint.h>
 #include <stdio.h>
-#include <string.h>
 
+#include "board_test.h"
 #include "lcd.h"
 #include "sdram.h"
 #include "ui_screen_launcher.h"
 
-
-#include "demos/lv_demos.h"
 
 /* Storage: QSPI NOR + littlefs */
 #include "lua_vm.h"
@@ -53,11 +51,8 @@
 #include "lvgl_init.h"
 #include "lvgl.h"
 #include "Task.h"
-#include "eeprom.h"
 #include "flash.h"
 #include "lfs_port.h"
-#include "rng_port.h"
-#include "uid.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -137,72 +132,6 @@ static void Storage_InitOrDie(void) {
   // (void)LFS_EnableMappedRead(1);
 }
 
-static lv_obj_t *g_box = NULL;
-
-static void box_anim_x(void *obj, int32_t v) {
-  lv_obj_set_x((lv_obj_t *) obj, v);
-}
-
-void ui_test_moving_box_start(void) {
-  // 清空屏幕（可选，但建议排障时干净一点）
-  lv_obj_clean(lv_screen_active());
-
-  // 背景设为不透明纯黑（避免透明叠加引起“看起来像重影”）
-  lv_obj_set_style_bg_opa(lv_screen_active(), LV_OPA_COVER, 0);
-  lv_obj_set_style_bg_color(lv_screen_active(), lv_color_hex(0x000000), 0);
-
-  // 创建小方块
-  const int32_t box_w = 40;
-  const int32_t box_h = 40;
-
-  g_box = lv_obj_create(lv_screen_active());
-  lv_obj_set_size(g_box, box_w, box_h);
-  lv_obj_set_style_bg_opa(g_box, LV_OPA_COVER, 0);
-  lv_obj_set_style_bg_color(g_box, lv_color_hex(0x00FF00), 0); // 亮绿色方便观察
-  lv_obj_set_style_border_width(g_box, 0, 0);
-  lv_obj_set_style_radius(g_box, 0, 0);
-
-  // 初始位置：垂直居中，x=0
-  lv_obj_set_y(g_box, (LCD_H - box_h) / 2);
-  lv_obj_set_x(g_box, 0);
-
-  // 做左右往返动画
-  lv_anim_t a;
-  lv_anim_init(&a);
-  lv_anim_set_var(&a, g_box);
-  lv_anim_set_exec_cb(&a, box_anim_x);
-  lv_anim_set_values(&a, 0, LCD_W - box_w);
-
-  // 速度：这里 1000ms 从左到右；再 1000ms 从右到左
-  lv_anim_set_time(&a, 1000);
-  lv_anim_set_playback_time(&a, 1000);
-
-  lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
-  lv_anim_start(&a);
-}
-
-#define GT_ADDR7   0x5D              // 不通就换 0x14
-#define GT_ADDR    (GT_ADDR7 << 1)   // HAL 需要左移1位
-
-static void GT_TestRead_814D(void) {
-  HAL_StatusTypeDef st;
-  uint8_t n = 0;
-
-  // // 先确认设备在线
-  // st = HAL_I2C_IsDeviceReady(&hi2c1, GT_ADDR, 3, 1000);
-  // if (st != HAL_OK) {
-  //   __BKPT(0); // GDB看 st/hi2c1.ErrorCode
-  //   return;
-  // }
-
-  // 读 0x814D
-  st = HAL_I2C_Mem_Read(&hi2c1, GT_ADDR,
-                        0x814D, I2C_MEMADD_SIZE_16BIT,
-                        &n, 1, 100);
-
-  __BKPT(0); // 在这里用 GDB 看 n 和 st
-}
-
 static inline uint16_t tim17_us_now(void) {
   return (uint16_t) __HAL_TIM_GET_COUNTER(&htim17);
 }
@@ -222,196 +151,6 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
     Touch_IRQHandler();
   }
 }
-
-static lv_obj_t *s_box = NULL;
-static lv_obj_t *s_label = NULL;
-
-static bool s_dragging = false;
-static int16_t s_off_x = 0; // 手指点相对方块左上角的偏移
-static int16_t s_off_y = 0;
-
-static void drag_box_event_cb(lv_event_t *e) {
-  lv_event_code_t code = lv_event_get_code(e);
-  lv_obj_t *obj = lv_event_get_target(e);
-  lv_indev_t *indev = lv_event_get_indev(e);
-  if (!indev) return;
-
-  lv_point_t p;
-  lv_indev_get_point(indev, &p);
-
-  if (code == LV_EVENT_PRESSED) {
-    // 记录偏移：避免按下时方块“跳到手指中心”
-    s_dragging = true;
-
-    int16_t obj_x = lv_obj_get_x(obj);
-    int16_t obj_y = lv_obj_get_y(obj);
-    s_off_x = p.x - obj_x;
-    s_off_y = p.y - obj_y;
-  } else if (code == LV_EVENT_PRESSING) {
-    if (!s_dragging) return;
-
-    // 新位置 = 手指坐标 - 偏移
-    int16_t new_x = p.x - s_off_x;
-    int16_t new_y = p.y - s_off_y;
-
-    // 可选：限制不出屏幕（父对象一般是 screen）
-    lv_obj_t *parent = lv_obj_get_parent(obj);
-    int16_t pw = (int16_t) lv_obj_get_width(parent);
-    int16_t ph = (int16_t) lv_obj_get_height(parent);
-    int16_t ow = (int16_t) lv_obj_get_width(obj);
-    int16_t oh = (int16_t) lv_obj_get_height(obj);
-
-    if (new_x < 0) new_x = 0;
-    if (new_y < 0) new_y = 0;
-    if (new_x > pw - ow) new_x = pw - ow;
-    if (new_y > ph - oh) new_y = ph - oh;
-
-    lv_obj_set_pos(obj, new_x, new_y);
-
-    // 可选：显示坐标/状态
-    if (s_label) {
-      char buf[64];
-      lv_snprintf(buf, sizeof(buf), "x=%d y=%d (touch %d,%d)",
-                  (int) new_x, (int) new_y, (int) p.x, (int) p.y);
-      lv_label_set_text(s_label, buf);
-    }
-  } else if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
-    s_dragging = false;
-  }
-}
-
-void ui_test_touch_drag_start(void) {
-  lv_obj_t *scr = lv_screen_active();
-
-  // 背景（可选）
-  lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
-  lv_obj_set_style_bg_color(scr, lv_color_hex(0x101018), 0);
-
-  // 提示文字
-  s_label = lv_label_create(scr);
-  lv_label_set_text(s_label, "Hold the square and drag");
-  lv_obj_align(s_label, LV_ALIGN_TOP_MID, 0, 10);
-  lv_obj_set_style_text_color(s_label, lv_color_hex(0xFFCC00), LV_PART_MAIN);
-
-  // 可拖动方块
-  s_box = lv_obj_create(scr);
-  lv_obj_set_size(s_box, 120, 120);
-  lv_obj_set_pos(s_box, 50, 80);
-
-  // 让它更像一个块（可选）
-  lv_obj_set_style_radius(s_box, 12, 0);
-  lv_obj_set_style_bg_color(s_box, lv_color_hex(0x3DCCA3), 0);
-  lv_obj_set_style_border_width(s_box, 0, 0);
-
-  // 关键：要能接收触摸事件
-  lv_obj_add_flag(s_box, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_add_flag(s_box, LV_OBJ_FLAG_PRESS_LOCK); // 按下后锁定目标，避免拖动时丢事件（很重要）
-
-  // 绑定事件：按下/按住/松开
-  lv_obj_add_event_cb(s_box, drag_box_event_cb, LV_EVENT_PRESSED, NULL);
-  lv_obj_add_event_cb(s_box, drag_box_event_cb, LV_EVENT_PRESSING, NULL);
-  lv_obj_add_event_cb(s_box, drag_box_event_cb, LV_EVENT_RELEASED, NULL);
-  lv_obj_add_event_cb(s_box, drag_box_event_cb, LV_EVENT_PRESS_LOST, NULL);
-
-  // 方块内部文字（可选）
-  lv_obj_t *t = lv_label_create(s_box);
-  lv_label_set_text(t, "awa");
-  lv_obj_center(t);
-}
-
-#define TEST_OFF   (0x00000000u)   // 更保守：最后 64KB 的起始（对齐）
-#define TEST_LEN   (256u)
-
-static uint8_t tx[TEST_LEN];
-static uint8_t rx[TEST_LEN];
-
-void flash_write_smoke(void)
-{
-  for (uint32_t i = 0; i < TEST_LEN; i++) tx[i] = (uint8_t)(i ^ 0xA5);
-
-  // 1) 退出映射（写/擦前必须）
-  (void)FLASH_DisableMemoryMapped(&g_flash);
-
-  // 2) 先读一次擦前内容，确认当前区域状态
-  memset(rx, 0, TEST_LEN);
-  FLASH_Status st = FLASH_Read(&g_flash, TEST_OFF, rx, TEST_LEN);
-  if (st != FLASH_OK) goto fail;
-  printf("[FLASH] before erase [0..7]: %02X %02X %02X %02X %02X %02X %02X %02X\r\n",
-         rx[0],rx[1],rx[2],rx[3],rx[4],rx[5],rx[6],rx[7]);
-
-  // 3) 擦 4KB 扇区（地址必须 4K 对齐）
-  st = FLASH_Erase4K(&g_flash, TEST_OFF);
-  if (st != FLASH_OK) goto fail;
-
-  // 4) 擦后读回，确认全 0xFF
-  memset(rx, 0, TEST_LEN);
-  st = FLASH_Read(&g_flash, TEST_OFF, rx, TEST_LEN);
-  if (st != FLASH_OK) goto fail;
-  {
-    bool all_ff = true;
-    for (uint32_t i = 0; i < TEST_LEN; i++) if (rx[i] != 0xFF) { all_ff = false; break; }
-    printf("[FLASH] after erase: %s (rx[0]=%02X)\r\n", all_ff ? "all 0xFF OK" : "ERASE FAIL!", rx[0]);
-    if (!all_ff) goto fail; // 擦除本身有问题，停在这里
-  }
-
-  // 5) 写入 256B（刚好一页）
-  st = FLASH_Prog(&g_flash, TEST_OFF, tx, TEST_LEN);
-  if (st != FLASH_OK) goto fail;
-
-  // 6) 单线读回比对（READ 0x03，0 dummy，最可靠，排除 dummy cycles 干扰）
-  memset(rx, 0, TEST_LEN);
-  st = FLASH_Read(&g_flash, TEST_OFF, rx, TEST_LEN);
-  if (st != FLASH_OK) goto fail;
-
-  if (memcmp(tx, rx, TEST_LEN) == 0) {
-    printf("[FLASH] single-line read: PASS\r\n");
-    // goto done;
-  } else {
-    printf("[FLASH] single-line read: FAIL — first diff: tx[i]=%02X rx[i]=%02X\r\n",
-           tx[0], rx[0]);
-    // 打印前 16 字节帮助对比
-    printf("[FLASH]   tx[0..7]: %02X %02X %02X %02X %02X %02X %02X %02X\r\n",
-           tx[0],tx[1],tx[2],tx[3],tx[4],tx[5],tx[6],tx[7]);
-    printf("[FLASH]   rx[0..7]: %02X %02X %02X %02X %02X %02X %02X %02X\r\n",
-           rx[0],rx[1],rx[2],rx[3],rx[4],rx[5],rx[6],rx[7]);
-    goto fail;
-  }
-
-  // 7) 四线快速读回比对（测试 dummy cycles 是否正确）
-  memset(rx, 0, TEST_LEN);
-  st = FLASH_ReadFastQuad(&g_flash, TEST_OFF, rx, TEST_LEN);
-  if (st != FLASH_OK) goto fail;
-
-  if (memcmp(tx, rx, TEST_LEN) == 0) {
-    printf("[FLASH] quad fast read: PASS\r\n");
-    printf("[FLASH] write smoke ALL OK\r\n");
-  } else {
-    printf("[FLASH] quad fast read: FAIL (dummy cycles or AlternateBytes issue)\r\n");
-    printf("[FLASH]   tx[0..7]: %02X %02X %02X %02X %02X %02X %02X %02X\r\n",
-           tx[0],tx[1],tx[2],tx[3],tx[4],tx[5],tx[6],tx[7]);
-    printf("[FLASH]   rx[0..7]: %02X %02X %02X %02X %02X %02X %02X %02X\r\n",
-           rx[0],rx[1],rx[2],rx[3],rx[4],rx[5],rx[6],rx[7]);
-    printf("[FLASH]   --> 请修改 flash.c FLASH_ReadFastQuad:\r\n");
-    printf("[FLASH]       加 AlternateByteMode=4_LINES, AlternateBytesSize=8_BITS, AlternateBytes=0x00\r\n");
-    printf("[FLASH]       DummyCycles 改为 4\r\n");
-    goto fail;
-  }
-
-  done:
-  // 8) 写完重新开映射
-  (void)FLASH_EnableMemoryMapped(&g_flash);
-  return;
-
-  fail:
-  {
-    const FLASH_ErrorInfo *e = FLASH_LastError(&g_flash);
-    if (e) printf("[FLASH] HAL fail code=%u step=%s line=%lu addr=0x%08lX\r\n",
-                  (unsigned)e->code, e->step ? e->step : "?",
-                  (unsigned long)e->line, (unsigned long)e->addr);
-  }
-  (void)FLASH_EnableMemoryMapped(&g_flash);
-}
-
 
 /* USER CODE END 0 */
 
@@ -474,22 +213,11 @@ int main(void)
   Storage_InitOrDie();
   HAL_TIM_Base_Start(&htim17);
 
-
-  uint32_t jedec = 0;
-  FLASH_Status st = FLASH_ReadJEDEC(&g_flash, &jedec);
-  printf("[FLASH] JEDEC = 0x%06lX (期望 Winbond W25Q256: 0xEF4019)\r\n", (unsigned long)jedec);
-  while (st != FLASH_OK) {}
-
-  // 注意：FLASH_ReadJEDEC() 走命令模式，会自动退出映射
-  // 所以要重新打开映射
+#if CARTDESK_ENABLE_BOARD_TESTS
+  BoardTest_RunFlashStartupDiagnostics(&g_flash);
+#else
   (void)FLASH_EnableMemoryMapped(&g_flash);
-
-  volatile const uint8_t *mm = (volatile const uint8_t *)FLASH_MM_BASE;
-  printf("[FLASH] MM[0..15] =");
-  for (int i = 0; i < 16; i++) printf(" %02X", mm[i]);
-  printf("\r\n");
-
-  flash_write_smoke();
+#endif
 
   HAL_TIM_Base_Start_IT(&htim16);
   /* LCD/UI */
