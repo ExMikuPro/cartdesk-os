@@ -148,15 +148,15 @@ SECTIONS
     _eLayer2_FB0 = .;
   } >SDRAM_LAYER2_FB0
 
-  /* LVGL_HEAP: UI对象内存  16 MiB  32字节对齐 */
-  .sdram_lvgl_heap (NOLOAD) :
+  /* LVGL_HEAP: LVGL核心堆放到片内 AXI SRAM，避免占用 DTCM 或外部 SDRAM */
+  .lvgl_heap_ram (NOLOAD) :
   {
     . = ALIGN(32);
     _sLvglHeap = .;
     *(.lvgl_heap)
     *(.lvgl_heap*)
     _eLvglHeap = .;
-  } >SDRAM_LVGL_HEAP
+  } >RAM
 
   /* DMA_POOL: DMA专用区  4 MiB  64字节对齐 */
   .sdram_dma_pool (NOLOAD) :

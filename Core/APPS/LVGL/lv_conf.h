@@ -32,6 +32,13 @@
 #ifndef LV_ATTRIBUTE_MEM_ALIGN
 #  define LV_ATTRIBUTE_MEM_ALIGN __attribute__((aligned(LV_ATTRIBUTE_MEM_ALIGN_SIZE)))
 #endif
+#ifndef LV_ATTRIBUTE_LARGE_RAM_ARRAY
+#  if defined(__APPLE__)
+#    define LV_ATTRIBUTE_LARGE_RAM_ARRAY __attribute__((aligned(LV_ATTRIBUTE_MEM_ALIGN_SIZE)))
+#  else
+#    define LV_ATTRIBUTE_LARGE_RAM_ARRAY __attribute__((section(".lvgl_heap"), aligned(LV_ATTRIBUTE_MEM_ALIGN_SIZE)))
+#  endif
+#endif
 
 /* draw buffer/stride 对齐（DMA2D & M7 更稳） */
 #ifndef LV_DRAW_BUF_ALIGN
@@ -52,26 +59,23 @@
    MEMORY SETTINGS
  *=========================*/
 
-/* 使用 LVGL 内建 malloc（才能使用 LV_MEM_ADR/LV_MEM_SIZE 固定堆地址） */
-#define LV_USE_STDLIB_MALLOC    LV_STDLIB_CLIB // todo 找出LV_STDLIB_BUILTIN的问题
+/* 使用 LVGL 内建 malloc，把核心对象内存固定放在片内 RAM。 */
+#define LV_USE_STDLIB_MALLOC    LV_STDLIB_BUILTIN
 #define LV_USE_STDLIB_STRING    LV_STDLIB_CLIB
 #define LV_USE_STDLIB_SPRINTF   LV_STDLIB_CLIB
 
 /*
- * SDRAM 0xD0000000 起。
- * 你工程里图片槽从 0xD0465000 开始（ui_screen_launcher.c），
- * 所以 LVGL heap 必须避开 0xD0465000~0xD075xxxx 这段区域。
- *
- * 选择 0xD0800000 作为 LVGL heap 起点（32B 对齐），在 64MB SDRAM 内非常安全。
+ * 让 LVGL 在片内 RAM 中生成静态内存池。
+ * 不再把 LVGL 核心堆绑定到外部 SDRAM，避免主题/对象初始化阶段访问外部内存。
  */
-#define LV_MEM_ADR 0xD0800000U
+#define LV_MEM_ADR 0U
 
 /* LVGL内存池大小 (字节) */
-#define LV_MEM_SIZE (16U * 1024U * 1024U)
+#define LV_MEM_SIZE (256U * 1024U)
 
-/* 图片缓存：默认 0=不缓存，会导致反复解码/反复打开文件 -> "巨卡" */
-#define LV_CACHE_DEF_SIZE (4U * 1024U * 1024U)
-#define LV_IMAGE_HEADER_CACHE_DEF_CNT 64
+/* 片内 RAM 有限，缓存控制在较小规模。 */
+#define LV_CACHE_DEF_SIZE (128U * 1024U)
+#define LV_IMAGE_HEADER_CACHE_DEF_CNT 32
 
 #define LV_USE_RLE 1
 

@@ -33,6 +33,7 @@
 #define __LCD_H
 
 #include "../../Inc/main.h"
+#include "../../Inc/sdram_layout.h"
 #include "jbmono_thin_a8_20px.h"   // 例：W=18 H=38
 
 #ifdef __cplusplus
@@ -61,7 +62,7 @@ extern "C" {
 #define LCD_H                  480
 
 /** 外部 SDRAM framebuffer 基址（字节地址） */
-#define LCD_FB0_ADDR           0xD0000000u
+#define LCD_FB0_ADDR           SDRAM_LAYER1_FB0_ADDR
 
 /** 单帧大小（字节）：W * H * 4（ARGB8888） */
 #define FB_SIZE                (LCD_W * LCD_H * 4)
@@ -72,7 +73,10 @@ extern "C" {
  *   - 单缓冲：Layer1 的帧缓冲
  *   - 或双缓冲：某层的第二帧（取决于你在 lcd.c 里的地址规划）
  */
-#define LCD_FB1_ADDR           (LCD_FB0_ADDR + FB_SIZE)
+#define LCD_FB1_ADDR           SDRAM_LAYER1_FB1_ADDR
+
+/** Layer1 双缓冲的 back buffer 地址 */
+#define LCD_FB1_BACK_ADDR      SDRAM_LAYER2_FB0_ADDR
 
 /** Layer 0 索引（背景层） */
 #define LCD_LAYER0             0u

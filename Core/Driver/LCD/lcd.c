@@ -166,7 +166,7 @@ typedef struct {
  */
 static LayerBufferInfo layer_info[2] = {
     {LCD_FB0_ADDR, LCD_FB0_ADDR, 0, 0,0,0,0, 0},
-    {LCD_FB1_ADDR, LCD_FB1_ADDR + FB_SIZE, 0, 0,0,0,0, 0}
+    {LCD_FB1_ADDR, LCD_FB1_BACK_ADDR, 0, 0,0,0,0, 0}
 };
 
 /**

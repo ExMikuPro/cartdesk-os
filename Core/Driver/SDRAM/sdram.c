@@ -7,6 +7,39 @@
 uint32_t timer;
 uint32_t write_timer = 0, read_time = 0;
 
+static size_t s_dma_pool_offset = 0;
+static size_t s_app_arena_offset = 0;
+
+static void *sdram_linear_alloc(uintptr_t base, size_t capacity, size_t *offset, size_t size, size_t align)
+{
+    uintptr_t current;
+    uintptr_t aligned;
+    size_t new_offset;
+
+    if (size == 0u) {
+        return NULL;
+    }
+
+    if (align == 0u) {
+        align = SDRAM_DEFAULT_ALIGN;
+    }
+
+    if ((align & (align - 1u)) != 0u) {
+        return NULL;
+    }
+
+    current = base + *offset;
+    aligned = sdram_align_up_uintptr(current, align);
+    new_offset = (size_t)(aligned - base);
+
+    if (new_offset > capacity || size > (capacity - new_offset)) {
+        return NULL;
+    }
+
+    *offset = new_offset + size;
+    return (void *)aligned;
+}
+
 /**
  * @brief       SDRAM��ʼ��
  * @param       ��
@@ -197,4 +230,48 @@ void SDRAM_ReadSpeed_Test(void)
 
     printf("64MB read time: %dms, read speed: %dMB/s\r\n\r\n",
            read_time, (EXT_SDRAM_SIZE / 1024 / 1024 * 1000) / read_time);
+}
+
+void *SDRAM_DmaPoolAlloc(size_t size, size_t align)
+{
+    if (align < SDRAM_DMA_ALIGN) {
+        align = SDRAM_DMA_ALIGN;
+    }
+
+    return sdram_linear_alloc(SDRAM_DMA_POOL_ADDR, SDRAM_DMA_POOL_SIZE, &s_dma_pool_offset, size, align);
+}
+
+void SDRAM_DmaPoolReset(void)
+{
+    s_dma_pool_offset = 0;
+}
+
+size_t SDRAM_DmaPoolUsed(void)
+{
+    return s_dma_pool_offset;
+}
+
+size_t SDRAM_DmaPoolFree(void)
+{
+    return SDRAM_DMA_POOL_SIZE - s_dma_pool_offset;
+}
+
+void *SDRAM_AppArenaAlloc(size_t size, size_t align)
+{
+    return sdram_linear_alloc(SDRAM_APP_ARENA_ADDR, SDRAM_APP_ARENA_SIZE, &s_app_arena_offset, size, align);
+}
+
+void SDRAM_AppArenaReset(void)
+{
+    s_app_arena_offset = 0;
+}
+
+size_t SDRAM_AppArenaUsed(void)
+{
+    return s_app_arena_offset;
+}
+
+size_t SDRAM_AppArenaFree(void)
+{
+    return SDRAM_APP_ARENA_SIZE - s_app_arena_offset;
 }

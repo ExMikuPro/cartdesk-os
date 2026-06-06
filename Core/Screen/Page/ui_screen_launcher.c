@@ -8,6 +8,7 @@
 
 #include "stm32h743xx.h"
 #include "cart_reader.h"
+#include "ui_launcher_cache.h"
 
 
 /* ------------------------------------------------------------------ */
@@ -15,19 +16,15 @@
 /* ------------------------------------------------------------------ */
 
 /*
- * 帧缓冲由 ltdc.c 管理，本文件只使用 heap 区（0xD0465000 以上）。
+ * 帧缓冲由 ltdc.c 管理，本文件只使用 launcher cache 分区。
  *
- *  0xD0000000  Layer0 FB          (0x177000 B)
- *  0xD0177000  Layer1 Front       (0x177000 B)
- *  0xD02EE000  Layer1 Back        (0xD0177000 B)
- *  0xD0465000  ← SDRAM heap 起始，图片缓冲从这里开始
+ *  0xD0000000  Layer1_FB0         (0x177000 B)
+ *  0xD0177000  Layer1_FB1         (0x177000 B)
+ *  0xD02EE000  Layer2_FB0         (0x177000 B)
+ *  0xD1865000  ← LAUNCHER_CACHE 起始，图片缓冲从这里开始
  *
  * 每张图片 200×200×4 = 0x3E800 字节，预留 12 个槽。
  * 总占用: 12 × 0x3E800 = 0x2E6000 B ≈ 2.9 MB，绰绰有余。
- *
- * 注意：如果你使用了 FreeRTOS+heap_5 或 STM32Cube SDRAM heap，
- *       把起始地址 SDRAM_IMG_BASE 配置进你的 heap 区域即可；
- *       如果是静态分配，直接用下面的宏指针访问没有问题。
  */
 
 
@@ -315,6 +312,7 @@ void DesignLauncher_Create(lv_display_t *disp)
                     ? lv_display_get_screen_active(disp)
                     : lv_screen_active();
 
+    launcher_cache_init();
     lv_obj_set_style_pad_all(scr, 0, 0);
 
     int a = cart_read_title_from_sd("0:/cart.bin", s_cart0_title);
@@ -329,7 +327,7 @@ void DesignLauncher_Create(lv_display_t *disp)
      *   - 其他槽：从 Flash → SDRAM（DMA2D M2M，CPU 不参与数据搬运）
      *
      * 对于每个有图片的槽：
-     *   1. 用 DMA2D 把像素数据搬到 SDRAM heap 对应槽地址
+     *   1. 用 DMA2D 把像素数据搬到 launcher cache 对应槽地址
      *   2. 初始化该槽的 lv_image_dsc_t，.data 直接指向 SDRAM 地址
      *
      * 完成后 LVGL 渲染时 DMA2D 读写的全是 SDRAM，
@@ -338,7 +336,7 @@ void DesignLauncher_Create(lv_display_t *disp)
      */
     // 槽 0：从 SD 卡读取预览图片
     {
-        uint32_t dst = SDRAM_IMG_SLOT(0);
+        uint32_t dst = (uint32_t)launcher_get_big_icon(0);
 
         int ret = cart_read_preview_from_sd("0:/cart.bin", (uint8_t*)dst, IMG_SIZE);
         if (ret == 0) {
@@ -356,7 +354,7 @@ void DesignLauncher_Create(lv_display_t *disp)
     for (int i = 1; i < DESIGN_APP_COUNT; i++) {
         if (s_slot_flash_src[i] == NULL) continue;
 
-        uint32_t dst = SDRAM_IMG_SLOT(i);
+        uint32_t dst = (uint32_t)launcher_get_big_icon(i);
 
         /* DMA2D 搬运：Flash → SDRAM */
         prv_copy_img_to_sdram(dst, s_slot_flash_src[i], IMG_SIZE);
@@ -404,7 +402,7 @@ void DesignLauncher_Destroy(void)
         s_main_container = NULL;
     }
     /*
-     * SDRAM 图片槽是静态地址，不需要 free。
+     * SDRAM 图片槽是固定 launcher cache 分区，不需要 free。
      * 如果将来需要复用这段地址，在这里清零即可：
      *   memset((void*)SDRAM_IMG_BASE, 0, DESIGN_APP_COUNT * IMG_SLOT_STRIDE);
      */

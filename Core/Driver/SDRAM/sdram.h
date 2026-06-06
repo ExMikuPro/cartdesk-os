@@ -2,10 +2,12 @@
 #define __SDRAM_H
 
 #include "../../Inc/main.h"
+#include "../../Inc/sdram_layout.h"
+#include <stddef.h>
 
 extern SDRAM_HandleTypeDef hsdram1;
 
-#define FMC_SDRAM_ADDR   ((uint32_t)(0xC0000000)) /* SDRAM��ʼ��ַ */
+#define FMC_SDRAM_ADDR   ((uint32_t)(SDRAM_BASE_ADDR)) /* SDRAM base address */
 
 #define EXT_SDRAM_SIZE	 (64*1024*1024)
 
@@ -31,5 +33,15 @@ void SDRAM_WriteSpeed_Test(void);
 void SDRAM_ReadSpeed_Test(void);
 
 int SDRAM_MinTest(void);
+
+void *SDRAM_DmaPoolAlloc(size_t size, size_t align);
+void SDRAM_DmaPoolReset(void);
+size_t SDRAM_DmaPoolUsed(void);
+size_t SDRAM_DmaPoolFree(void);
+
+void *SDRAM_AppArenaAlloc(size_t size, size_t align);
+void SDRAM_AppArenaReset(void);
+size_t SDRAM_AppArenaUsed(void);
+size_t SDRAM_AppArenaFree(void);
 
 #endif

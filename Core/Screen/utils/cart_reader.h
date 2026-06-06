@@ -1,8 +1,9 @@
 #ifndef CART_READER_H
 #define CART_READER_H
 #include <stdint.h>
+#include "sdram_layout.h"
 
-#define SDRAM_IMG_BASE    0xD0465000UL
+#define SDRAM_IMG_BASE    SDRAM_LAUNCHER_CACHE_ADDR
 #define IMG_W             200
 #define IMG_H             200
 #define IMG_BPP           4                          /* ARGB8888 */
