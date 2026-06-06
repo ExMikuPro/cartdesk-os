@@ -30,6 +30,7 @@ set(LUA_SRC_DIR ${LUA_PORT_DIR}/src)
 set(LVGL_DIR ${CORE_DIR}/APPS/LVGL)
 set(LVGL_PORT_DIR ${LVGL_DIR}/port)
 set(TASK_DIR ${CORE_DIR}/APPS/TASK)
+set(CART_DIR ${CORE_DIR}/Cart)
 set(SCREEN_DIR ${CORE_DIR}/Screen)
 set(SCREEN_PAGE_DIR ${SCREEN_DIR}/Page)
 set(SCREEN_UTILS_DIR ${SCREEN_DIR}/utils)
@@ -224,7 +225,21 @@ target_include_directories(lua_port PUBLIC
 target_link_libraries(lua_port PUBLIC cartdesk_common lua lvgl)
 
 # ==============================================================================
-# 目标 7: app_screen —— 应用层 UI 界面（启动器 / 缓存 / 预览）
+# 目标 7: cart_core —— cart.bin 格式读取
+# ==============================================================================
+add_library(cart_core STATIC
+        ${CART_DIR}/cart_bin.c
+        ${CART_DIR}/cart_bin.h
+)
+
+target_include_directories(cart_core
+        PUBLIC ${CART_DIR}
+        PRIVATE ${FATFS_INCLUDES}
+)
+target_link_libraries(cart_core PUBLIC cartdesk_common)
+
+# ==============================================================================
+# 目标 8: app_screen —— 应用层 UI 界面（启动器 / 缓存 / 预览）
 # ==============================================================================
 add_library(app_screen STATIC
         ${SCREEN_PAGE_DIR}/ui_screen_launcher.c
@@ -232,8 +247,6 @@ add_library(app_screen STATIC
         ${SCREEN_PAGE_DIR}/jbm_el_20px.h
         ${SCREEN_PAGE_DIR}/ui_launcher_cache.c
         ${SCREEN_PAGE_DIR}/ui_launcher_cache.h
-        ${SCREEN_UTILS_DIR}/cart_reader.c
-        ${SCREEN_UTILS_DIR}/cart_reader.h
         ${SCREEN_UTILS_DIR}/preview_argb_current.c
         ${SCREEN_UTILS_DIR}/preview_argb_current.h
 )
@@ -242,12 +255,11 @@ target_include_directories(app_screen PUBLIC
         ${SCREEN_PAGE_DIR}
         ${SCREEN_UTILS_DIR}
         ${DRIVER_DIR}/LCD
-        ${FATFS_INCLUDES}
 )
-target_link_libraries(app_screen PUBLIC cartdesk_common lvgl drv_storage)
+target_link_libraries(app_screen PUBLIC cartdesk_common lvgl drv_storage cart_core)
 
 # ==============================================================================
-# 目标 8: app_task —— RTOS / 裸机任务（LED / LVGL / LUA 任务）
+# 目标 9: app_task —— RTOS / 裸机任务（LED / LVGL / LUA 任务）
 # ==============================================================================
 add_library(app_task STATIC
         ${TASK_DIR}/Task.h
@@ -260,7 +272,7 @@ target_include_directories(app_task PUBLIC ${TASK_DIR})
 target_link_libraries(app_task PUBLIC cartdesk_common lvgl lua_port)
 
 # ==============================================================================
-# 目标 9: board_test —— 板级 bring-up / smoke test 入口（默认不在 main 中执行）
+# 目标 10: board_test —— 板级 bring-up / smoke test 入口（默认不在 main 中执行）
 # ==============================================================================
 add_library(board_test STATIC
         ${DEBUG_DIR}/board_test.c

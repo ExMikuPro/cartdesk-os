@@ -7,7 +7,7 @@
 #include <string.h>
 
 #include "stm32h743xx.h"
-#include "cart_reader.h"
+#include "cart_bin.h"
 #include "ui_launcher_cache.h"
 
 
@@ -60,7 +60,7 @@
 /*  私有状态                                                            */
 /* ------------------------------------------------------------------ */
 
-static char s_cart0_title[65] = "LOADING";
+static char s_cart0_title[CART_BIN_TITLE_BUFFER_SIZE] = "LOADING";
 
 /*
  * Flash 源数据指针数组（只读，用于初始化时搬运到 SDRAM）。
@@ -110,9 +110,9 @@ static int s_selected_index = 0;
  * 这里使用同步等待方式（轮询 TC 标志），如果你想异步，
  * 改为中断模式并在回调里设置信号量即可。
  */
-static void prv_copy_img_to_sdram(uint32_t dst, const uint8_t *src, uint32_t size)
+static void prv_copy_img_to_sdram(uint32_t dst, const uint8_t *src)
 {
-    /* 逐行搬运，每行 IMG_STRIDE 字节，共 IMG_H 行 */
+    /* 逐行搬运，每行 CART_BIN_PREVIEW_STRIDE 字节，共 CART_BIN_PREVIEW_H 行 */
     DMA2D->CR      = 0x00000000UL;          /* M2M 模式，无色彩转换 */
     DMA2D->FGMAR   = (uint32_t)src;         /* 源：内存地址 */
     DMA2D->OMAR    = dst;                    /* 目标：SDRAM 地址 */
@@ -121,7 +121,7 @@ static void prv_copy_img_to_sdram(uint32_t dst, const uint8_t *src, uint32_t siz
     DMA2D->FGPFCCR = 0x00000000UL;          /* 源格式 ARGB8888 */
     DMA2D->OPFCCR  = 0x00000000UL;          /* 目标格式 ARGB8888 */
     /* NLR: 每行像素数 | 行数 */
-    DMA2D->NLR     = (uint32_t)(IMG_W) | ((uint32_t)(IMG_H) << 16);
+    DMA2D->NLR     = (uint32_t)(CART_BIN_PREVIEW_W) | ((uint32_t)(CART_BIN_PREVIEW_H) << 16);
     DMA2D->CR     |= DMA2D_CR_START;        /* 启动 */
 
     /* 等待完成（TC 标志） */
@@ -315,7 +315,7 @@ void DesignLauncher_Create(lv_display_t *disp)
     launcher_cache_init();
     lv_obj_set_style_pad_all(scr, 0, 0);
 
-    int a = cart_read_title_from_sd("0:/cart.bin", s_cart0_title);
+    int a = cart_bin_read_title_from_sd("0:/cart.bin", s_cart0_title);
     if (a != 0) {
         strcpy(s_cart0_title, "ERR");
     }
@@ -338,14 +338,14 @@ void DesignLauncher_Create(lv_display_t *disp)
     {
         uint32_t dst = (uint32_t)launcher_get_big_icon(0);
 
-        int ret = cart_read_preview_from_sd("0:/cart.bin", (uint8_t*)dst, IMG_SIZE);
+        int ret = cart_bin_read_preview_from_sd("0:/cart.bin", (uint8_t*)dst, CART_BIN_PREVIEW_SIZE);
         if (ret == 0) {
             /* 初始化独立描述符，指向 SDRAM，magic 必须设置 */
             s_image_dsc[0].header.magic = LV_IMAGE_HEADER_MAGIC;
             s_image_dsc[0].header.cf    = LV_COLOR_FORMAT_ARGB8888;
-            s_image_dsc[0].header.w     = IMG_W;
-            s_image_dsc[0].header.h     = IMG_H;
-            s_image_dsc[0].data_size    = IMG_SIZE;
+            s_image_dsc[0].header.w     = CART_BIN_PREVIEW_W;
+            s_image_dsc[0].header.h     = CART_BIN_PREVIEW_H;
+            s_image_dsc[0].data_size    = CART_BIN_PREVIEW_SIZE;
             s_image_dsc[0].data         = (const uint8_t *)dst;  /* SDRAM 地址 */
         }
     }
@@ -357,14 +357,14 @@ void DesignLauncher_Create(lv_display_t *disp)
         uint32_t dst = (uint32_t)launcher_get_big_icon(i);
 
         /* DMA2D 搬运：Flash → SDRAM */
-        prv_copy_img_to_sdram(dst, s_slot_flash_src[i], IMG_SIZE);
+        prv_copy_img_to_sdram(dst, s_slot_flash_src[i]);
 
         /* 初始化独立描述符，指向 SDRAM，magic 必须设置 */
         s_image_dsc[i].header.magic = LV_IMAGE_HEADER_MAGIC;
         s_image_dsc[i].header.cf    = LV_COLOR_FORMAT_ARGB8888;
-        s_image_dsc[i].header.w     = IMG_W;
-        s_image_dsc[i].header.h     = IMG_H;
-        s_image_dsc[i].data_size    = IMG_SIZE;
+        s_image_dsc[i].header.w     = CART_BIN_PREVIEW_W;
+        s_image_dsc[i].header.h     = CART_BIN_PREVIEW_H;
+        s_image_dsc[i].data_size    = CART_BIN_PREVIEW_SIZE;
         s_image_dsc[i].data         = (const uint8_t *)dst;  /* SDRAM 地址 */
     }
 
@@ -404,7 +404,7 @@ void DesignLauncher_Destroy(void)
     /*
      * SDRAM 图片槽是固定 launcher cache 分区，不需要 free。
      * 如果将来需要复用这段地址，在这里清零即可：
-     *   memset((void*)SDRAM_IMG_BASE, 0, DESIGN_APP_COUNT * IMG_SLOT_STRIDE);
+     *   memset((void*)launcher_get_big_icon(0), 0, DESIGN_APP_COUNT * CART_BIN_PREVIEW_SIZE);
      */
     s_selected_index = 0;
 }
