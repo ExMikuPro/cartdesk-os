@@ -6,7 +6,6 @@
 
 #include "lv_port_disp.h"
 #include "lvgl.h"
-#include "src/drivers/display/st_ltdc/lv_st_ltdc.h"
 #include "../Driver/LCD/lcd.h"
 
 /*********************
@@ -49,49 +48,39 @@ static void disp_wait_for_vsync(void);
  */
 void lv_port_disp_init(void)
 {
+    /* 统一由 LCD 驱动初始化 LTDC 双缓冲和 VBlank LineEvent，避免和 LVGL flush 的翻页逻辑失配。 */
+#if USE_VSYNC || USE_DOUBLE_BUFFER
+    LCD_DoubleBufferInit();
+#endif
+
     /* 获取LCD帧缓冲地址 */
     g_fb0 = (void *)LCD_GetFB(1);      // Layer1的显示缓冲
     g_fb1 = (void *)LCD_GetDrawFB(1);  // Layer1的绘制缓冲
 
-#if USE_DOUBLE_BUFFER
-    /* 使用ST的LTDC驱动创建显示对象（双缓冲模式） */
-    g_disp = lv_st_ltdc_create_direct(g_fb0, g_fb1, 1);
-#else
-    /* 单缓冲模式 */
-    g_disp = lv_st_ltdc_create_direct(g_fb0, NULL, 1);
-#endif
+    extern LTDC_HandleTypeDef hltdc;
+    uint32_t width = hltdc.LayerCfg[1].ImageWidth;
+    uint32_t height = hltdc.LayerCfg[1].ImageHeight;
 
-    if (g_disp == NULL) {
-        /* 创建失败，使用传统方式 */
-        extern LTDC_HandleTypeDef hltdc;
-        uint32_t width = ((hltdc.LayerCfg[1].ImageWidth));
-        uint32_t height = ((hltdc.LayerCfg[1].ImageHeight));
-        
-        g_disp = lv_display_create(width, height);
-        lv_display_set_color_format(g_disp, LV_COLOR_FORMAT_ARGB8888);
-        
+    g_disp = lv_display_create(width, height);
+    lv_display_set_color_format(g_disp, LV_COLOR_FORMAT_ARGB8888);
+
 #if USE_DOUBLE_BUFFER
-        lv_display_set_buffers(g_disp, g_fb0, g_fb1, 
-                              width * height * 4, 
-                              LV_DISPLAY_RENDER_MODE_DIRECT);
+    /* 恢复 DIRECT 双缓冲，保留局部刷新性能；图片 DMA2D 已单独收敛，避免再走有问题的 image/blend 路径。 */
+    lv_display_set_buffers(g_disp, g_fb0, g_fb1,
+                          width * height * 4,
+                          LV_DISPLAY_RENDER_MODE_DIRECT);
 #else
-        lv_display_set_buffers(g_disp, g_fb0, NULL, 
-                              width * height * 4, 
-                              LV_DISPLAY_RENDER_MODE_DIRECT);
+    lv_display_set_buffers(g_disp, g_fb0, NULL,
+                          width * height * 4,
+                          LV_DISPLAY_RENDER_MODE_DIRECT);
 #endif
-        lv_display_set_flush_cb(g_disp, disp_flush);
-    }
+    lv_display_set_flush_cb(g_disp, disp_flush);
     
     /* 设置为默认显示 */
     lv_display_set_default(g_disp);
 
 #if USE_VSYNC
-    /* 启用LTDC行中断（用于VSync） */
-    extern LTDC_HandleTypeDef hltdc;
-    HAL_LTDC_ProgramLineEvent(&hltdc, 0);  // 在第一行触发中断
-    __HAL_LTDC_ENABLE_IT(&hltdc, LTDC_IT_LI);  // 使能行中断
-    
-    /* 配置LTDC中断优先级 */
+    /* LTDC LineEvent 已由 LCD_DoubleBufferInit 配置到 VBlank；这里只保留中断优先级约束。 */
     HAL_NVIC_SetPriority(LTDC_IRQn, 5, 0);
     HAL_NVIC_EnableIRQ(LTDC_IRQn);
 #endif
