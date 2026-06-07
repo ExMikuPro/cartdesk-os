@@ -11,8 +11,11 @@
 #include "stm32h743xx.h"
 #include "cart_bin.h"
 #include "cartdesk_task.h"
+#include "launcher_action_hints.h"
 #include "ui_launcher_cache.h"
 #include "usart.h"
+
+extern const lv_font_t lv_font_source_han_sans_sc_16_cjk;
 
 
 /* ------------------------------------------------------------------ */
@@ -92,10 +95,13 @@ static lv_obj_t *s_slot_labels[DESIGN_APP_COUNT];
 static lv_obj_t *s_circles[DESIGN_CIRCLE_COUNT];
 static lv_obj_t *s_circle_labels[DESIGN_CIRCLE_COUNT];
 static lv_obj_t *s_status_label = NULL;
+static lv_obj_t *s_info_popup = NULL;
 static lv_obj_t *s_launcher_screen = NULL;
 static lv_obj_t *s_runtime_screen = NULL;
 static bool s_runtime_exit_pending = false;
 static bool s_launcher_assets_loaded = false;
+static LauncherActionHints s_action_hints;
+static bool s_app_launch_armed = false;
 
 /*
  * 每个槽独立的 LVGL 图像描述符。
@@ -104,6 +110,37 @@ static bool s_launcher_assets_loaded = false;
 static lv_image_dsc_t s_image_dsc[DESIGN_APP_COUNT];
 
 static int s_selected_index = 0;
+
+static LauncherActionHintState prv_make_action_hint_state(void)
+{
+    LauncherActionHintState state = {
+        .has_selection = (s_selected_index >= 0 && s_selected_index < DESIGN_APP_COUNT),
+        .can_start = false,
+        .has_info = false,
+        .has_favorite_state = false,
+        .is_favorite = false,
+    };
+
+    if (state.has_selection) {
+        state.can_start = (s_selected_index == 0)
+                          && (strcmp(s_cart0_title, "ERR") != 0)
+                          && !Task_LUA_IsRunning();
+        state.has_info = (s_selected_index == 0);
+    }
+
+    /*
+     * Detail and favorite persistence are not implemented yet.
+     * Favorite state will be backed by the future KV storage layer.
+     */
+    return state;
+}
+
+static void prv_update_action_hints(void)
+{
+    LauncherActionHintState state = prv_make_action_hint_state();
+
+    launcher_action_hints_update(&s_action_hints, &state);
+}
 
 static void prv_uart_write(const char *text)
 {
@@ -149,6 +186,187 @@ static void prv_set_status_text(const char *text)
 
     lv_label_set_text(s_status_label, text);
     lv_obj_remove_flag(s_status_label, LV_OBJ_FLAG_HIDDEN);
+}
+
+static const char *prv_get_selected_app_title(void)
+{
+    if (s_selected_index < 0 || s_selected_index >= DESIGN_APP_COUNT) {
+        return "";
+    }
+
+    return (s_selected_index == 0) ? s_cart0_title : app_names[s_selected_index];
+}
+
+static void prv_u64_to_dec(char *dst, uint32_t dst_size, uint64_t value)
+{
+    char tmp[21];
+    uint32_t len = 0;
+
+    if (dst == NULL || dst_size == 0u) {
+        return;
+    }
+
+    if (value == 0u) {
+        dst[0] = '0';
+        if (dst_size > 1u) {
+            dst[1] = '\0';
+        }
+        return;
+    }
+
+    while (value != 0u && len < sizeof(tmp)) {
+        tmp[len++] = (char)('0' + (value % 10u));
+        value /= 10u;
+    }
+
+    uint32_t out_len = 0;
+    while (len > 0u && out_len + 1u < dst_size) {
+        dst[out_len++] = tmp[--len];
+    }
+    dst[out_len] = '\0';
+}
+
+static void prv_format_file_size(char *dst, uint32_t dst_size, uint64_t bytes)
+{
+    static const char *units[] = {"B", "KB", "MB", "GB"};
+    uint32_t unit_index = 0;
+    uint64_t unit_size = 1u;
+
+    if (dst == NULL || dst_size == 0u) {
+        return;
+    }
+
+    while (unit_index + 1u < (sizeof(units) / sizeof(units[0])) &&
+           bytes >= unit_size * 1024u) {
+        unit_size *= 1024u;
+        unit_index++;
+    }
+
+    if (unit_index == 0u) {
+        char value_text[24];
+
+        prv_u64_to_dec(value_text, sizeof(value_text), bytes);
+        snprintf(dst, dst_size, "%s %s", value_text, units[unit_index]);
+        return;
+    }
+
+    uint64_t value10 = (bytes * 10u + unit_size / 2u) / unit_size;
+    uint64_t whole = value10 / 10u;
+    uint64_t frac = value10 % 10u;
+    char whole_text[24];
+
+    prv_u64_to_dec(whole_text, sizeof(whole_text), whole);
+    if (frac == 0u) {
+        snprintf(dst, dst_size, "%s %s", whole_text, units[unit_index]);
+    } else {
+        snprintf(dst, dst_size, "%s.%lu %s", whole_text, (unsigned long)frac, units[unit_index]);
+    }
+}
+
+static bool prv_selected_app_can_start(void)
+{
+    return (s_selected_index == 0)
+           && (strcmp(s_cart0_title, "ERR") != 0)
+           && !Task_LUA_IsRunning();
+}
+
+static void prv_info_popup_close_cb(lv_event_t *e)
+{
+    (void)e;
+
+    if (s_info_popup != NULL) {
+        lv_obj_delete(s_info_popup);
+        s_info_popup = NULL;
+    }
+}
+
+static void prv_show_selected_app_info(void)
+{
+    CartBinInfo info;
+    char text[512];
+    const char *title = prv_get_selected_app_title();
+    const char *title_zh = "";
+    const char *publisher = "";
+    const char *version = "";
+    const char *entry = "";
+    const char *min_fw = "";
+    uint32_t cart_id_hi = 0;
+    uint32_t cart_id_lo = 0;
+    char file_size_text[24] = "0";
+    int info_ret = -1;
+
+    if (s_main_container == NULL || s_selected_index < 0) {
+        return;
+    }
+
+    if (s_selected_index == 0) {
+        info_ret = cart_bin_read_info_from_sd("0:/cart.bin", &info);
+        if (info_ret == 0) {
+            title = (info.title[0] != '\0') ? info.title : title;
+            title_zh = info.title_zh;
+            publisher = info.publisher;
+            version = info.version;
+            entry = info.entry;
+            min_fw = info.min_fw;
+            cart_id_hi = (uint32_t)(info.cart_id >> 32);
+            cart_id_lo = (uint32_t)(info.cart_id & 0xFFFFFFFFu);
+            prv_format_file_size(file_size_text, sizeof(file_size_text), info.file_size);
+        }
+    }
+
+    if (s_info_popup != NULL) {
+        lv_obj_delete(s_info_popup);
+        s_info_popup = NULL;
+    }
+
+    s_info_popup = lv_obj_create(s_main_container);
+    lv_obj_set_size(s_info_popup, 430, 272);
+    lv_obj_center(s_info_popup);
+    lv_obj_set_style_bg_color(s_info_popup, lv_color_hex(COLOR_BG), 0);
+    lv_obj_set_style_bg_opa(s_info_popup, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(s_info_popup, lv_color_hex(COLOR_BLACK), 0);
+    lv_obj_set_style_border_width(s_info_popup, 2, 0);
+    lv_obj_set_style_radius(s_info_popup, 4, 0);
+    lv_obj_set_style_pad_all(s_info_popup, 14, 0);
+    lv_obj_remove_flag(s_info_popup, LV_OBJ_FLAG_SCROLLABLE);
+
+    if (info_ret == 0) {
+        snprintf(text, sizeof(text),
+                 "cart.bin 信息\nTitle: %s\nZH: %s\nPub: %s\nVer: %s\nEntry: %s\nFW: %s\nID: %08lX%08lX\nSIZE: %s",
+                 title,
+                 title_zh[0] != '\0' ? title_zh : "-",
+                 publisher[0] != '\0' ? publisher : "-",
+                 version[0] != '\0' ? version : "-",
+                 entry[0] != '\0' ? entry : "-",
+                 min_fw[0] != '\0' ? min_fw : "-",
+                 (unsigned long)cart_id_hi,
+                 (unsigned long)cart_id_lo,
+                 file_size_text);
+    } else {
+        snprintf(text, sizeof(text), "cart.bin 信息\nName: %s\nread err: %d", title, info_ret);
+    }
+
+    lv_obj_t *label = lv_label_create(s_info_popup);
+    lv_label_set_text(label, text);
+    lv_obj_set_width(label, 402);
+    lv_obj_set_style_text_color(label, lv_color_hex(COLOR_BLACK), 0);
+    lv_obj_set_style_text_font(label, &lv_font_source_han_sans_sc_16_cjk, 0);
+    lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
+    lv_obj_set_pos(label, 14, 12);
+
+    lv_obj_t *close_btn = lv_button_create(s_info_popup);
+    lv_obj_set_size(close_btn, 62, 34);
+    lv_obj_align(close_btn, LV_ALIGN_BOTTOM_RIGHT, -12, -10);
+    lv_obj_set_style_bg_color(close_btn, lv_color_hex(COLOR_BLACK), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(close_btn, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_radius(close_btn, 4, LV_PART_MAIN);
+    lv_obj_add_event_cb(close_btn, prv_info_popup_close_cb, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t *btn_label = lv_label_create(close_btn);
+    lv_label_set_text(btn_label, "OK");
+    lv_obj_set_style_text_color(btn_label, lv_color_hex(COLOR_BG), 0);
+    lv_obj_set_style_text_font(btn_label, &lv_font_source_han_sans_sc_16_cjk, 0);
+    lv_obj_center(btn_label);
 }
 
 static void prv_show_launcher_screen(void)
@@ -212,6 +430,42 @@ static void prv_show_runtime_screen(void)
     lv_screen_load(s_runtime_screen);
 }
 
+static void prv_start_selected_app(void)
+{
+    if (!prv_selected_app_can_start()) {
+        prv_set_status_text("App cannot start");
+        return;
+    }
+
+    if (s_info_popup != NULL) {
+        lv_obj_delete(s_info_popup);
+        s_info_popup = NULL;
+    }
+
+    s_app_launch_armed = false;
+    prv_show_runtime_screen();
+    Task_LUA_StartCart("0:/cart.bin");
+}
+
+static void prv_action_hint_clicked_cb(LauncherActionHintAction action, void *user_data)
+{
+    (void)user_data;
+
+    switch (action) {
+    case LAUNCHER_ACTION_HINT_START:
+        prv_start_selected_app();
+        break;
+    case LAUNCHER_ACTION_HINT_INFO:
+        prv_show_selected_app_info();
+        break;
+    case LAUNCHER_ACTION_HINT_BACK:
+        prv_info_popup_close_cb(NULL);
+        break;
+    default:
+        break;
+    }
+}
+
 /* ------------------------------------------------------------------ */
 /*  内部工具：DMA2D 从内存搬运到 SDRAM                                */
 /* ------------------------------------------------------------------ */
@@ -251,6 +505,8 @@ static void prv_copy_img_to_sdram(uint32_t dst, const uint8_t *src)
 
 static void prv_set_selection(lv_obj_t *selected_obj)
 {
+    int old_selected_index = s_selected_index;
+
     for (int i = 0; i < DESIGN_APP_COUNT; i++) {
         lv_obj_set_style_border_color(s_slots[i], lv_color_hex(COLOR_BLACK), LV_PART_MAIN);
         lv_obj_add_flag(s_slot_labels[i], LV_OBJ_FLAG_HIDDEN);
@@ -269,6 +525,11 @@ static void prv_set_selection(lv_obj_t *selected_obj)
         if (s_slots[i] == selected_obj) {
             lv_obj_remove_flag(s_slot_labels[i], LV_OBJ_FLAG_HIDDEN);
             s_selected_index = i;
+            if (old_selected_index != s_selected_index) {
+                s_app_launch_armed = false;
+                prv_info_popup_close_cb(NULL);
+            }
+            prv_update_action_hints();
             return;
         }
     }
@@ -277,9 +538,14 @@ static void prv_set_selection(lv_obj_t *selected_obj)
             lv_obj_set_style_border_width(s_circles[i], 3, 0);
             lv_obj_remove_flag(s_circle_labels[i], LV_OBJ_FLAG_HIDDEN);
             s_selected_index = -(i + 1);
+            s_app_launch_armed = false;
+            prv_info_popup_close_cb(NULL);
+            prv_update_action_hints();
             return;
         }
     }
+
+    prv_update_action_hints();
 }
 
 /* ------------------------------------------------------------------ */
@@ -290,8 +556,7 @@ static void prv_box_clicked_cb(lv_event_t *e)
 {
     lv_obj_t *slot = lv_event_get_current_target(e);
     int clicked_index = -1;
-
-    prv_set_selection(slot);
+    bool should_launch = false;
 
     for (int i = 0; i < DESIGN_APP_COUNT; i++) {
         if (slot == s_slots[i]) {
@@ -300,23 +565,28 @@ static void prv_box_clicked_cb(lv_event_t *e)
         }
     }
 
+    should_launch = (clicked_index == 0)
+                    && s_app_launch_armed
+                    && (s_selected_index == clicked_index);
+
+    prv_set_selection(slot);
+    if (clicked_index >= 0) {
+        s_app_launch_armed = true;
+    }
+
     if (clicked_index >= 0) {
         const char *title = (clicked_index == 0) ? s_cart0_title : app_names[clicked_index];
         prv_uart_log_clicked_app(clicked_index, title);
     }
 
-    if (clicked_index == 0) {
-        if (Task_LUA_IsRunning()) {
-            prv_set_status_text("Lua is already running");
-            return;
-        }
-        prv_show_runtime_screen();
-        Task_LUA_StartCart("0:/cart.bin");
+    if (should_launch) {
+        prv_start_selected_app();
     }
 }
 
 static void prv_circle_clicked_cb(lv_event_t *e)
 {
+    s_app_launch_armed = false;
     prv_set_selection(lv_event_get_target(e));
 }
 
@@ -554,8 +824,12 @@ void DesignLauncher_Create(lv_display_t *disp)
     prv_create_circle_area(s_main_container);
     prv_create_divider_line(s_main_container);
     prv_create_status_label(s_main_container);
+    launcher_action_hints_init(&s_action_hints, s_main_container);
+    launcher_action_hints_set_callback(&s_action_hints, prv_action_hint_clicked_cb, NULL);
 
     s_selected_index = 0;
+    s_app_launch_armed = false;
+    prv_update_action_hints();
 }
 
 void DesignLauncher_SetSelected(int app_index)
@@ -571,15 +845,19 @@ int DesignLauncher_GetSelected(void)
 
 void DesignLauncher_Destroy(void)
 {
+    launcher_action_hints_deinit(&s_action_hints);
+
     if (s_main_container != NULL) {
         lv_obj_delete(s_main_container);
         s_main_container = NULL;
     }
     s_status_label = NULL;
+    s_info_popup = NULL;
     /*
      * SDRAM 图片槽是固定 launcher cache 分区，不需要 free。
      * 如果将来需要复用这段地址，在这里清零即可：
      *   memset((void*)launcher_get_big_icon(0), 0, DESIGN_APP_COUNT * CART_BIN_PREVIEW_SIZE);
      */
     s_selected_index = 0;
+    s_app_launch_armed = false;
 }

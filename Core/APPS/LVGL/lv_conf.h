@@ -149,6 +149,9 @@
 #define LV_FONT_MONTSERRAT_46 0
 #define LV_FONT_MONTSERRAT_48 0
 
+/* Source Han Sans CJK subset used by launcher native labels/action hints. */
+#define LV_FONT_SOURCE_HAN_SANS_SC_16_CJK 1
+
 /* 中文字体支持 (需要自行添加字体文件) */
 #define LV_FONT_CUSTOM_DECLARE
 

@@ -16,7 +16,8 @@
 - LTDC 双缓冲显示链路，配合 VBlank/page flip 降低撕裂。
 - 64 MiB 外部 SDRAM 固定分区，用于 framebuffer、LVGL heap、DMA pool、launcher cache 和应用资源区。
 - SD 卡 `cart.bin` 读取，launcher 可显示卡带标题和 200x200 ARGB8888 预览图。
-- Lua VM 运行时，支持生命周期函数和 GPIO/PWM/SD/UI 等宿主 API。
+- Launcher 原生右下角操作提示栏，用字母和中文显示当前选中项操作。
+- Lua VM 运行时，支持生命周期函数和 GPIO/PWM/UI 等宿主 API。
 - FreeRTOS/CMSIS-RTOS2 任务模型，LVGL 和 Lua 在独立任务路径中调度。
 - CMake/Ninja 构建，按模块拆成显示、存储、GPIO、Lua、UI、任务等静态库。
 
@@ -137,7 +138,7 @@ function final(self)
 end
 ```
 
-当前宿主环境暴露了 GPIO、PWM、delay、SD、声明式 UI children（button / slider）等 API。脚本示例在 [examples/lua](examples/lua)，完整 API 文档在 [Docs/lua/lua_api.md](Docs/lua/lua_api.md)。
+当前宿主环境暴露了 GPIO、PWM、delay、声明式 UI children（button / slider）等 API。脚本示例在 [examples/lua](examples/lua)，完整 API 文档在 [Docs/lua/lua_api.md](Docs/lua/lua_api.md)。
 
 ## 目录结构
 
@@ -166,6 +167,7 @@ tests/              host 侧解析测试和 Lua smoke test
 
 - [Docs/memory/SDRAM_Layout_Spec_v1.0.md](Docs/memory/SDRAM_Layout_Spec_v1.0.md)：SDRAM 固定分区。
 - [Docs/display/DMA2D_适配逻辑.md](Docs/display/DMA2D_适配逻辑.md)：DMA2D 与显示链路说明。
+- [Docs/display/launcher_action_hints.md](Docs/display/launcher_action_hints.md)：Launcher 操作提示栏说明和手动测试步骤。
 - [Docs/cart/XHGC_cart_bin_v2_格式规范.md](Docs/cart/XHGC_cart_bin_v2_格式规范.md)：卡带镜像格式。
 - [Docs/lua/lua_runtime_contract.md](Docs/lua/lua_runtime_contract.md)：Lua 运行时约定。
 - [Core/LuaPort/LuaPort_API.md](Core/LuaPort/LuaPort_API.md)：LuaPort C 侧 API。

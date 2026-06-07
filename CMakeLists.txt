@@ -360,6 +360,8 @@ endif()
 # 目标 9: app_screen —— 应用层 UI 界面（启动器 / 缓存 / 预览）
 # ==============================================================================
 add_library(app_screen STATIC
+        ${SCREEN_PAGE_DIR}/launcher_action_hints.c
+        ${SCREEN_PAGE_DIR}/launcher_action_hints.h
         ${SCREEN_PAGE_DIR}/ui_screen_launcher.c
         ${SCREEN_PAGE_DIR}/ui_screen_launcher.h
         ${SCREEN_PAGE_DIR}/jbm_el_20px.h
