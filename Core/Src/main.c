@@ -55,17 +55,21 @@
 #include "cartdesk_task.h"
 #include "flash.h"
 #include "lfs_port.h"
+
+#define CARTDESK_RUN_LUA_VM_ONLY 1
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
 
+#if !CARTDESK_RUN_LUA_VM_ONLY
 static FLASH_Handle g_flash;
 static const osThreadAttr_t lvgl_task_attributes = {
   .name = "lvgl",
   .priority = osPriorityAboveNormal,
   .stack_size = 8192
 };
+#endif
 static const osThreadAttr_t lua_task_attributes = {
   .name = "lua",
   .priority = osPriorityNormal,
@@ -95,7 +99,9 @@ static const osThreadAttr_t lua_task_attributes = {
 void SystemClock_Config(void);
 static void MPU_Config(void);
 /* USER CODE BEGIN PFP */
+#if !CARTDESK_RUN_LUA_VM_ONLY
 static void StartLvglTask(void *argument);
+#endif
 static void StartLuaTask(void *argument);
 
 /* USER CODE END PFP */
@@ -104,6 +110,7 @@ static void StartLuaTask(void *argument);
 /* USER CODE BEGIN 0 */
 /* ============================== Storage init ============================== */
 
+#if !CARTDESK_RUN_LUA_VM_ONLY
 static void Storage_InitOrDie(void) {
   /* 1) 绑定 QSPI 句柄（不在这里初始化 QSPI 外设） */
   if (FLASH_Open(&g_flash, &hqspi, 64u * 1024u * 1024u) != FLASH_OK) {
@@ -145,6 +152,7 @@ static void Storage_InitOrDie(void) {
      注意：建议 MPU 把 littlefs 分区设为 Non-Cacheable，避免写后读到旧数据。 */
   // (void)LFS_EnableMappedRead(1);
 }
+#endif
 
 static inline uint16_t tim17_us_now(void) {
   return (uint16_t) __HAL_TIM_GET_COUNTER(&htim17);
@@ -183,6 +191,7 @@ void HAL_Delay(uint32_t Delay) {
   }
 }
 
+#if !CARTDESK_RUN_LUA_VM_ONLY
 static void StartLvglTask(void *argument) {
   (void) argument;
 
@@ -210,12 +219,17 @@ static void StartLvglTask(void *argument) {
     osDelay(5);
   }
 }
+#endif
 
 static void StartLuaTask(void *argument) {
   (void) argument;
 
+  if (lua_init() != 0) {
+    Error_Handler();
+  }
+
   for (;;) {
-    Task_LUA();
+    lua_update_task();
     osDelay(5);
   }
 }
@@ -270,6 +284,8 @@ int main(void)
   MX_I2C1_Init();
   MX_RNG_Init();
   MX_I2C2_Init();
+  MX_TIM2_Init();
+  MX_TIM3_Init();
   MX_TIM17_Init();
   MX_TIM16_Init();
   /* USER CODE BEGIN 2 */
@@ -277,25 +293,9 @@ int main(void)
     Error_Handler();
   }
 
-  /* 初始化 SDRAM */
-  SDRAM_Init();
-  sdram_layout_check();
-  cold_pool_init();
-
-
-  /* 初始化 QSPI NOR + littlefs */
-  Storage_InitOrDie();
   HAL_TIM_Base_Start(&htim17);
 
-#if CARTDESK_ENABLE_BOARD_TESTS
-  BoardTest_RunFlashStartupDiagnostics(&g_flash);
-#else
-  (void)FLASH_EnableMemoryMapped(&g_flash);
-#endif
-
-  HAL_TIM_Base_Start_IT(&htim16);
-
-  if (osThreadNew(StartLvglTask, NULL, &lvgl_task_attributes) == NULL) {
+  if (osThreadNew(StartLuaTask, NULL, &lua_task_attributes) == NULL) {
     Error_Handler();
   }
 

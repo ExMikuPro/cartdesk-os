@@ -19,6 +19,14 @@ static int l_delay(lua_State* L)
 // 导出全局函数：delay(ms)。在 start/update 协程中调用时会让出 Lua VM。
 void lua_register_delay(lua_State* L)
 {
+  lua_newtable(L);
   lua_pushcfunction(L, l_delay);
+  lua_setfield(L, -2, "ms");
+
+  lua_newtable(L);
+  lua_pushcfunction(L, l_delay);
+  lua_setfield(L, -2, "__call");
+  lua_setmetatable(L, -2);
+
   lua_setglobal(L, "delay");
 }
