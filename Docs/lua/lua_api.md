@@ -37,27 +37,74 @@ end
 | `final(self)` | 脚本销毁或 VM 关闭前清理 |
 | `start()` | 兼容旧脚本的入口 |
 
-`self` 是每个脚本实例的私有状态表，推荐把计数器、句柄、UI 对象等状态保存在 `self` 上。`start()` 仍保留兼容，但新代码推荐使用 `init(self)`、`update(self, dt)` 和 `final(self)`。
+`self` 是每个脚本实例的私有状态表。UI 放在 `self.children`，脚本自己的计数器、业务状态等放在 `self.state`。`start()` 仍保留兼容，但新代码推荐使用 `init(self)`、`update(self, dt)` 和 `final(self)`。
 
 当前宿主实现里，`dt` 单位为秒：`update`/`late_update` 接收本帧耗时秒数，`fixed_update` 接收固定步长秒数。
 
-输入事件统一走 `on_input(self, action_id, action)`。`action.event` 表示宿主事件名，例如 `"pressed"`、`"released"`、`"clicked"`、`"long_pressed"`、`"value_changed"`；`action` 还可包含 `pressed`、`released`、`repeated`、`value`、`x`、`y`、`dx`、`dy`。UI 按钮和滑块默认 `action_id` 为 `"button"` / `"slider"`，可通过控件的 `set_input_id()` 改成脚本自己的业务名。
+输入事件统一走 `on_input(self, action_id, action)`。`action.event` 表示宿主事件名，例如按钮的 `"pressed"`、`"released"`、`"clicked"`，以及滑块的 `"changed"`；`action` 还可包含 `pressed`、`released`、`repeated`、`value`、`x`、`y`、`dx`、`dy`。UI 按钮和滑块通过 config 的 `input` 字段设置脚本侧业务名。
 
 示例：
 
 ```lua
 function init(self)
-    self.elapsed = 0
+    self.state = {
+        elapsed = 0,
+        ticks = 0,
+    }
 end
 
 function update(self, dt)
-    self.elapsed = self.elapsed + dt
+    local s = self.state
+
+    s.elapsed = s.elapsed + dt
+
+    if s.elapsed >= 1.0 then
+        s.elapsed = s.elapsed - 1.0
+        s.ticks = s.ticks + 1
+        print("tick", s.ticks)
+    end
 end
 
 function final(self)
-    print("elapsed", self.elapsed)
 end
 ```
+
+## self 使用规范
+
+`self` 顶层只推荐使用：
+
+```lua
+self.state
+self.children
+```
+
+`self.children` 用于 UI / Drawable 树，由宿主管理生命周期。`self.state` 用于脚本跨帧状态。硬件资源句柄如果必须跨帧保存，放入 `self.state.resources`。固定 pin 和常量使用文件级 `local`，临时变量使用函数内 `local`。
+
+不推荐把以下字段直接挂到 `self` 顶层：
+
+```lua
+self.elapsed
+self.count
+self.button
+self.slider
+self.label
+self.file
+self.log
+self.led
+self.pwm
+self.timer
+```
+
+推荐分类：
+
+| 内容 | 推荐位置 |
+| --- | --- |
+| UI 对象 | `self.children` |
+| 跨帧业务状态 | `self.state.xxx` |
+| 跨帧硬件资源句柄 | `self.state.resources.xxx` |
+| 固定 pin / 常量 / 配置 | 文件级 `local` |
+| 临时变量 | 函数内 `local` |
+| 一次性硬件调用结果 | 函数内 `local` |
 
 ## API 风格契约
 
@@ -68,9 +115,9 @@ end
 - 修改类 API 成功返回 `true`，失败返回 `nil, err`。
 - 参数错误可以抛 Lua error。
 - 运行时失败返回 `nil, err`。
-- 旧 API 仅作为兼容别名保留，新脚本优先使用推荐 API。
+- 旧非 UI API 仅作为兼容别名保留，新脚本优先使用推荐 API。旧 UI API 不保留兼容层。
 - Lua 层隐藏 STM32 板级细节，不暴露 HAL handle、寄存器、timer/channel 等对象。
-- 资源应在 `final(self)` 中释放。
+- 非 UI 资源应在 `final(self)` 中释放。UI 资源由宿主管理 `self.children` 生命周期。
 
 ## 时间
 
@@ -87,11 +134,30 @@ end
 
 ```lua
 function init(self)
-    self.ready = false
+    self.state = {
+        ready = false,
+    }
     delay(100)
-    self.ready = true
+    self.state.ready = true
 end
 ```
+
+## 硬件外设与 self.state
+
+GPIO、PWM、TIM、RNG、CRC 不属于 `self.children`。`self.children` 只放 UI / Drawable。
+
+硬件外设使用规则：
+
+| 内容 | 推荐位置 |
+| --- | --- |
+| 固定硬件编号 | 文件级 `local` |
+| 固定配置常量 | 文件级 `local` |
+| 临时硬件读数 | 函数内 `local` |
+| 跨帧业务状态 | `self.state.xxx` |
+| 跨帧资源句柄 | `self.state.resources.xxx` |
+| 资源释放 | `final(self)` |
+
+不要新增 `self.hardware`、`self.resources`、`self.gpio`、`self.pwm` 等顶层字段。只有真正需要跨帧保存资源句柄时才创建 `self.state.resources`。
 
 ## GPIO
 
@@ -152,20 +218,35 @@ GPIO 常量：
 
 ```lua
 local LED_PIN = 3
+local BLINK_INTERVAL = 0.5
 
 function init(self)
-    gpio.setup(LED_PIN, { mode = gpio.OUTPUT, initial = gpio.LOW })
+    self.state = {
+        elapsed = 0,
+        level = gpio.LOW,
+    }
+
+    gpio.setup(LED_PIN, {
+        mode = gpio.OUTPUT,
+        initial = self.state.level,
+        speed = gpio.SPEED_LOW,
+    })
 end
 
 function update(self, dt)
-    self.elapsed = (self.elapsed or 0) + dt
-    if self.elapsed >= 0.5 then
-        self.elapsed = self.elapsed - 0.5
-        gpio.toggle(LED_PIN)
+    local s = self.state
+
+    s.elapsed = s.elapsed + dt
+
+    if s.elapsed >= BLINK_INTERVAL then
+        s.elapsed = s.elapsed - BLINK_INTERVAL
+        s.level = s.level == gpio.LOW and gpio.HIGH or gpio.LOW
+        gpio.write(LED_PIN, s.level)
     end
 end
 
 function final(self)
+    gpio.write(LED_PIN, gpio.LOW)
     gpio.release(LED_PIN)
 end
 ```
@@ -210,18 +291,45 @@ PWM 常量：
 
 ```lua
 local PWM_PIN = 0
+local STEP_INTERVAL = 0.02
 
 function init(self)
-    self.duty = pwm.MIN
-    pwm.setup(PWM_PIN, { freq = pwm.DEFAULT_FREQ, duty = self.duty, start = true })
+    self.state = {
+        elapsed = 0,
+        duty = pwm.MIN,
+        direction = 1,
+    }
+
+    pwm.setup(PWM_PIN, {
+        freq = pwm.DEFAULT_FREQ,
+        duty = self.state.duty,
+        start = true,
+    })
 end
 
 function update(self, dt)
-    self.duty = math.min(pwm.MAX, self.duty + 1)
-    pwm.write(PWM_PIN, self.duty)
+    local s = self.state
+
+    s.elapsed = s.elapsed + dt
+
+    while s.elapsed >= STEP_INTERVAL do
+        s.elapsed = s.elapsed - STEP_INTERVAL
+        s.duty = s.duty + s.direction
+
+        if s.duty >= pwm.MAX then
+            s.duty = pwm.MAX
+            s.direction = -1
+        elseif s.duty <= pwm.MIN then
+            s.duty = pwm.MIN
+            s.direction = 1
+        end
+    end
+
+    pwm.write(PWM_PIN, s.duty)
 end
 
 function final(self)
+    pwm.stop(PWM_PIN)
     pwm.release(PWM_PIN)
 end
 ```
@@ -299,108 +407,118 @@ function update(self, dt)
 end
 ```
 
-## UI Button
+## UI Children
 
-`ui.button` 模块：
+`self.children` 是宿主管理的 UI / Drawable 树，可以是单个 Drawable，也可以是 Drawable 数组。宿主会在 `final(self)` 返回后自动递归删除 `self.children`，并清空该字段。
 
-| API | 说明 |
+脚本自己的状态建议放在 `self.state`。不推荐把 UI 句柄挂到 `self.button`、`self.slider`、`self.label` 等顶层字段。
+
+通用 config 字段：
+
+| 字段 | 说明 |
 | --- | --- |
-| `ui.button.create(parent)` | 创建按钮 |
-| `ui.button.draw(parent, x, y, width, height, text)` | 创建并设置位置、大小、文本 |
-| `ui.button.get_screen()` | 获取当前屏幕对象 |
-| `btn:set_text(text)` | 设置文本 |
-| `btn:set_size(width, height)` | 设置尺寸 |
-| `btn:set_pos(x, y)` | 设置位置 |
-| `btn:align(align, x_offset, y_offset)` | 对齐 |
-| `btn:set_style_bg_color(color, alpha)` | 设置背景色和透明度 |
-| `btn:set_style_text_color(color)` | 设置文本颜色 |
-| `btn:set_style_border(color, width)` | 设置边框。当前实现参数顺序为 `color, width` |
-| `btn:set_style_radius(radius)` | 设置圆角 |
-| `btn:add_flag(flag)` | 添加 LVGL 标志字符串 |
-| `btn:clear_flag(flag)` | 清除 LVGL 标志字符串 |
-| `btn:set_checkable(enable)` | 设置是否可选中 |
-| `btn:is_checked()` | 返回是否选中 |
-| `btn:set_input_id(action_id)` | 设置投递到 `on_input` 的动作 ID |
-| `btn:set_callback(function(btn, event) end)` | legacy 兼容事件回调，新脚本优先使用 `on_input` |
-| `btn:delete()` | 删除按钮 |
+| `id` | UI 查询和 patch 使用的字符串 ID |
+| `x` / `y` / `w` / `h` | 坐标和尺寸；显式字段优先于 `rect`、`pos`、`size` |
+| `rect = { x, y, w, h }` | 一次设置坐标和尺寸 |
+| `pos = { x, y }` | 一次设置坐标 |
+| `size = { w, h }` | 一次设置尺寸 |
+| `hidden` | 设置或清除隐藏状态 |
+| `input` | 投递到 `on_input(self, action_id, action)` 的动作 ID |
+| `style` | 控件样式表 |
 
-常用 `align` 字符串包括 `center`、`top_left`、`top_mid`、`top_right`、`bottom_left`、`bottom_mid`、`bottom_right`、`left_mid`、`right_mid`。常用 `flag` 字符串包括 `hidden`、`clickable`、`checkable`、`scrollable`、`press_lock`。
-
-示例：
+### 单按钮
 
 ```lua
 function init(self)
-    local screen = ui.button.get_screen()
-    self.btn = ui.button.create(screen)
-    self.btn:set_text("Start")
-    self.btn:set_pos(20, 20)
-    self.btn:set_size(120, 48)
-    self.btn:set_style_bg_color(0x2D8CFF, 255)
-    self.btn:set_style_text_color(0xFFFFFF)
-    self.btn:set_style_radius(8)
-    self.btn:set_input_id("start")
+    self.children = ui.button({
+        id = "run",
+        text = "Run",
+        rect = { 24, 24, 120, 48 },
+        input = "run",
+        style = {
+            bg = 0x2D8CFF,
+            text = 0xFFFFFF,
+            radius = 8,
+        },
+    })
 end
 
 function on_input(self, action_id, action)
-    if action_id == "start" and action.event == "clicked" then
-        print("button clicked")
-    end
-end
-
-function final(self)
-    if self.btn then
-        self.btn:delete()
-        self.btn = nil
+    if action_id == "run" then
+        print("run", action.event)
     end
 end
 ```
 
-## UI Slider
-
-`ui.slider` 模块：
-
-| API | 说明 |
-| --- | --- |
-| `ui.slider.create(parent)` | 创建滑块 |
-| `ui.slider.draw(parent, x, y, width, height)` | 创建并设置位置、大小 |
-| `ui.slider.get_screen()` | 获取当前屏幕对象 |
-| `slider:set_size(width, height)` | 设置尺寸 |
-| `slider:set_pos(x, y)` | 设置位置 |
-| `slider:align(align, x_offset, y_offset)` | 对齐 |
-| `slider:set_value(value)` | 设置当前值 |
-| `slider:get_value()` | 读取当前值 |
-| `slider:set_range(min, max)` | 设置范围 |
-| `slider:set_style_bg_color(color, alpha)` | 设置背景色和透明度 |
-| `slider:set_style_indicator_color(color, alpha)` | 设置进度条颜色和透明度 |
-| `slider:set_style_knob_color(color, alpha)` | 设置旋钮颜色和透明度 |
-| `slider:set_style_border(color, width)` | 设置边框。当前实现参数顺序为 `color, width` |
-| `slider:set_style_radius(radius)` | 设置圆角 |
-| `slider:set_input_id(action_id)` | 设置投递到 `on_input` 的动作 ID |
-| `slider:set_callback(function(slider, event) end)` | legacy 兼容事件回调，新脚本优先使用 `on_input` |
-| `slider:delete()` | 删除滑块 |
-
-示例：
+### 按钮 + 滑块
 
 ```lua
 function init(self)
-    local screen = ui.slider.get_screen()
-    self.slider = ui.slider.draw(screen, 20, 90, 220, 24)
-    self.slider:set_range(0, pwm.MAX)
-    self.slider:set_value(0)
-    self.slider:set_input_id("duty")
+    self.state = {
+        volume = 128,
+    }
+
+    self.children = {
+        ui.button({
+            id = "run",
+            text = "Run",
+            rect = { 24, 24, 120, 48 },
+            input = "run",
+        }),
+
+        ui.slider({
+            id = "volume",
+            rect = { 24, 90, 220, 24 },
+            range = { 0, 255 },
+            value = self.state.volume,
+            input = "volume",
+        }),
+    }
 end
 
 function on_input(self, action_id, action)
-    if action_id == "duty" and action.event == "value_changed" then
-        print("slider", action.value)
+    if action_id == "volume" and action.event == "changed" then
+        self.state.volume = action.value
+        print("volume", self.state.volume)
     end
 end
+```
 
-function final(self)
-    if self.slider then
-        self.slider:delete()
-        self.slider = nil
+### 通过 id 更新 UI
+
+```lua
+function on_input(self, action_id, action)
+    if action_id == "run" and action.event == "clicked" then
+        ui.patch(self, "run", {
+            text = "Running",
+            style = {
+                bg = 0x00AA00,
+            },
+        })
     end
+end
+```
+
+### API
+
+| API | 说明 |
+| --- | --- |
+| `ui.button(config)` | 创建按钮 Drawable |
+| `ui.slider(config)` | 创建滑块 Drawable |
+| `ui.find(self, id)` | 在 `self.children` 中递归查找 Drawable；找不到返回 `nil` |
+| `ui.patch(self, id, patch)` | 用 config 同名字段更新 Drawable；找不到返回 `nil, "ui id not found"` |
+
+Button config 支持 `text`、`input`，以及 `style.bg`、`style.bg_alpha`、`style.text`、`style.border.color`、`style.border.width`、`style.radius`。
+
+Slider config 支持 `range = { min, max }`、`value`、`input`，以及 `style.bg`、`style.bg_alpha`、`style.indicator`、`style.indicator_alpha`、`style.knob`、`style.knob_alpha`、`style.border.color`、`style.border.width`、`style.radius`。
+
+按钮事件为 `"pressed"`、`"released"`、`"clicked"`。滑块事件为 `"changed"`，`action.value` 为当前滑块值。
+
+`final(self)` 中通常不需要删除 UI：
+
+```lua
+function final(self)
+    -- UI children are deleted by the host after final(self).
 end
 ```
 

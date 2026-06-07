@@ -45,17 +45,25 @@ final(self)
 
 ## Instance State
 
-State stored in `self` remains available for the complete script lifetime:
+State stored in `self.state` remains available for the complete script
+lifetime. UI stored in `self.children` is deleted by the host after
+`final(self)` returns.
 
 ```lua
 function init(self)
-    self.elapsed = 0
+    self.state = {
+        elapsed = 0,
+    }
 end
 
 function update(self, dt)
-    self.elapsed = self.elapsed + dt
+    self.state.elapsed = self.state.elapsed + dt
 end
 ```
+
+At the top level of `self`, new scripts should only use `self.state` and
+`self.children`. Fixed pins and constants should be file-local variables;
+temporary values should be function-local variables.
 
 The runtime supports up to four script instances by default. The limit can be
 changed with `LUA_RT_MAX_INSTANCES`.
@@ -75,9 +83,10 @@ lua_post_input("a", &action);
 
 The Lua `action` table contains `event`, `pressed`, `released`, `repeated`,
 `value`, `x`, `y`, `dx`, and `dy`. UI widgets post LVGL input events through
-this same queue. Buttons and sliders use their input ID as `action_id`, default
-to `"button"` / `"slider"`, and can be renamed with `set_input_id()`. The queue
-has fixed capacity and the API is intended for task context, not direct ISR use.
+this same queue. Buttons and sliders use their config `input` value as
+`action_id`, default to `"button"` / `"slider"`, and are owned by
+`self.children`. The queue has fixed capacity and the API is intended for task
+context, not direct ISR use.
 
 ## Messages
 

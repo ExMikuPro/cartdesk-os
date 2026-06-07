@@ -18,9 +18,9 @@ Lua scripts do not need to know the STM32 GPIO port or pin mask.
 Application scripts may use logical ids or exported pin names:
 
 ```lua
-gpio.pinMode(5, gpio.INPUT_PULLUP)
-gpio.pinMode("PC13", gpio.OUTPUT)
-gpio.digitalWrite(6, gpio.HIGH)
+gpio.setup(5, gpio.INPUT_PULLUP)
+gpio.setup("PC13", gpio.OUTPUT)
+gpio.write(6, gpio.HIGH)
 ```
 
 Other STM32 physical pin names are not accepted. All seven GPIO pins support
@@ -72,13 +72,13 @@ gpio.HIGH_LEVEL
 
 ## Setup
 
-Arduino-style setup:
+Recommended setup:
 
 ```lua
-gpio.pinMode(0, gpio.INPUT)
-gpio.pinMode(5, gpio.INPUT_PULLUP)
-gpio.pinMode(6, gpio.INPUT_PULLDOWN)
-gpio.pinMode(6, gpio.OUTPUT)
+gpio.setup(0, gpio.INPUT)
+gpio.setup(5, gpio.INPUT_PULLUP)
+gpio.setup(6, gpio.INPUT_PULLDOWN)
+gpio.setup(6, gpio.OUTPUT)
 ```
 
 Simple mode:
@@ -107,9 +107,6 @@ Optional `pull` values are `"none"`, `"up"`, and `"down"`.
 ## Read And Write
 
 ```lua
-gpio.digitalWrite(6, gpio.HIGH)
-local input = gpio.digitalRead(5)
-
 gpio.write(0, gpio.HIGH)
 gpio.write(0, gpio.LOW)
 gpio.write(0, 1)
@@ -190,9 +187,9 @@ pwm.write(0, 128)
 GPIO and PWM cannot own the same PWM-capable pin at the same time. `PA0` and
 `PC13` do not support PWM.
 
-## Arduino API
+## Arduino API Compatibility
 
-The preferred Arduino-style API is available on the `gpio` table:
+The Arduino-style API remains available for compatibility:
 
 ```lua
 gpio.pinMode(pin, mode)
@@ -221,26 +218,36 @@ nil, "gpio interrupt not supported"
 ## Example
 
 ```lua
-local pin = 0
+local LED_PIN = 0
+local BLINK_INTERVAL = 0.5
 
 function init(self)
-    self.elapsed = 0
-    self.level = gpio.LOW
-    gpio.pinMode(pin, gpio.OUTPUT)
-    gpio.digitalWrite(pin, self.level)
+    self.state = {
+        elapsed = 0,
+        level = gpio.LOW,
+    }
+
+    gpio.setup(LED_PIN, {
+        mode = gpio.OUTPUT,
+        initial = self.state.level,
+        speed = gpio.SPEED_LOW,
+    })
 end
 
 function update(self, dt)
-    self.elapsed = self.elapsed + dt
-    if self.elapsed >= 0.5 then
-        self.elapsed = self.elapsed - 0.5
-        self.level = self.level == gpio.LOW and gpio.HIGH or gpio.LOW
-        gpio.digitalWrite(pin, self.level)
+    local s = self.state
+
+    s.elapsed = s.elapsed + dt
+
+    if s.elapsed >= BLINK_INTERVAL then
+        s.elapsed = s.elapsed - BLINK_INTERVAL
+        s.level = s.level == gpio.LOW and gpio.HIGH or gpio.LOW
+        gpio.write(LED_PIN, s.level)
     end
 end
 
 function final(self)
-    gpio.digitalWrite(pin, gpio.LOW)
-    gpio.release(pin)
+    gpio.write(LED_PIN, gpio.LOW)
+    gpio.release(LED_PIN)
 end
 ```

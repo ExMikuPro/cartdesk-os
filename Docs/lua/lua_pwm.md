@@ -71,8 +71,10 @@ pwm.setup(pin, { freq = 1000, duty = 128, start = true })
 pwm.write(pin, value)
 pwm.read(pin)
 
-pwm.setFreq(pin, freq)
-pwm.getFreq(pin)
+pwm.set_freq(pin, freq)
+pwm.get_freq(pin)
+pwm.setFreq(pin, freq) -- compatibility alias
+pwm.getFreq(pin)       -- compatibility alias
 
 pwm.stop(pin)
 pwm.release(pin)
@@ -173,70 +175,80 @@ Use `pwm.release(pin)` when switching a PWM pin back to GPIO. It stops PWM, rele
 Simple half-duty output:
 
 ```lua
+local PWM_PIN = 0
+
 function init(self)
-    pwm.write(0, 128)
+    pwm.write(PWM_PIN, 128)
 end
 
 function final(self)
-    pwm.release(0)
+    pwm.release(PWM_PIN)
 end
 ```
 
 Fade:
 
 ```lua
+local PWM_PIN = 0
 local STEP_TIME = 0.005
 
 function init(self)
-    self.duty = 0
-    self.direction = 1
-    self.accumulator = 0
-    pwm.setup(0, 1000)
-    pwm.write(0, self.duty)
+    self.state = {
+        duty = pwm.MIN,
+        direction = 1,
+        accumulator = 0,
+    }
+
+    pwm.setup(PWM_PIN, 1000)
+    pwm.write(PWM_PIN, self.state.duty)
 end
 
 function update(self, dt)
-    self.accumulator = self.accumulator + dt
+    local s = self.state
 
-    while self.accumulator >= STEP_TIME do
-        self.accumulator = self.accumulator - STEP_TIME
-        self.duty = self.duty + self.direction
+    s.accumulator = s.accumulator + dt
 
-        if self.duty >= pwm.MAX then
-            self.duty = pwm.MAX
-            self.direction = -1
-        elseif self.duty <= pwm.MIN then
-            self.duty = pwm.MIN
-            self.direction = 1
+    while s.accumulator >= STEP_TIME do
+        s.accumulator = s.accumulator - STEP_TIME
+        s.duty = s.duty + s.direction
+
+        if s.duty >= pwm.MAX then
+            s.duty = pwm.MAX
+            s.direction = -1
+        elseif s.duty <= pwm.MIN then
+            s.duty = pwm.MIN
+            s.direction = 1
         end
     end
 
-    pwm.write(0, self.duty)
+    pwm.write(PWM_PIN, s.duty)
 end
 
 function final(self)
-    pwm.release(0)
+    pwm.release(PWM_PIN)
 end
 ```
 
 Change frequency:
 
 ```lua
+local PWM_PIN = 1
+
 function init(self)
-    pwm.setup(1, 1000)
-    pwm.write(1, 128)
+    pwm.setup(PWM_PIN, 1000)
+    pwm.write(PWM_PIN, 128)
     delay(300)
 
-    pwm.setFreq(1, 2000)
+    pwm.set_freq(PWM_PIN, 2000)
     delay(300)
 
-    pwm.setFreq(1, 4000)
+    pwm.set_freq(PWM_PIN, 4000)
     delay(300)
 
-    pwm.stop(1)
+    pwm.stop(PWM_PIN)
 end
 
 function final(self)
-    pwm.release(1)
+    pwm.release(PWM_PIN)
 end
 ```

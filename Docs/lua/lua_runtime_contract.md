@@ -21,24 +21,40 @@
 
 `start()` 是旧脚本兼容入口。宿主在未找到 `init` 且找到 `start` 时可用 `start()` 作为初始化兼容路径；新脚本不应再依赖 `start()`。
 
-## self 状态表
+## self 使用规范
 
-`self` 是每个脚本实例独立拥有的私有状态表。脚本应把跨帧状态、资源句柄、UI 对象、计时器累计值等保存在 `self` 上。
+`self` 是每个脚本实例独立拥有的私有状态表。新脚本在 `self` 顶层只推荐使用 `self.state` 和 `self.children`。
+
+`self.children` 用于 UI / Drawable 树，由宿主管理生命周期。`self.state` 用于脚本跨帧状态。硬件资源句柄如果必须跨帧保存，放入 `self.state.resources`。固定 pin 和常量使用文件级 `local`，临时变量使用函数内 `local`。
+
+不推荐在 `self` 顶层创建 `self.elapsed`、`self.count`、`self.button`、`self.slider`、`self.file`、`self.pwm` 等字段。
 
 示例：
 
 ```lua
 function init(self)
-    self.elapsed = 0
-    self.count = 0
+    self.state = {
+        elapsed = 0,
+        count = 0,
+    }
 end
 
 function update(self, dt)
-    self.elapsed = self.elapsed + dt
+    self.state.elapsed = self.state.elapsed + dt
 end
 ```
 
 宿主不应把不同脚本实例的 `self` 混用。脚本也不应假设全局变量可以替代实例状态，因为全局环境和热重载策略可能变化。
+
+## UI Children
+
+`self.children` 可以是单个 Drawable，也可以是 Drawable 数组。宿主会在 `final(self)` 返回后自动删除 `self.children`，并清空该字段。脚本通常不需要在 `final(self)` 中删除 UI。
+
+需要更新 UI 时使用 `ui.patch(self, id, patch)`。需要查找 UI 时使用 `ui.find(self, id)`。
+
+## 硬件外设与 self.state
+
+GPIO/PWM/TIM/RNG/CRC 不属于 `self.children`。固定 pin 使用文件级 `local`，临时读数使用函数内 `local`，跨帧状态使用 `self.state`，跨帧资源句柄使用 `self.state.resources`。非 UI 资源仍然需要在 `final(self)` 中释放。
 
 ## dt 单位
 
@@ -65,10 +81,11 @@ end
 
 `final(self)` 用于释放脚本创建或占用的资源。脚本作者应在这里：
 
-- 删除 UI 对象，例如 `btn:delete()`、`slider:delete()`。
 - 释放 GPIO，例如 `gpio.release(pin)`。
 - 停止或释放 PWM，例如 `pwm.stop(pin)`、`pwm.release(pin)`。
-- 清空 `self` 上不再有效的句柄。
+- 清空 `self.state` 中不再有效的非 UI 句柄。
+
+UI 放在 `self.children` 中，由宿主在 `final(self)` 返回后自动递归删除，脚本不需要手动删除 UI。
 
 `final` 应尽量短小、幂等。即使资源已经释放或创建失败，也应安全返回。
 
@@ -77,7 +94,7 @@ end
 `on_reload(self)` 用于热重载前后的状态调整。推荐用途：
 
 - 保存需要跨重载保留的轻量状态。
-- 关闭或刷新旧 UI 对象。
+- 更新或重建 `self.children` 中的 UI 状态。
 - 输出脚本版本或重载日志。
 - 标记下一次 `update` 重新同步硬件状态。
 
@@ -89,7 +106,7 @@ end
 
 - `action_id` 是输入动作 ID 字符串。
 - `action` 是输入事件表，宿主可提供 `event`、`pressed`、`released`、`repeated`、`value`、`x`、`y`、`dx`、`dy` 等字段。
-- UI 按钮和滑块的 LVGL 输入事件统一投递到 `on_input`。控件默认 `action_id` 为 `"button"` / `"slider"`，可用 `set_input_id()` 设置脚本侧业务 ID。
+- UI 按钮和滑块的 LVGL 输入事件统一投递到 `on_input`。控件默认 `action_id` 为 `"button"` / `"slider"`，可用 config 的 `input` 字段设置脚本侧业务 ID。
 
 `on_message(self, message_id, message, sender)`：
 

@@ -137,7 +137,7 @@ function final(self)
 end
 ```
 
-当前宿主环境暴露了 GPIO、PWM、delay、SD、UI button、UI slider 等 API。脚本示例在 [examples/lua](examples/lua)，完整 API 文档在 [Docs/lua/lua_api.md](Docs/lua/lua_api.md)。
+当前宿主环境暴露了 GPIO、PWM、delay、SD、声明式 UI children（button / slider）等 API。脚本示例在 [examples/lua](examples/lua)，完整 API 文档在 [Docs/lua/lua_api.md](Docs/lua/lua_api.md)。
 
 ## 目录结构
 

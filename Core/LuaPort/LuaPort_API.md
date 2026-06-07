@@ -98,9 +98,9 @@ function on_reload(self) end
 - 修改类 API 成功时返回 `true`，失败时返回 `nil, err`。
 - 参数数量或类型错误属于脚本错误，可以抛 Lua error。
 - 硬件失败、资源冲突、外设不可用等运行时错误应返回 `nil, err`。
-- 旧 API 仅作为 legacy / compatibility 别名保留，新脚本优先使用推荐 API。
+- 旧 API 不再保留兼容层，新脚本应使用文档化的当前 API。
 - Lua 层隐藏 STM32 端口、pin mask、timer、channel、寄存器和 HAL handle 等板级细节。
-- 脚本申请的资源应在 `final(self)` 中释放，例如 `gpio.release()`、`pwm.release()` 和 UI 对象 `:delete()`。
+- 脚本申请的非 UI 资源应在 `final(self)` 中释放，例如 `gpio.release()`、`pwm.release()`。UI 放在 `self.children`，由宿主在 `final(self)` 返回后自动递归删除。
 
 ## 3. Lua 真值约定
 
@@ -111,9 +111,6 @@ Lua 里只有 `false` 和 `nil` 是假值，数字 `0` 也是真值。
 ```lua
 gpio.write("B", 1, true)    -- 高电平
 gpio.write("B", 1, false)   -- 低电平
-
-slider:set_value(50, true)  -- 开启动画
-slider:set_value(50, false) -- 不开动画
 ```
 
 不要把 `0` 当作 false：
@@ -336,49 +333,95 @@ function init(self)
 end
 ```
 
-## 8. UI 通用约定
+## 7. UI Children
 
-UI 接口基于 LVGL 9.5。
+UI 接口基于 LVGL 9.5，但 Lua 用户侧不再暴露面向对象 setter 风格 API。脚本通过 `self.children` 声明 UI 树，宿主负责 UI 生命周期。
 
-### 8.1 父对象
+`self` 字段约定：
 
-`ui.button.create(parent?)`、`ui.button.draw(parent?, ...)`、`ui.slider.create(parent?)`、`ui.slider.draw(parent?, ...)` 都支持可选父对象：
+| 字段 | 说明 |
+| --- | --- |
+| `self.children` | 宿主管理的 UI / Drawable 树，可以是单个 Drawable 或 Drawable 数组 |
+| `self.state` | 脚本自己的状态表，例如计时器、计数器、业务状态 |
 
-- 省略或传 `nil`：使用 `lv_screen_active()`。
-- 传入 `ui.button.get_screen()` / `ui.slider.get_screen()` 返回的对象：使用该屏幕对象。
+不推荐把 UI 句柄挂到 `self.button`、`self.slider`、`self.label` 等顶层字段。
 
-```lua
-local scr = ui.button.get_screen()
-local btn = ui.button.create(scr)
-```
+### 8.1 Drawable 通用 config
 
-### 8.2 对齐字符串
+`ui.button(config)` 和 `ui.slider(config)` 都支持以下通用字段：
 
-按钮和滑块的 `align()` 支持以下字符串：
+| 字段 | 说明 |
+| --- | --- |
+| `id` | 字符串 ID，用于 `ui.find()` 和 `ui.patch()` |
+| `x` / `y` / `w` / `h` | 显式坐标和尺寸字段 |
+| `rect = { x, y, w, h }` | 一次设置坐标和尺寸 |
+| `pos = { x, y }` | 一次设置坐标 |
+| `size = { w, h }` | 一次设置尺寸 |
+| `hidden` | 设置或清除隐藏状态 |
+| `input` | 投递到 `on_input(self, action_id, action)` 的动作 ID |
+| `style` | 控件样式表 |
 
-| 字符串 |
-| --- |
-| `"center"` |
-| `"top_left"` |
-| `"top_mid"` |
-| `"top_right"` |
-| `"bottom_left"` |
-| `"bottom_mid"` |
-| `"bottom_right"` |
-| `"left_mid"` |
-| `"right_mid"` |
+如果同时提供 `rect` / `pos` / `size` 和显式 `x` / `y` / `w` / `h`，显式字段优先。未提供 parent 时默认挂到当前活动 screen。Lua 层不再暴露 `get_screen()`。
 
-未知字符串会按 `"center"` 处理。
-
-### 8.3 颜色和透明度
-
-颜色使用 `0xRRGGBB` 整数：
+### 8.2 Button config
 
 ```lua
-btn:set_style_bg_color(0x2196F3, 255)
+ui.button({
+  id = "run",
+  text = "Run",
+  rect = { 24, 24, 120, 48 },
+  input = "run",
+  style = {
+    bg = 0x2D8CFF,
+    bg_alpha = 255,
+    text = 0xFFFFFF,
+    border = { color = 0x145DA0, width = 2 },
+    radius = 8,
+  },
+})
 ```
 
-`alpha` 范围建议为 `0..255`，默认 `255`。当前实现会转成 `uint8_t`，超出范围会截断。
+支持字段：
+
+| 字段 | 说明 |
+| --- | --- |
+| `text` | 按钮文本 |
+| `input` | 输入事件动作 ID |
+| `style.bg` / `style.bg_alpha` | 背景色和透明度 |
+| `style.text` | 文本颜色 |
+| `style.border.color` / `style.border.width` | 边框颜色和宽度 |
+| `style.radius` | 圆角半径 |
+
+### 8.3 Slider config
+
+```lua
+ui.slider({
+  id = "volume",
+  rect = { 24, 90, 220, 24 },
+  range = { 0, 255 },
+  value = 128,
+  input = "volume",
+  style = {
+    bg = 0x202020,
+    indicator = 0x2D8CFF,
+    knob = 0xFFFFFF,
+    radius = 8,
+  },
+})
+```
+
+支持字段：
+
+| 字段 | 说明 |
+| --- | --- |
+| `range = { min, max }` | 滑块范围 |
+| `value` | 当前值 |
+| `input` | 输入事件动作 ID |
+| `style.bg` / `style.bg_alpha` | 主体背景色和透明度 |
+| `style.indicator` / `style.indicator_alpha` | 指示条颜色和透明度 |
+| `style.knob` / `style.knob_alpha` | 旋钮颜色和透明度 |
+| `style.border.color` / `style.border.width` | 边框颜色和宽度 |
+| `style.radius` | 圆角半径 |
 
 ### 8.4 UI 输入事件
 
@@ -396,417 +439,136 @@ end
 | `ui.button` | `"button"` |
 | `ui.slider` | `"slider"` |
 
-推荐用 `set_input_id(action_id)` 给控件设置脚本侧业务 ID，`action_id` 最长 23 字节。
+推荐用 config 的 `input` 字段设置脚本侧业务 ID，`action_id` 最长 23 字节。
 
-`action` 表字段：
+按钮事件：
 
-| 字段 | 说明 |
-| --- | --- |
-| `event` | LVGL 输入事件字符串 |
-| `pressed` | 按下或点击事件为 `true` |
-| `released` | 释放或点击事件为 `true` |
-| `repeated` | 按住重复或长按事件为 `true` |
-| `value` | 按钮为 `0/1`，滑块为当前滑块值 |
-| `x` / `y` / `dx` / `dy` | 预留给坐标类输入 |
-
-事件字符串转换函数已覆盖：
-
-| 事件字符串 |
+| `action.event` |
 | --- |
-| `"clicked"` |
 | `"pressed"` |
-| `"pressing"` |
 | `"released"` |
-| `"long_pressed"` |
-| `"value_changed"` |
-| `"unknown"` |
+| `"clicked"` |
 
-示例：
+滑块事件：
+
+| `action.event` | 说明 |
+| --- | --- |
+| `"changed"` | `action.value` 为当前滑块值 |
+
+### 8.5 查询和更新
+
+`ui.find(self, id)` 在 `self.children` 中递归查找 `id`，找到返回 Drawable 句柄，找不到返回 `nil`。
+
+`ui.patch(self, id, patch)` 找到 Drawable 后按构造 config 同名字段更新。成功返回 `true`；找不到返回 `nil, "ui id not found"`。
 
 ```lua
-local btn = ui.button.draw(nil, 20, 20, 120, 50, "OK")
-btn:set_input_id("ok")
+local btn = ui.find(self, "run")
+
+local ok, err = ui.patch(self, "run", {
+  text = "Running",
+  style = {
+    bg = 0x00AA00,
+  },
+})
+```
+
+参数数量或类型错误属于脚本错误，使用 Lua error。运行时失败返回 `nil, err`。
+
+### 8.6 生命周期
+
+`self.children` 可以是单个 Drawable，也可以是 Drawable 数组。宿主会在 `final(self)` 返回后自动递归删除 `self.children`，并清空该字段。容器型 Drawable 如果未来拥有 `children`，也按同样规则递归删除。
+
+```lua
+function final(self)
+  -- UI children are deleted by the host after final(self).
+end
+```
+
+## 9. UI API
+
+| API | 说明 |
+| --- | --- |
+| `ui.button(config)` | 创建按钮 Drawable |
+| `ui.slider(config)` | 创建滑块 Drawable |
+| `ui.find(self, id)` | 递归查找 Drawable |
+| `ui.patch(self, id, patch)` | 更新 Drawable |
+
+旧 Lua UI API 不再注册到用户侧：`ui.button.create()`、`ui.button.draw()`、`ui.button.get_screen()`、`ui.slider.create()`、`ui.slider.draw()`、`ui.slider.get_screen()`，以及所有 `button:xxx()` / `slider:xxx()` setter、callback、delete 方法。
+
+## 10. UI 示例
+
+### 10.1 单按钮
+
+```lua
+function init(self)
+  self.children = ui.button({
+    id = "run",
+    text = "Run",
+    rect = { 24, 24, 120, 48 },
+    input = "run",
+    style = {
+      bg = 0x2D8CFF,
+      text = 0xFFFFFF,
+      radius = 8,
+    },
+  })
+end
 
 function on_input(self, action_id, action)
-  if action_id == "ok" and action.event == "clicked" then
-    print("clicked")
+  if action_id == "run" then
+    print("run", action.event)
   end
 end
 ```
 
-### 8.5 UI 回调兼容说明
-
-`set_callback(callback)` 会保存 Lua 回调引用，作为 legacy 兼容路径保留。传入 `nil` 可清除 Lua 回调，但不会移除控件的 LVGL 事件描述符，因为该描述符还负责投递 `on_input`。
-
-当前兼容回调实现把第一个参数压成 lightuserdata，不是带 metatable 的 Lua 控件对象。因此不应依赖 `obj:set_text(...)` 这种写法，除非 C 侧改为传回完整 userdata。
-
-需要使用兼容回调时，推荐在 Lua 侧用闭包捕获控件对象：
+### 10.2 按钮 + 滑块
 
 ```lua
-local btn = ui.button.draw(nil, 20, 20, 120, 50, "OK")
+function init(self)
+  self.state = {
+    volume = 128,
+  }
 
-btn:set_callback(function(_, event)
-  if event == "clicked" then
-    btn:set_text("Clicked")
+  self.children = {
+    ui.button({
+      id = "run",
+      text = "Run",
+      rect = { 24, 24, 120, 48 },
+      input = "run",
+    }),
+
+    ui.slider({
+      id = "volume",
+      rect = { 24, 90, 220, 24 },
+      range = { 0, 255 },
+      value = self.state.volume,
+      input = "volume",
+    }),
+  }
+end
+
+function on_input(self, action_id, action)
+  if action_id == "volume" and action.event == "changed" then
+    self.state.volume = action.value
+    print("volume", self.state.volume)
   end
-end)
-```
-
-事件字符串转换函数已覆盖：
-
-| 事件字符串 |
-| --- |
-| `"clicked"` |
-| `"pressed"` |
-| `"pressing"` |
-| `"released"` |
-| `"long_pressed"` |
-| `"value_changed"` |
-| `"unknown"` |
-
-## 9. ui.button API
-
-### 9.1 模块函数
-
-#### `ui.button.create(parent?) -> button`
-
-创建按钮。默认父对象为当前活动屏幕。
-
-```lua
-local btn = ui.button.create()
-```
-
-#### `ui.button.draw(parent?, x?, y?, width?, height?, text?) -> button`
-
-创建按钮并设置位置、尺寸和文本。
-
-默认值：
-
-| 参数 | 默认值 |
-| --- | ---: |
-| `x` | `0` |
-| `y` | `0` |
-| `width` | `100` |
-| `height` | `50` |
-| `text` | `"Button"` |
-
-```lua
-local btn = ui.button.draw(nil, 20, 30, 120, 48, "Start")
-```
-
-#### `ui.button.get_screen() -> screen`
-
-返回当前活动屏幕 lightuserdata，可作为父对象传给 `create()` / `draw()`。
-
-```lua
-local scr = ui.button.get_screen()
-```
-
-### 9.2 按钮对象方法
-
-#### `button:set_text(text)`
-
-设置按钮文本。若按钮还没有 label，会自动创建并居中。
-
-```lua
-btn:set_text("Run")
-```
-
-#### `button:set_size(width, height)`
-
-设置按钮尺寸。
-
-```lua
-btn:set_size(150, 60)
-```
-
-#### `button:set_pos(x, y)`
-
-设置按钮坐标。
-
-```lua
-btn:set_pos(20, 30)
-```
-
-#### `button:align(align_type, x_offset?, y_offset?)`
-
-按 LVGL 对齐方式定位按钮。偏移默认值为 `0`。
-
-```lua
-btn:align("center", 0, -50)
-```
-
-#### `button:set_style_bg_color(color, alpha?)`
-
-设置按钮背景色和透明度。
-
-```lua
-btn:set_style_bg_color(0x2196F3, 255)
-```
-
-#### `button:set_style_text_color(color)`
-
-设置按钮文本颜色。该方法只在 label 已存在时生效，所以应先调用 `set_text()`，或使用 `draw()` 创建带文本的按钮。
-
-```lua
-btn:set_text("OK")
-btn:set_style_text_color(0xFFFFFF)
-```
-
-#### `button:set_style_border(color, width?)`
-
-设置按钮边框颜色和宽度。`width` 默认 `1`。
-
-```lua
-btn:set_style_border(0x1976D2, 2)
-```
-
-#### `button:set_style_radius(radius)`
-
-设置按钮圆角半径。
-
-```lua
-btn:set_style_radius(8)
-```
-
-#### `button:add_flag(flag_name)`
-
-添加 LVGL 对象 flag。
-
-支持的字符串：
-
-| flag |
-| --- |
-| `"hidden"` |
-| `"clickable"` |
-| `"checkable"` |
-| `"scrollable"` |
-| `"press_lock"` |
-
-未知字符串会被忽略。
-
-```lua
-btn:add_flag("checkable")
-```
-
-#### `button:clear_flag(flag_name)`
-
-移除 LVGL 对象 flag。
-
-```lua
-btn:clear_flag("hidden")
-```
-
-#### `button:set_checkable(enable)`
-
-启用或关闭可选中状态。
-
-```lua
-btn:set_checkable(true)
-btn:set_checkable(false)
-```
-
-注意：不要用 `0` 表示 false。
-
-#### `button:is_checked() -> boolean`
-
-返回按钮是否处于 `LV_STATE_CHECKED` 状态。
-
-```lua
-if btn:is_checked() then
-  -- checked
 end
 ```
 
-#### `button:set_callback(callback_or_nil)`
-
-设置或清除按钮 legacy 事件回调。新脚本优先使用 `button:set_input_id()` 配合 `on_input()`。
+### 10.3 通过 id 更新 UI
 
 ```lua
-btn:set_callback(function(obj, event)
-  -- obj 当前是 lightuserdata，建议用闭包里的 btn 操作控件
-end)
-
-btn:set_callback(nil) -- 清除回调
+function on_input(self, action_id, action)
+  if action_id == "run" and action.event == "clicked" then
+    ui.patch(self, "run", {
+      text = "Running",
+      style = {
+        bg = 0x00AA00,
+      },
+    })
+  end
+end
 ```
-
-#### `button:set_input_id(action_id)`
-
-设置按钮投递到 `on_input(self, action_id, action)` 的动作 ID。`action_id` 必须非空且最长 23 字节。
-
-```lua
-btn:set_input_id("send")
-```
-
-#### `button:delete()`
-
-删除按钮对象并释放保存的 Lua 回调引用。
-
-```lua
-btn:delete()
-```
-
-删除后继续调用该对象方法会抛出 Lua 错误。
-
-## 10. ui.slider API
-
-### 10.1 模块函数
-
-#### `ui.slider.create(parent?) -> slider`
-
-创建滑块。默认父对象为当前活动屏幕。
-
-```lua
-local slider = ui.slider.create()
-```
-
-#### `ui.slider.draw(parent?, x?, y?, width?, height?) -> slider`
-
-创建滑块并设置位置和尺寸。
-
-默认值：
-
-| 参数 | 默认值 |
-| --- | ---: |
-| `x` | `0` |
-| `y` | `0` |
-| `width` | `200` |
-| `height` | `20` |
-
-```lua
-local slider = ui.slider.draw(nil, 20, 100, 200, 20)
-```
-
-#### `ui.slider.get_screen() -> screen`
-
-返回当前活动屏幕 lightuserdata，可作为父对象传给 `create()` / `draw()`。
-
-```lua
-local scr = ui.slider.get_screen()
-```
-
-### 10.2 滑块对象方法
-
-#### `slider:set_size(width, height)`
-
-设置滑块尺寸。
-
-```lua
-slider:set_size(200, 20)
-```
-
-#### `slider:set_pos(x, y)`
-
-设置滑块坐标。
-
-```lua
-slider:set_pos(20, 100)
-```
-
-#### `slider:align(align_type, x_offset?, y_offset?)`
-
-按 LVGL 对齐方式定位滑块。偏移默认值为 `0`。
-
-```lua
-slider:align("center", 0, 50)
-```
-
-#### `slider:set_range(min, max)`
-
-设置滑块数值范围。
-
-```lua
-slider:set_range(0, 100)
-```
-
-#### `slider:set_value(value, anim)`
-
-设置滑块当前值。
-
-```lua
-slider:set_value(50, true)
-slider:set_value(0, false)
-```
-
-`anim` 使用 Lua 真值，建议传 `true` / `false`。
-
-#### `slider:get_value() -> integer`
-
-读取滑块当前值。
-
-```lua
-local value = slider:get_value()
-```
-
-#### `slider:set_style_bg_color(color, alpha?)`
-
-设置滑块主体背景色和透明度。
-
-```lua
-slider:set_style_bg_color(0xEEEEEE, 255)
-```
-
-#### `slider:set_style_indicator_color(color, alpha?)`
-
-设置滑块已填充指示条颜色和透明度。
-
-```lua
-slider:set_style_indicator_color(0xFFC107, 255)
-```
-
-#### `slider:set_style_knob_color(color, alpha?)`
-
-设置滑块旋钮颜色和透明度。
-
-```lua
-slider:set_style_knob_color(0xFF9800, 255)
-```
-
-#### `slider:set_style_border(color, width?)`
-
-设置滑块主体边框颜色和宽度。`width` 默认 `1`。
-
-```lua
-slider:set_style_border(0xBDBDBD, 1)
-```
-
-#### `slider:set_style_radius(radius)`
-
-设置滑块主体、指示条、旋钮的圆角半径。
-
-```lua
-slider:set_style_radius(10)
-```
-
-#### `slider:set_callback(callback_or_nil)`
-
-设置或清除滑块 legacy 事件回调。新脚本优先使用 `slider:set_input_id()` 配合 `on_input()`。
-
-```lua
-slider:set_callback(function(obj, event)
-  -- obj 当前是 lightuserdata，建议用闭包里的 slider 操作控件
-end)
-
-slider:set_callback(nil) -- 清除回调
-```
-
-#### `slider:set_input_id(action_id)`
-
-设置滑块投递到 `on_input(self, action_id, action)` 的动作 ID。`action_id` 必须非空且最长 23 字节。
-
-```lua
-slider:set_input_id("volume")
-```
-
-#### `slider:delete()`
-
-删除滑块对象并释放保存的 Lua 回调引用。
-
-```lua
-slider:delete()
-```
-
-删除后继续调用该对象方法会抛出 Lua 错误。
 
 ## 11. 示例
 
@@ -845,32 +607,47 @@ function update(self, dt)
 end
 ```
 
-### 11.3 创建按钮和滑块
+### 11.2 创建按钮和滑块
 
 ```lua
-local btn
-local slider
-
 function init(self)
-  btn = ui.button.draw(nil, 20, 20, 140, 50, "Start")
-  btn:set_input_id("start")
-  btn:set_style_bg_color(0x2196F3, 255)
-  btn:set_style_text_color(0xFFFFFF)
-  btn:set_style_radius(8)
+  self.state = {
+    level = 50,
+  }
 
-  slider = ui.slider.draw(nil, 20, 100, 200, 20)
-  slider:set_input_id("level")
-  slider:set_range(0, 100)
-  slider:set_value(50, false)
-  slider:set_style_indicator_color(0xFFC107, 255)
-  slider:set_style_knob_color(0xFF9800, 255)
+  self.children = {
+    ui.button({
+      id = "start",
+      text = "Start",
+      rect = { 20, 20, 140, 50 },
+      input = "start",
+      style = {
+        bg = 0x2196F3,
+        text = 0xFFFFFF,
+        radius = 8,
+      },
+    }),
+
+    ui.slider({
+      id = "level",
+      rect = { 20, 100, 200, 20 },
+      range = { 0, 100 },
+      value = self.state.level,
+      input = "level",
+      style = {
+        indicator = 0xFFC107,
+        knob = 0xFF9800,
+      },
+    }),
+  }
 end
 
 function on_input(self, action_id, action)
   if action_id == "start" and action.event == "clicked" then
     print("start")
-  elseif action_id == "level" and action.event == "value_changed" then
-    print("level", action.value)
+  elseif action_id == "level" and action.event == "changed" then
+    self.state.level = action.value
+    print("level", self.state.level)
   end
 end
 ```
@@ -880,6 +657,6 @@ end
 - 当前只打开 `_G` / `coroutine` / `table` / `string` / `math` / `utf8`，没有打开 `io`、`os`、`package`、`debug`。
 - `gpio.write()` 的第三个参数请使用 `true` / `false`，数字 `0` 在 Lua 中仍为真值。
 - GPIO 端口推荐使用 `"B"`、`"PB"` 或 `gpio.PORTB`；当前不要使用 `"GPIOB"` 这种字符串。
-- UI 控件创建后会默认挂接 LVGL 事件并投递到 `on_input()`；`set_callback()` 只是 legacy 兼容回调。
-- UI 事件回调当前 C 代码传入的是 lightuserdata，不是可直接调用方法的 Lua 控件 userdata。
+- UI 控件创建后会默认挂接 LVGL 事件并投递到 `on_input()`；脚本通过 `self.children` 声明 UI 树。
+- 宿主会在 `final(self)` 返回后自动递归删除 `self.children`。
 - `delay()` 在生命周期回调中是协程非阻塞延时；`tim.delay_us()` 仍是忙等阻塞调用。
