@@ -68,6 +68,31 @@ build/Debug/cartdesk-os.map
 
 构建结束后，如果本机能找到 Python 3，CMake 会自动解析 map 文件并打印 SDRAM 各分区的静态使用情况。
 
+### Host LuaVM 工具
+
+固件预设使用 `arm-none-eabi-gcc` 交叉编译。PC 端 `luavm` 工具通过独立的 host CMake 子构建生成，复用 `Core/LuaPort/src` 里的同版本 Lua 源码，不会加入 STM32 固件镜像。
+
+```sh
+cmake --build build/Debug --target luavm_tool
+cmake --build build/Debug --target copy_luavm_to_packer
+```
+
+工具产物路径：
+
+```text
+build/host_tools/bin/luavm
+packer/tools/luavm
+```
+
+Windows 下文件名为 `luavm.exe`。
+
+常用命令：
+
+```sh
+build/host_tools/bin/luavm --compile input.lua output.luac
+build/host_tools/bin/luavm --check script.lua
+```
+
 ## 运行入口
 
 固件启动后的主要路径如下：
@@ -81,18 +106,18 @@ Core/Src/main.c
       -> lv_port_indev_init()
       -> LCD_DisplayON()
       -> Launcher_Init()
-      -> 创建 Lua 任务
       -> 周期调用 lvgl_task_handler()
+      -> 周期调用 Task_LUA()，未点击卡带槽时不会初始化 Lua VM
 ```
 
-`Launcher_Init()` 会创建启动器页面，并尝试从 `0:/cart.bin` 读取第一个卡带槽的标题和预览图。点击卡带槽后，Lua 任务通过 `Task_LUA_StartCart("0:/cart.bin")` 请求启动脚本。
+`Launcher_Init()` 会创建启动器页面，并尝试从 `0:/cart.bin` 读取第一个卡带槽的标题和预览图。开机默认不创建 Lua VM；点击卡带槽后，启动器会显示启动状态，`Task_LUA_StartCart("0:/cart.bin")` 会请求启动脚本，随后 `Task_LUA()` 从 `cart.bin` 的 ENTRY 段加载 luac 并启动 Lua 运行时。
 
 ## cart.bin
 
 `cart.bin` 是项目里的“卡带镜像”。当前固件会从 SD 卡根目录读取：
 
 - Header 里的标题字段，用于 launcher 显示。
-- 200x200 ARGB8888 预览图，用于启动器卡槽图标。
+- 200x200 BGRA8888 预览图，用于启动器卡槽图标。
 - ENTRY/INDEX/DATA 等段，用于 Lua 入口脚本和资源扩展。
 
 格式细节见 [Docs/cart/XHGC_cart_bin_v2_格式规范.md](Docs/cart/XHGC_cart_bin_v2_格式规范.md)。

@@ -116,6 +116,7 @@ static void build_valid_image(uint8_t *image)
 {
     const char main_lua[] = "print('hello xhgc')\n";
     const char readme[] = "readme";
+    const char min_fw[] = "2026.06.07-fw-compat-v2";
     uint32_t cursor;
     uint8_t *manf = image + TEST_MANF_OFF;
     uint8_t *index = image + TEST_INDEX_OFF;
@@ -136,7 +137,7 @@ static void build_valid_image(uint8_t *image)
     put_fixed(image + 0x009Cu, XHGC_CART_PUBLISHER_SIZE, "Nixie Studio");
     put_fixed(image + 0x00DCu, XHGC_CART_VERSION_SIZE, "0.1.0");
     put_fixed(image + 0x00FCu, XHGC_CART_ENTRY_SIZE, "app/main.lua");
-    put_fixed(image + 0x017Cu, XHGC_CART_MIN_FW_SIZE, "0.8.0");
+    put_fixed(image + 0x017Cu, XHGC_CART_MIN_FW_SIZE, min_fw);
 
     wr32(manf, 0x464E414Du);
     wr32(manf + 4u, 1u);
@@ -149,7 +150,7 @@ static void build_valid_image(uint8_t *image)
     cursor = put_manf_string(manf, table, 3u, 0x04u, cursor, "0.1.0");
     cursor = put_manf_u64(manf, table, 4u, 0x05u, cursor, 0x0123456789ABCDEFULL);
     cursor = put_manf_string(manf, table, 5u, 0x06u, cursor, "app/main.lua");
-    cursor = put_manf_string(manf, table, 6u, 0x07u, cursor, "0.8.0");
+    cursor = put_manf_string(manf, table, 6u, 0x07u, cursor, min_fw);
     manf_size = cursor;
     wr32(manf + 8u, manf_size);
 
@@ -208,6 +209,7 @@ static void test_valid_header_and_manf(void)
     EXPECT_EQ_INT(rc, XHGC_CART_OK);
     EXPECT_STREQ(cart.header.title, "Hatsune Miku");
     EXPECT_STREQ(cart.header.entry, "app/main.lua");
+    EXPECT_STREQ(cart.header.min_fw, "2026.06.07-fw-compat-v2");
     EXPECT_TRUE(cart.header.cart_id == 0x0123456789ABCDEFULL);
 
     rc = xhgc_cart_read_manf(&cart, &manf);
@@ -216,6 +218,7 @@ static void test_valid_header_and_manf(void)
     EXPECT_STREQ(manf.publisher, "Nixie Studio");
     EXPECT_STREQ(manf.version, "0.1.0");
     EXPECT_STREQ(manf.entry, "app/main.lua");
+    EXPECT_STREQ(manf.min_fw, "2026.06.07-fw-compat-v2");
     EXPECT_TRUE(manf.cart_id == 0x0123456789ABCDEFULL);
 }
 

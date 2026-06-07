@@ -56,25 +56,30 @@
 #include "flash.h"
 #include "lfs_port.h"
 
-#define CARTDESK_RUN_LUA_VM_ONLY 1
+#define CARTDESK_RUN_LUA_VM_ONLY 0
+#define CARTDESK_ENABLE_QSPI_STORAGE 0
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
 
-#if !CARTDESK_RUN_LUA_VM_ONLY
+#if !CARTDESK_RUN_LUA_VM_ONLY && CARTDESK_ENABLE_QSPI_STORAGE
 static FLASH_Handle g_flash;
+#endif
+#if !CARTDESK_RUN_LUA_VM_ONLY
 static const osThreadAttr_t lvgl_task_attributes = {
   .name = "lvgl",
   .priority = osPriorityAboveNormal,
   .stack_size = 8192
 };
 #endif
+#if CARTDESK_RUN_LUA_VM_ONLY
 static const osThreadAttr_t lua_task_attributes = {
   .name = "lua",
   .priority = osPriorityNormal,
   .stack_size = 8192
 };
+#endif
 
 /* USER CODE END PTD */
 
@@ -102,7 +107,9 @@ static void MPU_Config(void);
 #if !CARTDESK_RUN_LUA_VM_ONLY
 static void StartLvglTask(void *argument);
 #endif
+#if CARTDESK_RUN_LUA_VM_ONLY
 static void StartLuaTask(void *argument);
+#endif
 
 /* USER CODE END PFP */
 
@@ -110,7 +117,7 @@ static void StartLuaTask(void *argument);
 /* USER CODE BEGIN 0 */
 /* ============================== Storage init ============================== */
 
-#if !CARTDESK_RUN_LUA_VM_ONLY
+#if !CARTDESK_RUN_LUA_VM_ONLY && CARTDESK_ENABLE_QSPI_STORAGE
 static void Storage_InitOrDie(void) {
   /* 1) 绑定 QSPI 句柄（不在这里初始化 QSPI 外设） */
   if (FLASH_Open(&g_flash, &hqspi, 64u * 1024u * 1024u) != FLASH_OK) {
@@ -208,19 +215,15 @@ static void StartLvglTask(void *argument) {
   Launcher_Init();
   // DesignLauncher_Create(lv_display_get_default());
 
-  // lua_init();
-
-  if (osThreadNew(StartLuaTask, NULL, &lua_task_attributes) == NULL) {
-    Error_Handler();
-  }
-
   for (;;) {
     lvgl_task_handler();
+    Task_LUA();
     osDelay(5);
   }
 }
 #endif
 
+#if CARTDESK_RUN_LUA_VM_ONLY
 static void StartLuaTask(void *argument) {
   (void) argument;
 
@@ -235,6 +238,7 @@ static void StartLuaTask(void *argument) {
     osDelay(5);
   }
 }
+#endif
 
 /* USER CODE END 0 */
 
@@ -300,10 +304,19 @@ int main(void)
   }
 
   HAL_TIM_Base_Start(&htim17);
+  if (HAL_TIM_Base_Start_IT(&htim16) != HAL_OK) {
+    Error_Handler();
+  }
 
+#if CARTDESK_RUN_LUA_VM_ONLY
   if (osThreadNew(StartLuaTask, NULL, &lua_task_attributes) == NULL) {
     Error_Handler();
   }
+#else
+  if (osThreadNew(StartLvglTask, NULL, &lvgl_task_attributes) == NULL) {
+    Error_Handler();
+  }
+#endif
 
   if (osKernelStart() != osOK) {
     Error_Handler();

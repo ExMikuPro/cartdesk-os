@@ -35,7 +35,7 @@
 | 区段 | 起始偏移 | 结束偏移 | 大小 | 用途 |
 |---|---:|---:|---:|---|
 | HEADER | `0x0000_0000` | `0x0000_0FFF` | 4096 | 元信息 + 映射表 + Header CRC |
-| ICON（ARGB8888, 200×200） | `0x0000_1000` | `0x0002_80FF` | 160000 | launcher 图标原始像素 |
+| ICON（BGRA8888, 200×200） | `0x0000_1000` | `0x0002_80FF` | 160000 | launcher 图标原始像素 |
 | PADDING | `0x0002_8100` | `…` | 到 4KB 对齐 | 预留给后续段 |
 
 ### 3.1 对齐规则
@@ -94,7 +94,7 @@ typedef struct __attribute__((packed)) {
 
 | slot | 表内偏移 | 名称 | 用途 |
 |---:|---:|---|---|
-| 0 | `0x0F00` | ICON | 200×200 ARGB8888 图标 |
+| 0 | `0x0F00` | ICON | 200×200 BGRA8888 图标 |
 | 1 | `0x0F10` | THMB | 缩略图（可选） |
 | 2 | `0x0F20` | MANF | manifest（JSON/CBOR，可选） |
 | 3 | `0x0F30` | ENTRY | 入口脚本数据块（可选：若不走文件路径） |
@@ -146,10 +146,10 @@ typedef struct __attribute__((packed)) {
 ### 7.1 ICON（slot0）
 
 - 尺寸固定：`200 × 200`
-- 像素格式：`ARGB8888`
+- 像素格式：`BGRA8888`
 - 存储顺序：
   - row-major：从上到下、从左到右
-  - 每像素 4 bytes：`A, R, G, B`（建议 A=0xFF 表示不透明；也可存真实透明度）
+  - 每像素 4 bytes：`B, G, R, A`（建议 A=0xFF 表示不透明；也可存真实透明度）
 - 大小固定：`200*200*4 = 160000` bytes
 
 ### 7.2 TITLE_A8（slot8，可选）
@@ -176,8 +176,8 @@ typedef struct __attribute__((packed)) {
 - `f_lseek(0x0F00)` 读 16 bytes 得到 slot0（ICON）
 - `f_lseek(icon_offset)`
 - 按行读取 `200*4 = 800` bytes（共 200 行）
-- 若 framebuffer/LTDC layer 使用 ARGB8888：可直接写到 framebuffer
-- 否则：写入 ARGB8888 缓冲再交给 LVGL，或在写入时做像素格式转换
+- 若 framebuffer/LTDC layer 使用 BGRA8888 字节顺序：可直接写到 framebuffer
+- 否则：写入 BGRA8888 缓冲再交给 LVGL，或在写入时做像素格式转换
 
 > 若 framebuffer 在 cacheable SDRAM，写完后需要 clean DCache（否则 LTDC 可能看不到更新）。
 
@@ -212,4 +212,4 @@ typedef struct __attribute__((packed)) {
 
 ## 10. 版本记录
 
-- v2.1：在 v2 基础上修订 ICON 段为 ARGB8888（200×200，160000B），其余布局不变。
+- v2.1：在 v2 基础上修订 ICON 段为 BGRA8888（200×200，160000B），其余布局不变。

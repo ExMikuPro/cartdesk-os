@@ -90,6 +90,7 @@ static lv_obj_t *s_slots[DESIGN_APP_COUNT];
 static lv_obj_t *s_slot_labels[DESIGN_APP_COUNT];
 static lv_obj_t *s_circles[DESIGN_CIRCLE_COUNT];
 static lv_obj_t *s_circle_labels[DESIGN_CIRCLE_COUNT];
+static lv_obj_t *s_status_label = NULL;
 
 /*
  * 每个槽独立的 LVGL 图像描述符。
@@ -128,6 +129,21 @@ static void prv_uart_log_clicked_app(int index, const char *title)
 
     snprintf(buf, sizeof(buf), "[launcher] clicked app %d: %s\r\n", index, title);
     prv_uart_write(buf);
+}
+
+static void prv_set_status_text(const char *text)
+{
+    if (s_status_label == NULL) {
+        return;
+    }
+
+    if (text == NULL || text[0] == '\0') {
+        lv_obj_add_flag(s_status_label, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+
+    lv_label_set_text(s_status_label, text);
+    lv_obj_remove_flag(s_status_label, LV_OBJ_FLAG_HIDDEN);
 }
 
 /* ------------------------------------------------------------------ */
@@ -224,6 +240,9 @@ static void prv_box_clicked_cb(lv_event_t *e)
     }
 
     if (clicked_index == 0) {
+        prv_set_status_text(Task_LUA_IsRunning()
+                            ? "Lua is already running"
+                            : "Launching cart.bin...");
         Task_LUA_StartCart("0:/cart.bin");
     }
 }
@@ -349,6 +368,19 @@ static void prv_create_divider_line(lv_obj_t *parent)
     lv_obj_set_style_border_width(line, 0, 0);
 }
 
+static void prv_create_status_label(lv_obj_t *parent)
+{
+    s_status_label = lv_label_create(parent);
+    lv_label_set_text(s_status_label, "");
+    lv_obj_set_style_text_color(s_status_label, lv_color_hex(COLOR_CYAN), 0);
+    lv_obj_set_style_text_font(s_status_label, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_align(s_status_label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_label_set_long_mode(s_status_label, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(s_status_label, SCREEN_W - 80);
+    lv_obj_set_pos(s_status_label, 40, LINE_Y + 16);
+    lv_obj_add_flag(s_status_label, LV_OBJ_FLAG_HIDDEN);
+}
+
 /* ------------------------------------------------------------------ */
 /*  公开 API                                                            */
 /* ------------------------------------------------------------------ */
@@ -433,6 +465,7 @@ void DesignLauncher_Create(lv_display_t *disp)
     prv_create_box_area(s_main_container);
     prv_create_circle_area(s_main_container);
     prv_create_divider_line(s_main_container);
+    prv_create_status_label(s_main_container);
 
     s_selected_index = 0;
 }
@@ -454,6 +487,7 @@ void DesignLauncher_Destroy(void)
         lv_obj_delete(s_main_container);
         s_main_container = NULL;
     }
+    s_status_label = NULL;
     /*
      * SDRAM 图片槽是固定 launcher cache 分区，不需要 free。
      * 如果将来需要复用这段地址，在这里清零即可：

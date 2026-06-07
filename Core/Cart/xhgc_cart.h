@@ -29,7 +29,7 @@ extern "C" {
 #define XHGC_CART_PUBLISHER_SIZE       64u
 #define XHGC_CART_VERSION_SIZE         32u
 #define XHGC_CART_ENTRY_SIZE           128u
-#define XHGC_CART_MIN_FW_SIZE          16u
+#define XHGC_CART_MIN_FW_SIZE          32u
 
 typedef enum {
     XHGC_CART_SLOT_ICON      = 0,
