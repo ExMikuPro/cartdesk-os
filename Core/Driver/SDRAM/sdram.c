@@ -8,7 +8,7 @@ uint32_t timer;
 uint32_t write_timer = 0, read_time = 0;
 
 static size_t s_dma_pool_offset = 0;
-static size_t s_app_arena_offset = 0;
+static size_t s_resource_arena_offset = 0;
 
 static int sdram_range_tightly_follows(uintptr_t prev_end, uintptr_t next_base)
 {
@@ -80,15 +80,19 @@ void sdram_layout_check(void)
     if (!sdram_range_aligned(SDRAM_LVGL_HEAP_BASE, SDRAM_LVGL_HEAP_END, SDRAM_DEFAULT_ALIGN) ||
         !sdram_range_aligned(SDRAM_LAUNCHER_CACHE_BASE, SDRAM_LAUNCHER_CACHE_END, SDRAM_DEFAULT_ALIGN) ||
         !sdram_range_aligned(SDRAM_APP_ARENA_BASE, SDRAM_APP_ARENA_END, SDRAM_DEFAULT_ALIGN) ||
+        !sdram_range_aligned(LUA_HEAP_BASE, LUA_HEAP_END, SDRAM_DEFAULT_ALIGN) ||
         !sdram_range_aligned(RESOURCE_ARENA_BASE, RESOURCE_ARENA_END, SDRAM_DEFAULT_ALIGN) ||
         !sdram_range_aligned(COLD_POOL_BASE, COLD_POOL_END, SDRAM_DEFAULT_ALIGN)) {
         Error_Handler();
     }
 
-    if (!sdram_addr_in_app_arena(RESOURCE_ARENA_BASE) ||
+    if (!sdram_addr_in_app_arena(LUA_HEAP_BASE) ||
+        !sdram_addr_in_app_arena(LUA_HEAP_END) ||
+        !sdram_addr_in_app_arena(RESOURCE_ARENA_BASE) ||
         !sdram_addr_in_app_arena(RESOURCE_ARENA_END) ||
         !sdram_addr_in_app_arena(COLD_POOL_BASE) ||
         !sdram_addr_in_app_arena(COLD_POOL_END) ||
+        !sdram_range_tightly_follows(LUA_HEAP_END, RESOURCE_ARENA_BASE) ||
         RESOURCE_ARENA_END >= COLD_POOL_BASE) {
         Error_Handler();
     }
@@ -312,20 +316,27 @@ size_t SDRAM_DmaPoolFree(void)
 
 void *SDRAM_AppArenaAlloc(size_t size, size_t align)
 {
-    return sdram_linear_alloc(RESOURCE_ARENA_BASE, RESOURCE_ARENA_SIZE, &s_app_arena_offset, size, align);
+    return sdram_linear_alloc(RESOURCE_ARENA_BASE, RESOURCE_ARENA_SIZE,
+                              &s_resource_arena_offset, size, align);
 }
 
 void SDRAM_AppArenaReset(void)
 {
-    s_app_arena_offset = 0;
+    if (RESOURCE_ARENA_BASE <= LUA_HEAP_END ||
+        !sdram_range_tightly_follows(LUA_HEAP_END, RESOURCE_ARENA_BASE)) {
+        Error_Handler();
+        return;
+    }
+
+    s_resource_arena_offset = 0;
 }
 
 size_t SDRAM_AppArenaUsed(void)
 {
-    return s_app_arena_offset;
+    return s_resource_arena_offset;
 }
 
 size_t SDRAM_AppArenaFree(void)
 {
-    return RESOURCE_ARENA_SIZE - s_app_arena_offset;
+    return RESOURCE_ARENA_SIZE - s_resource_arena_offset;
 }

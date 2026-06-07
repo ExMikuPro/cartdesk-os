@@ -5,17 +5,15 @@
 
 #include "sdram.h"
 
-#ifndef LUA_VM_HEAP_SIZE
-#define LUA_VM_HEAP_SIZE (2u * 1024u * 1024u)
-#endif
-
 #define LUA_VM_ALLOC_ALIGN 32u
 #define LUA_VM_BLOCK_FREE  1u
 #define LUA_VM_BLOCK_USED  0u
 #define LUA_VM_BLOCK_MAGIC 0x4C55414Du
 
-_Static_assert(LUA_VM_HEAP_SIZE <= RESOURCE_ARENA_SIZE,
-               "Lua VM heap must fit inside SDRAM resource arena");
+_Static_assert((LUA_HEAP_BASE % LUA_VM_ALLOC_ALIGN) == 0u,
+               "Lua heap base must satisfy allocator alignment");
+_Static_assert(LUA_HEAP_SIZE > sizeof(void *),
+               "Lua heap must be large enough for allocator metadata");
 
 typedef struct lua_vm_block {
     size_t size;
@@ -149,12 +147,8 @@ static void lua_vm_release(LuaVmAllocator *allocator, void *ptr)
 int lua_vm_memory_init(void)
 {
     if (g_lua_allocator.base == NULL) {
-        g_lua_allocator.base =
-            SDRAM_AppArenaAlloc(LUA_VM_HEAP_SIZE, LUA_VM_ALLOC_ALIGN);
-        if (g_lua_allocator.base == NULL) {
-            return -1;
-        }
-        g_lua_allocator.capacity = LUA_VM_HEAP_SIZE;
+        g_lua_allocator.base = (uint8_t *)LUA_HEAP_BASE;
+        g_lua_allocator.capacity = LUA_HEAP_SIZE;
     }
 
     memset(g_lua_allocator.base, 0, sizeof(lua_vm_block_t));

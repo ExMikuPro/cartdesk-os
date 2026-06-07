@@ -31,7 +31,8 @@ void SDRAM_Init(void);
  * @brief Validate the fixed SDRAM partition layout and APP_ARENA_REST split.
  *
  * Call after SDRAM initialization succeeds and before SDRAM-backed allocators
- * are used. The function enters Error_Handler() if any boundary or alignment
+ * are used. LUA_HEAP is reserved separately and resource arena reset cannot
+ * reclaim it. The function enters Error_Handler() if any boundary or alignment
  * check fails.
  */
 void sdram_layout_check(void);
@@ -48,6 +49,7 @@ void SDRAM_DmaPoolReset(void);
 size_t SDRAM_DmaPoolUsed(void);
 size_t SDRAM_DmaPoolFree(void);
 
+/* Backward-compatible API names; these functions operate on RESOURCE_ARENA only. */
 void *SDRAM_AppArenaAlloc(size_t size, size_t align);
 void SDRAM_AppArenaReset(void);
 size_t SDRAM_AppArenaUsed(void);

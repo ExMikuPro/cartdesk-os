@@ -19,6 +19,7 @@ SDRAM_REGION_NAMES = (
 )
 
 COLD_POOL_SIZE = 0x00800000
+LUA_HEAP_SIZE = 0x00200000
 
 
 def parse_int(value: str) -> int:
@@ -128,8 +129,10 @@ def main() -> int:
 
     app_origin, app_length = regions["SDRAM_APP_ARENA"]
     app_end = app_origin + app_length - 1
+    lua_heap_base = app_origin
+    lua_heap_end = lua_heap_base + LUA_HEAP_SIZE - 1
     cold_base = app_end + 1 - COLD_POOL_SIZE
-    resource_base = app_origin
+    resource_base = lua_heap_end + 1
     resource_end = cold_base - 1
     resource_size = resource_end - resource_base + 1
 
@@ -157,9 +160,10 @@ def main() -> int:
     print(f"  LVGL_HEAP window  {fmt_size(regions['SDRAM_LVGL_HEAP'][1]):>10}  0x{regions['SDRAM_LVGL_HEAP'][0]:08X}-0x{regions['SDRAM_LVGL_HEAP'][0] + regions['SDRAM_LVGL_HEAP'][1] - 1:08X}")
     print(f"  DMA_POOL window   {fmt_size(regions['SDRAM_DMA_POOL'][1]):>10}  0x{regions['SDRAM_DMA_POOL'][0]:08X}-0x{regions['SDRAM_DMA_POOL'][0] + regions['SDRAM_DMA_POOL'][1] - 1:08X}")
     print(f"  LAUNCHER_CACHE    {fmt_size(regions['SDRAM_LAUNCHER'][1]):>10}  static used {fmt_size(usage['SDRAM_LAUNCHER'])}")
+    print(f"  LUA_HEAP          {fmt_size(LUA_HEAP_SIZE):>10}  0x{lua_heap_base:08X}-0x{lua_heap_end:08X}")
     print(f"  RESOURCE_ARENA    {fmt_size(resource_size):>10}  0x{resource_base:08X}-0x{resource_end:08X}")
     print(f"  COLD_POOL         {fmt_size(COLD_POOL_SIZE):>10}  0x{cold_base:08X}-0x{app_end:08X}")
-    print("Note: runtime allocations from DMA_POOL/RESOURCE_ARENA/COLD_POOL are not visible in the map.")
+    print("Note: runtime allocations inside LUA_HEAP/DMA_POOL/RESOURCE_ARENA/COLD_POOL are not visible in the map.")
     print("=================================")
     print("")
     return 0
