@@ -256,7 +256,9 @@ target_link_libraries(drv_gpio PUBLIC cartdesk_common)
 # ==============================================================================
 add_library(lua_port STATIC
         ${CORE_INC_DIR}/lua_vm.h
+        ${CORE_INC_DIR}/lua_vm_memory.h
         ${CORE_SRC_DIR}/lua_vm.c
+        ${CORE_SRC_DIR}/lua_vm_memory.c
         ${LUA_PORT_DIR}/lua_port.c
         ${LUA_PORT_DIR}/modules/lua_gpio.c
         ${LUA_PORT_DIR}/modules/lua_pwm.c
@@ -271,6 +273,7 @@ target_include_directories(lua_port PUBLIC
         ${LUA_PORT_DIR}
         ${LUA_PORT_DIR}/modules
         ${CART_DIR}
+        ${DRIVER_DIR}/SDRAM
         ${FATFS_INCLUDES}
 )
 target_link_libraries(lua_port PUBLIC cartdesk_common lua lvgl cart_core drv_gpio)

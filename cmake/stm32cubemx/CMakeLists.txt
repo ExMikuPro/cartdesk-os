@@ -49,6 +49,7 @@ set(MX_Application_Src
     ${CUBEMX_ROOT}/Core/Src/stm32h7xx_it.c
     ${CUBEMX_ROOT}/Core/Src/stm32h7xx_hal_msp.c
     ${CUBEMX_ROOT}/Core/Src/freertos_hooks.c
+    ${CUBEMX_ROOT}/Core/Src/freertos_heap.c
     ${CUBEMX_ROOT}/Core/Src/sysmem.c
     ${CUBEMX_ROOT}/Core/Src/syscalls.c
     ${CUBEMX_ROOT}/startup_stm32h743xx.s

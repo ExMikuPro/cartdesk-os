@@ -277,6 +277,10 @@ int main(void)
   MX_MDMA_Init();
   MX_LTDC_Init();
   MX_FMC_Init();
+  SDRAM_Init();
+  sdram_layout_check();
+  SDRAM_AppArenaReset();
+  cold_pool_init();
   MX_USART1_UART_Init();
   MX_SDMMC1_SD_Init();
   MX_FATFS_Init();

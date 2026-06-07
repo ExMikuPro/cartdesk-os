@@ -8,9 +8,9 @@
 #include "lua.h"
 #include "lauxlib.h"
 #include "lualib.h"
-#include "FreeRTOS.h"
 #include "ff.h"
 #include "lua_port.h"
+#include "lua_vm_memory.h"
 #include "xhgc_cart.h"
 
 #ifndef LUA_RT_PERIOD_MS
@@ -184,9 +184,11 @@ typedef enum {
     LUA_SCHED_MESSAGE,
 } lua_scheduler_phase_t;
 
+__attribute__((section(".ram_runtime"), aligned(32)))
 static lua_script_instance_t g_instances[LUA_RT_MAX_INSTANCES];
 static size_t g_instance_count = 0;
 
+__attribute__((section(".ram_runtime"), aligned(32)))
 static lua_input_event_t g_input_queue[LUA_RT_INPUT_QUEUE_CAPACITY];
 static uint8_t g_input_head = 0;
 static uint8_t g_input_tail = 0;
@@ -194,6 +196,7 @@ static uint8_t g_input_count = 0;
 static lua_input_event_t g_current_input;
 static bool g_has_current_input = false;
 
+__attribute__((section(".ram_runtime"), aligned(32)))
 static lua_message_event_t g_message_queue[LUA_RT_MESSAGE_QUEUE_CAPACITY];
 static uint8_t g_message_head = 0;
 static uint8_t g_message_tail = 0;
@@ -226,29 +229,6 @@ static void lua_rt_openlibs(lua_State *L)
     lua_pop(L, 1);
     luaL_requiref(L, LUA_UTF8LIBNAME, luaopen_utf8, 1);
     lua_pop(L, 1);
-}
-
-static void *lua_rt_alloc(void *ud, void *ptr, size_t old_size, size_t new_size)
-{
-    (void)ud;
-
-    if (new_size == 0u) {
-        if (ptr) vPortFree(ptr);
-        return NULL;
-    }
-
-    if (!ptr) {
-        return pvPortMalloc(new_size);
-    }
-
-    void *new_ptr = pvPortMalloc(new_size);
-    if (!new_ptr) {
-        return NULL;
-    }
-
-    memcpy(new_ptr, ptr, old_size < new_size ? old_size : new_size);
-    vPortFree(ptr);
-    return new_ptr;
 }
 
 /* -------------------- 错误/traceback 工具 -------------------- */
@@ -1155,20 +1135,29 @@ static int lua_rt_init_state(void)
 {
     if (g_L) return 0;
 
-    g_L = lua_newstate(lua_rt_alloc, NULL);
-    if (!g_L) {
-        lua_rt_log("luaL_newstate failed\n");
+    if (lua_vm_memory_init() != 0) {
+        lua_rt_log("Lua SDRAM heap init failed\n");
         return -1;
+    }
+
+    g_L = lua_newstate(lua_vm_alloc, lua_vm_memory_allocator());
+    if (!g_L) {
+        lua_rt_log("lua_newstate failed\n");
+        lua_vm_memory_print_stats();
+        return -2;
     }
 
     lua_rt_openlibs(g_L);
     lua_port_bind(g_L, NULL);
 
     memset(g_instances, 0, sizeof(g_instances));
+    memset(g_input_queue, 0, sizeof(g_input_queue));
+    memset(g_message_queue, 0, sizeof(g_message_queue));
     g_instance_count = 0;
     g_runtime_started = false;
     g_scheduler_phase = LUA_SCHED_IDLE;
     g_fixed_accumulator = 0.0f;
+    lua_vm_memory_print_stats();
     return 0;
 }
 
@@ -1353,6 +1342,7 @@ int lua_shutdown(void)
 
     lua_close(g_L);
     g_L = NULL;
+    lua_vm_memory_print_stats();
     g_instance_count = 0;
     g_runtime_started = false;
     g_input_head = g_input_tail = g_input_count = 0;

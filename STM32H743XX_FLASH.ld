@@ -158,6 +158,17 @@ SECTIONS
     _eLvglHeap = .;
   } >RAM
 
+  /* Large non-DMA runtime state: RTOS heap and Lua scheduler buffers. */
+  .ram_runtime (NOLOAD) :
+  {
+    . = ALIGN(32);
+    _sRamRuntime = .;
+    *(.ram_runtime)
+    *(.ram_runtime*)
+    . = ALIGN(32);
+    _eRamRuntime = .;
+  } >RAM
+
   /* DMA_POOL: DMA专用区  4 MiB  64字节对齐 */
   .sdram_dma_pool (NOLOAD) :
   {
