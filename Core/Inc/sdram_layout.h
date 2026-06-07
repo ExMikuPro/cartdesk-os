@@ -5,7 +5,7 @@
 #include <stdint.h>
 
 /*
- * SDRAM fixed layout defined by Docs/SDRAM_Layout_Spec_v1.0.md
+ * SDRAM fixed layout defined by Docs/memory/SDRAM_Layout_Spec_v1.0.md
  * Physical range: 0xD0000000 ~ 0xD3FFFFFF (64 MiB)
  */
 
@@ -57,14 +57,19 @@
 
 /*
  * APP_ARENA_REST split:
- *   - resource arena grows upward from APP_ARENA_REST base
+ *   - Lua heap owns the low 2 MiB and is never reset by resource arena APIs
+ *   - resource arena grows upward immediately after the Lua heap
  *   - cold pool reserves the high 8 MiB for cold metadata/cache objects
  */
+#define LUA_HEAP_SIZE                 ((uint32_t)0x00200000UL)
+#define LUA_HEAP_BASE                 SDRAM_APP_ARENA_BASE
+#define LUA_HEAP_END                  ((uintptr_t)(LUA_HEAP_BASE + (uintptr_t)LUA_HEAP_SIZE - 1UL))
+
 #define COLD_POOL_SIZE                ((uint32_t)0x00800000UL)
 #define COLD_POOL_END                 SDRAM_APP_ARENA_END
 #define COLD_POOL_BASE                ((uintptr_t)(COLD_POOL_END + 1UL - (uintptr_t)COLD_POOL_SIZE))
 
-#define RESOURCE_ARENA_BASE           SDRAM_APP_ARENA_BASE
+#define RESOURCE_ARENA_BASE           ((uintptr_t)(LUA_HEAP_END + 1UL))
 #define RESOURCE_ARENA_END            ((uintptr_t)(COLD_POOL_BASE - 1UL))
 #define RESOURCE_ARENA_SIZE           ((uint32_t)(RESOURCE_ARENA_END - RESOURCE_ARENA_BASE + 1UL))
 
@@ -106,6 +111,11 @@ static inline int sdram_addr_in_app_arena(uintptr_t addr)
     return sdram_addr_in_range(addr, SDRAM_APP_ARENA_BASE, SDRAM_APP_ARENA_END);
 }
 
+static inline int sdram_addr_in_lua_heap(uintptr_t addr)
+{
+    return sdram_addr_in_range(addr, LUA_HEAP_BASE, LUA_HEAP_END);
+}
+
 static inline int sdram_addr_in_resource_arena(uintptr_t addr)
 {
     return sdram_addr_in_range(addr, RESOURCE_ARENA_BASE, RESOURCE_ARENA_END);
@@ -129,6 +139,10 @@ SDRAM_STATIC_ASSERT(SDRAM_LAYER2_FB0_SIZE == 0x00177000UL, "Layer2_FB0 size mism
 SDRAM_STATIC_ASSERT(SDRAM_LVGL_HEAP_SIZE == 0x01000000UL, "LVGL heap size mismatch");
 SDRAM_STATIC_ASSERT(SDRAM_DMA_POOL_SIZE == 0x00400000UL, "DMA pool size mismatch");
 SDRAM_STATIC_ASSERT(SDRAM_LAUNCHER_CACHE_SIZE == 0x00400000UL, "Launcher cache size mismatch");
+SDRAM_STATIC_ASSERT(LUA_HEAP_BASE == 0xD1C65000UL, "Lua heap base mismatch");
+SDRAM_STATIC_ASSERT(LUA_HEAP_SIZE == 0x00200000UL, "Lua heap size mismatch");
+SDRAM_STATIC_ASSERT(RESOURCE_ARENA_BASE == 0xD1E65000UL, "Resource arena base mismatch");
+SDRAM_STATIC_ASSERT(LUA_HEAP_END < RESOURCE_ARENA_BASE, "Lua heap must not overlap resource arena");
 SDRAM_STATIC_ASSERT(COLD_POOL_BASE > RESOURCE_ARENA_BASE, "Cold pool must be above resource arena");
 
 #undef SDRAM_STATIC_ASSERT

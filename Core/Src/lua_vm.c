@@ -10,6 +10,7 @@
 #include "lualib.h"
 #include "ff.h"
 #include "lua_port.h"
+#include "lua_vm_memory.h"
 #include "xhgc_cart.h"
 
 #ifndef LUA_RT_PERIOD_MS
@@ -17,11 +18,11 @@
 #endif
 
 #ifndef LUA_RT_BOOT_BYTECODE_PATH
-#define LUA_RT_BOOT_BYTECODE_PATH "0:/boot.luac"
+#define LUA_RT_BOOT_BYTECODE_PATH ""
 #endif
 
 #ifndef LUA_RT_BOOT_CART_PATH
-#define LUA_RT_BOOT_CART_PATH "0:/cart.bin"
+#define LUA_RT_BOOT_CART_PATH ""
 #endif
 
 #ifndef LUA_RT_FILE_CHUNK_SIZE
@@ -34,6 +35,30 @@
 
 #ifndef LUA_RT_SD_MOUNT_PATH
 #define LUA_RT_SD_MOUNT_PATH LUA_RT_SD_DRIVE
+#endif
+
+#ifndef LUA_RT_MAX_INSTANCES
+#define LUA_RT_MAX_INSTANCES 4u
+#endif
+
+#ifndef LUA_RT_FIXED_DT
+#define LUA_RT_FIXED_DT (1.0f / 60.0f)
+#endif
+
+#ifndef LUA_RT_MAX_FIXED_STEPS
+#define LUA_RT_MAX_FIXED_STEPS 5u
+#endif
+
+#ifndef LUA_RT_INPUT_QUEUE_CAPACITY
+#define LUA_RT_INPUT_QUEUE_CAPACITY 16u
+#endif
+
+#ifndef LUA_RT_MESSAGE_QUEUE_CAPACITY
+#define LUA_RT_MESSAGE_QUEUE_CAPACITY 16u
+#endif
+
+#ifndef LUA_RT_SOURCE_PATH_MAX
+#define LUA_RT_SOURCE_PATH_MAX 192u
 #endif
 
 /* -------------------- 可覆盖的弱符号：脚本来源、日志、时间源 -------------------- */
@@ -60,83 +85,24 @@ __attribute__((weak))
 const char* lua_get_boot_script(size_t *out_len)
 {
     static const char kScript[] =
-    "-- LVGL 完整测试脚本\n"
+    "-- PA0 input controls the onboard LED on PB1\n"
+    "local BUTTON_PIN = 5\n"
+    "local LED_PIN = 3\n"
     "\n"
-    "-- UI 对象\n"
-    "local btn\n"
-    "local slider\n"
-    "local btn_clicked = false\n"
-    "\n"
-    "-- 初始化函数\n"
-    "function start()\n"
-    "  \n"
-    "  -- 创建按钮\n"
-    "  btn = ui.button.create()\n"
-    "  \n"
-    "  -- 设置按钮文本\n"
-    "  btn:set_text(\"Click Me\")\n"
-    "  \n"
-    "  -- 设置按钮大小\n"
-    "  btn:set_size(150, 60)\n"
-    "  \n"
-    "  -- 设置按钮位置（屏幕中心上方）\n"
-    "  btn:align(\"center\", 0, -50)\n"
-    "  \n"
-    "  -- 设置按钮样式\n"
-    "  btn:set_style_bg_color(0x2196F3, 255)  -- 蓝色背景\n"
-    "  btn:set_style_text_color(0xFFFFFF)     -- 白色文本\n"
-    "  btn:set_style_border(0x1976D2, 2)      -- 深蓝色边框\n"
-    "  btn:set_style_radius(8)                -- 圆角\n"
-    "  \n"
-    "  -- 设置按钮回调\n"
-    "  btn:set_callback(function(obj, event)\n"
-    "    if event == \"clicked\" then\n"
-    "      btn_clicked = not btn_clicked\n"
-    "      if btn_clicked then\n"
-    "        obj:set_text(\"Clicked!\")\n"
-    "        obj:set_style_bg_color(0x4CAF50, 255)  -- 绿色背景\n"
-    "      else\n"
-    "        obj:set_text(\"Click Me\")\n"
-    "        obj:set_style_bg_color(0x2196F3, 255)  -- 蓝色背景\n"
-    "      end\n"
-    "      print(\"Button event:\", event, \"Clicked state:\", btn_clicked)\n"
-    "    end\n"
-    "  end)\n"
-    "  \n"
-    "  -- 创建滑块\n"
-    "  slider = ui.slider.create()\n"
-    "  \n"
-    "  -- 设置滑块大小\n"
-    "  slider:set_size(200, 20)\n"
-    "  \n"
-    "  -- 设置滑块位置（屏幕中心）\n"
-    "  slider:align(\"center\", 0, 50)\n"
-    "  \n"
-    "  -- 设置滑块范围\n"
-    "  slider:set_range(0, 100)\n"
-    "  \n"
-    "  -- 设置初始值\n"
-    "  slider:set_value(50, true)\n"
-    "  \n"
-    "  -- 设置滑块样式\n"
-    "  slider:set_style_bg_color(0xEEEEEE, 255)       -- 灰色背景\n"
-    "  slider:set_style_indicator_color(0xFFC107, 255)  -- 黄色指示器\n"
-    "  slider:set_style_knob_color(0xFF9800, 255)      -- 橙色旋钮\n"
-    "  slider:set_style_border(0xBDBDBD, 1)           -- 浅灰色边框\n"
-    "  slider:set_style_radius(10)                    -- 圆角\n"
-    "  \n"
-    "  -- 设置滑块回调\n"
-    "  slider:set_callback(function(obj, event)\n"
-    "    if event == \"value_changed\" then\n"
-    "      local value = obj:get_value()\n"
-    "    end\n"
-    "  end)\n"
-    "  \n"
+    "function init(self)\n"
+    "  self.pressed = false\n"
+    "  gpio.pinMode(BUTTON_PIN, gpio.INPUT_PULLUP)\n"
+    "  gpio.pinMode(LED_PIN, gpio.OUTPUT)\n"
+    "  gpio.digitalWrite(LED_PIN, gpio.LOW)\n"
     "end\n"
     "\n"
-    "-- 更新函数\n"
-    "function update(dt)\n"
-    "  -- 每帧执行，这里留空\n"
+    "function update(self, dt)\n"
+    "  self.pressed = gpio.digitalRead(BUTTON_PIN) == gpio.LOW\n"
+    "  gpio.digitalWrite(LED_PIN, self.pressed and gpio.HIGH or gpio.LOW)\n"
+    "end\n"
+    "\n"
+    "function final(self)\n"
+    "  gpio.digitalWrite(LED_PIN, gpio.LOW)\n"
     "end\n";
 
     if(out_len) *out_len = sizeof(kScript) - 1;
@@ -159,20 +125,93 @@ const char* lua_get_boot_cart_path(void)
 /* -------------------- 内部状态 -------------------- */
 
 static lua_State *g_L = NULL;
-static bool       g_started = false;
+static bool       g_runtime_started = false;
 static uint32_t   g_last_ms = 0;
+static float      g_fixed_accumulator = 0.0f;
 static FATFS      g_lua_file_fs;
 static bool       g_lua_file_fs_ready = false;
 
 typedef enum {
-    LUA_RT_ENTRY_NONE = 0,
-    LUA_RT_ENTRY_START,
-    LUA_RT_ENTRY_UPDATE,
-} lua_rt_entry_t;
+    LUA_LIFECYCLE_INIT = 0,
+    LUA_LIFECYCLE_FINAL,
+    LUA_LIFECYCLE_FIXED_UPDATE,
+    LUA_LIFECYCLE_UPDATE,
+    LUA_LIFECYCLE_LATE_UPDATE,
+    LUA_LIFECYCLE_MESSAGE,
+    LUA_LIFECYCLE_INPUT,
+    LUA_LIFECYCLE_RELOAD,
+    LUA_LIFECYCLE_COUNT
+} lua_lifecycle_t;
+
+typedef enum {
+    LUA_SCRIPT_SOURCE_NONE = 0,
+    LUA_SCRIPT_SOURCE_EMBEDDED,
+    LUA_SCRIPT_SOURCE_FILE,
+    LUA_SCRIPT_SOURCE_CART,
+} lua_script_source_t;
+
+typedef struct {
+    bool alive;
+    bool initialized;
+    bool finalized;
+    bool legacy_callbacks;
+    int env_ref;
+    int self_ref;
+    lua_State *thread;
+    int thread_ref;
+    int callback_refs[LUA_LIFECYCLE_COUNT];
+    lua_script_source_t source;
+    char source_path[LUA_RT_SOURCE_PATH_MAX];
+} lua_script_instance_t;
+
+typedef struct {
+    char action_id[LUA_INPUT_ACTION_ID_MAX];
+    LuaInputAction action;
+} lua_input_event_t;
+
+typedef struct {
+    char message_id[LUA_MESSAGE_ID_MAX];
+    char sender[LUA_MESSAGE_SENDER_MAX];
+} lua_message_event_t;
+
+typedef enum {
+    LUA_SCHED_IDLE = 0,
+    LUA_SCHED_INIT,
+    LUA_SCHED_INPUT,
+    LUA_SCHED_FIXED_UPDATE,
+    LUA_SCHED_UPDATE,
+    LUA_SCHED_LATE_UPDATE,
+    LUA_SCHED_MESSAGE,
+} lua_scheduler_phase_t;
+
+__attribute__((section(".ram_runtime"), aligned(32)))
+static lua_script_instance_t g_instances[LUA_RT_MAX_INSTANCES];
+static size_t g_instance_count = 0;
+
+__attribute__((section(".ram_runtime"), aligned(32)))
+static lua_input_event_t g_input_queue[LUA_RT_INPUT_QUEUE_CAPACITY];
+static uint8_t g_input_head = 0;
+static uint8_t g_input_tail = 0;
+static uint8_t g_input_count = 0;
+static lua_input_event_t g_current_input;
+static bool g_has_current_input = false;
+
+__attribute__((section(".ram_runtime"), aligned(32)))
+static lua_message_event_t g_message_queue[LUA_RT_MESSAGE_QUEUE_CAPACITY];
+static uint8_t g_message_head = 0;
+static uint8_t g_message_tail = 0;
+static uint8_t g_message_count = 0;
+static lua_message_event_t g_current_message;
+static bool g_has_current_message = false;
+
+static lua_scheduler_phase_t g_scheduler_phase = LUA_SCHED_IDLE;
+static size_t g_scheduler_instance = 0;
+static uint8_t g_fixed_steps_remaining = 0;
+static float g_frame_dt = 0.0f;
 
 static lua_State     *g_entry_thread = NULL;
-static int            g_entry_ref = LUA_NOREF;
-static lua_rt_entry_t g_entry_kind = LUA_RT_ENTRY_NONE;
+static lua_script_instance_t *g_entry_instance = NULL;
+static lua_lifecycle_t g_entry_lifecycle = LUA_LIFECYCLE_COUNT;
 static bool           g_entry_sleeping = false;
 static uint32_t       g_entry_wake_ms = 0;
 
@@ -222,6 +261,145 @@ static int lua_rt_pcall(lua_State *L, int nargs, int nrets)
         lua_pop(L, 1);
         return -1;
     }
+    return 0;
+}
+
+static const char *const k_lifecycle_names[LUA_LIFECYCLE_COUNT] = {
+    "init",
+    "final",
+    "fixed_update",
+    "update",
+    "late_update",
+    "on_message",
+    "on_input",
+    "on_reload",
+};
+
+static void lua_rt_init_instance_refs(lua_script_instance_t *instance)
+{
+    instance->env_ref = LUA_NOREF;
+    instance->self_ref = LUA_NOREF;
+    instance->thread = NULL;
+    instance->thread_ref = LUA_NOREF;
+    for (size_t i = 0; i < LUA_LIFECYCLE_COUNT; ++i) {
+        instance->callback_refs[i] = LUA_NOREF;
+    }
+}
+
+static void lua_rt_unref_instance(lua_script_instance_t *instance)
+{
+    if (!g_L || !instance) return;
+
+    for (size_t i = 0; i < LUA_LIFECYCLE_COUNT; ++i) {
+        if (instance->callback_refs[i] != LUA_NOREF) {
+            luaL_unref(g_L, LUA_REGISTRYINDEX, instance->callback_refs[i]);
+            instance->callback_refs[i] = LUA_NOREF;
+        }
+    }
+    if (instance->env_ref != LUA_NOREF) {
+        luaL_unref(g_L, LUA_REGISTRYINDEX, instance->env_ref);
+        instance->env_ref = LUA_NOREF;
+    }
+    if (instance->self_ref != LUA_NOREF) {
+        luaL_unref(g_L, LUA_REGISTRYINDEX, instance->self_ref);
+        instance->self_ref = LUA_NOREF;
+    }
+    if (instance->thread_ref != LUA_NOREF) {
+        luaL_unref(g_L, LUA_REGISTRYINDEX, instance->thread_ref);
+        instance->thread_ref = LUA_NOREF;
+        instance->thread = NULL;
+    }
+}
+
+static int lua_rt_ref_env_function(lua_script_instance_t *instance, const char *name)
+{
+    lua_rawgeti(g_L, LUA_REGISTRYINDEX, instance->env_ref);
+    lua_pushstring(g_L, name);
+    lua_rawget(g_L, -2);
+    lua_remove(g_L, -2);
+
+    if (!lua_isfunction(g_L, -1)) {
+        lua_pop(g_L, 1);
+        return LUA_NOREF;
+    }
+    return luaL_ref(g_L, LUA_REGISTRYINDEX);
+}
+
+static void lua_rt_cache_callbacks(lua_script_instance_t *instance)
+{
+    for (size_t i = 0; i < LUA_LIFECYCLE_COUNT; ++i) {
+        instance->callback_refs[i] =
+            lua_rt_ref_env_function(instance, k_lifecycle_names[i]);
+    }
+
+    if (instance->callback_refs[LUA_LIFECYCLE_INIT] == LUA_NOREF) {
+        int start_ref = lua_rt_ref_env_function(instance, "start");
+        if (start_ref != LUA_NOREF) {
+            instance->callback_refs[LUA_LIFECYCLE_INIT] = start_ref;
+            instance->legacy_callbacks = true;
+        }
+    }
+}
+
+static int lua_rt_create_instance_from_loaded(lua_script_source_t source,
+                                              const char *source_path)
+{
+    if (!g_L || !lua_isfunction(g_L, -1)) return -1;
+    if (g_instance_count >= LUA_RT_MAX_INSTANCES) {
+        lua_rt_log("lua script instance limit reached\n");
+        lua_pop(g_L, 1);
+        return -2;
+    }
+
+    const int stack_base = lua_gettop(g_L) - 1;
+    const int chunk_index = lua_gettop(g_L);
+    lua_script_instance_t *instance = &g_instances[g_instance_count];
+    memset(instance, 0, sizeof(*instance));
+    lua_rt_init_instance_refs(instance);
+
+    lua_newtable(g_L);
+    const int env_index = lua_gettop(g_L);
+
+    lua_newtable(g_L);
+    lua_pushglobaltable(g_L);
+    lua_setfield(g_L, -2, "__index");
+    lua_setmetatable(g_L, env_index);
+
+    lua_pushvalue(g_L, env_index);
+    instance->env_ref = luaL_ref(g_L, LUA_REGISTRYINDEX);
+
+    lua_pushvalue(g_L, env_index);
+    if (lua_setupvalue(g_L, chunk_index, 1) == NULL) {
+        lua_rt_log("lua chunk has no _ENV upvalue\n");
+        lua_rt_unref_instance(instance);
+        lua_settop(g_L, stack_base);
+        return -3;
+    }
+
+    lua_remove(g_L, env_index);
+    if (lua_rt_pcall(g_L, 0, 0) != 0) {
+        lua_rt_unref_instance(instance);
+        lua_settop(g_L, stack_base);
+        return -4;
+    }
+
+    lua_newtable(g_L);
+    instance->self_ref = luaL_ref(g_L, LUA_REGISTRYINDEX);
+    instance->thread = lua_newthread(g_L);
+    instance->thread_ref = luaL_ref(g_L, LUA_REGISTRYINDEX);
+    instance->alive = true;
+    instance->source = source;
+    if (source_path) {
+        snprintf(instance->source_path, sizeof(instance->source_path), "%s", source_path);
+    }
+    lua_rt_cache_callbacks(instance);
+
+    ++g_instance_count;
+    if (g_runtime_started && g_scheduler_phase == LUA_SCHED_IDLE) {
+        g_scheduler_phase = LUA_SCHED_INIT;
+        g_scheduler_instance = 0;
+    }
+    lua_settop(g_L, stack_base);
     return 0;
 }
 
@@ -419,7 +597,9 @@ int lua_run_bytecode(const void *bytecode, uint32_t len, const char *chunk_name)
         return -3;
     }
 
-    return (lua_rt_pcall(g_L, 0, 0) == 0) ? 0 : -4;
+    int create_rc = lua_rt_create_instance_from_loaded(LUA_SCRIPT_SOURCE_NONE,
+                                                        chunk_name);
+    return create_rc == 0 ? 0 : -4;
 }
 
 int lua_run_file(const char *path)
@@ -430,7 +610,8 @@ int lua_run_file(const char *path)
     int rc = lua_rt_load_file(g_L, path);
     if (rc != 0) return rc;
 
-    return (lua_rt_pcall(g_L, 0, 0) == 0) ? 0 : -6;
+    int create_rc = lua_rt_create_instance_from_loaded(LUA_SCRIPT_SOURCE_FILE, path);
+    return create_rc == 0 ? 0 : -6;
 }
 
 static int lua_rt_open_cart(lua_rt_cart_reader_t *reader,
@@ -550,7 +731,7 @@ static int lua_rt_load_cart_entry(lua_State *L, const char *cart_path)
     if (!cart_path || cart_path[0] == '\0') return -1;
 
     char fatfs_path[256];
-    char chunk_name[320];
+    char chunk_name[400];
     lua_rt_cart_reader_t reader;
     memset(&reader, 0, sizeof(reader));
     reader.read_result = XHGC_CART_OK;
@@ -595,10 +776,14 @@ int lua_run_cart_entry(const char *cart_path)
     int rc = lua_rt_load_cart_entry(g_L, cart_path);
     if (rc != 0) return rc;
 
-    return (lua_rt_pcall(g_L, 0, 0) == 0) ? 0 : -7;
+    int create_rc =
+        lua_rt_create_instance_from_loaded(LUA_SCRIPT_SOURCE_CART, cart_path);
+    return create_rc == 0 ? 0 : -7;
 }
 
-/* -------------------- start/update 协程调度 -------------------- */
+/* -------------------- 生命周期函数与帧调度 -------------------- */
+
+#define LUA_RT_MAX_DT_MS 100u
 
 static bool lua_rt_time_reached(uint32_t now, uint32_t target)
 {
@@ -614,18 +799,25 @@ void lua_rt_delay_ms(uint32_t delay_ms)
 static void lua_rt_clear_entry(void)
 {
     if (g_entry_thread) {
+        (void)lua_closethread(g_entry_thread, g_L);
         lua_settop(g_entry_thread, 0);
     }
 
-    if (g_entry_ref != LUA_NOREF) {
-        luaL_unref(g_L, LUA_REGISTRYINDEX, g_entry_ref);
-    }
-
     g_entry_thread = NULL;
-    g_entry_ref = LUA_NOREF;
-    g_entry_kind = LUA_RT_ENTRY_NONE;
+    g_entry_instance = NULL;
+    g_entry_lifecycle = LUA_LIFECYCLE_COUNT;
     g_entry_sleeping = false;
     g_entry_wake_ms = 0;
+}
+
+static void lua_rt_finish_lifecycle(bool success)
+{
+    if (g_entry_instance && g_entry_lifecycle == LUA_LIFECYCLE_INIT) {
+        g_entry_instance->initialized = success;
+        if (!success) {
+            lua_rt_log("lua init() failed; instance disabled\n");
+        }
+    }
 }
 
 static int lua_rt_resume_entry(int nargs)
@@ -635,29 +827,24 @@ static int lua_rt_resume_entry(int nargs)
 
     int rc = lua_resume(g_entry_thread, g_L, nargs, &nresults);
     if (rc == LUA_YIELD) {
-        if (nresults > 0) {
-            lua_pop(g_entry_thread, nresults);
-        }
+        if (nresults > 0) lua_pop(g_entry_thread, nresults);
         return 1;
     }
 
     if (rc == LUA_OK) {
-        if (nresults > 0) {
-            lua_pop(g_entry_thread, nresults);
-        }
-        if (g_entry_kind == LUA_RT_ENTRY_START) {
-            g_started = true;
-        }
+        if (nresults > 0) lua_pop(g_entry_thread, nresults);
+        lua_rt_finish_lifecycle(true);
         lua_rt_clear_entry();
         return 0;
     }
 
     const char *err = lua_tostring(g_entry_thread, -1);
-    lua_rt_log(err ? err : "(lua coroutine error)");
+    luaL_traceback(g_L, g_entry_thread,
+                   err ? err : "(lua coroutine error)", 1);
+    lua_rt_log(lua_tostring(g_L, -1));
     lua_rt_log("\n");
-    if (g_entry_kind == LUA_RT_ENTRY_START) {
-        g_started = true;
-    }
+    lua_pop(g_L, 1);
+    lua_rt_finish_lifecycle(false);
     lua_rt_clear_entry();
     return -1;
 }
@@ -668,57 +855,309 @@ static int lua_rt_poll_entry(uint32_t now)
     if (g_entry_sleeping && !lua_rt_time_reached(now, g_entry_wake_ms)) {
         return 1;
     }
-    return lua_rt_resume_entry(0);
+    const int stack_base = lua_gettop(g_L);
+    int rc = lua_rt_resume_entry(0);
+    lua_settop(g_L, stack_base);
+    return rc;
 }
 
-static int lua_rt_begin_global_call(const char *name, lua_rt_entry_t kind, int nargs)
+static void lua_rt_push_input_action(lua_State *L, const LuaInputAction *action)
 {
-    if (g_entry_thread) return 1;
+    lua_createtable(L, 0, 8);
 
-    lua_getglobal(g_L, name);
-    if (!lua_isfunction(g_L, -1)) {
-        lua_pop(g_L, nargs + 1);
-        if (kind == LUA_RT_ENTRY_START) {
-            g_started = true;
+    lua_pushboolean(L, action->pressed);
+    lua_setfield(L, -2, "pressed");
+    lua_pushboolean(L, action->released);
+    lua_setfield(L, -2, "released");
+    lua_pushboolean(L, action->repeated);
+    lua_setfield(L, -2, "repeated");
+    lua_pushnumber(L, action->value);
+    lua_setfield(L, -2, "value");
+    lua_pushnumber(L, action->x);
+    lua_setfield(L, -2, "x");
+    lua_pushnumber(L, action->y);
+    lua_setfield(L, -2, "y");
+    lua_pushnumber(L, action->dx);
+    lua_setfield(L, -2, "dx");
+    lua_pushnumber(L, action->dy);
+    lua_setfield(L, -2, "dy");
+}
+
+static int lua_rt_begin_lifecycle(lua_script_instance_t *instance,
+                                  lua_lifecycle_t lifecycle,
+                                  float dt)
+{
+    if (!g_L || !instance || !instance->alive || g_entry_thread) return -1;
+    if (lifecycle != LUA_LIFECYCLE_INIT && !instance->initialized) return 0;
+
+    int callback_ref = instance->callback_refs[lifecycle];
+    if (callback_ref == LUA_NOREF) {
+        if (lifecycle == LUA_LIFECYCLE_INIT) {
+            instance->initialized = true;
         }
         return 0;
     }
 
-    if (nargs > 0) {
-        lua_insert(g_L, -nargs - 1);
+    const int stack_base = lua_gettop(g_L);
+    int nargs = 0;
+    lua_rawgeti(g_L, LUA_REGISTRYINDEX, callback_ref);
+
+    bool legacy_no_self =
+        instance->legacy_callbacks &&
+        (lifecycle == LUA_LIFECYCLE_INIT || lifecycle == LUA_LIFECYCLE_UPDATE);
+    if (!legacy_no_self) {
+        lua_rawgeti(g_L, LUA_REGISTRYINDEX, instance->self_ref);
+        ++nargs;
     }
 
-    g_entry_thread = lua_newthread(g_L);
+    switch (lifecycle) {
+    case LUA_LIFECYCLE_FIXED_UPDATE:
+    case LUA_LIFECYCLE_UPDATE:
+    case LUA_LIFECYCLE_LATE_UPDATE:
+        lua_pushnumber(g_L, (lua_Number)dt);
+        ++nargs;
+        break;
+    case LUA_LIFECYCLE_INPUT:
+        lua_pushstring(g_L, g_current_input.action_id);
+        lua_rt_push_input_action(g_L, &g_current_input.action);
+        nargs += 2;
+        break;
+    case LUA_LIFECYCLE_MESSAGE:
+        lua_pushstring(g_L, g_current_message.message_id);
+        lua_pushnil(g_L);
+        if (g_current_message.sender[0] != '\0') {
+            lua_pushstring(g_L, g_current_message.sender);
+        } else {
+            lua_pushnil(g_L);
+        }
+        nargs += 3;
+        break;
+    default:
+        break;
+    }
+
+    g_entry_thread = instance->thread;
     if (!g_entry_thread) {
-        lua_pop(g_L, nargs + 1);
+        lua_settop(g_L, stack_base);
         return -1;
     }
-    g_entry_ref = luaL_ref(g_L, LUA_REGISTRYINDEX);
-    g_entry_kind = kind;
+    (void)lua_closethread(g_entry_thread, g_L);
+    lua_settop(g_entry_thread, 0);
+    g_entry_instance = instance;
+    g_entry_lifecycle = lifecycle;
     g_entry_sleeping = false;
 
     lua_xmove(g_L, g_entry_thread, nargs + 1);
-    return lua_rt_resume_entry(nargs);
+    int rc = lua_rt_resume_entry(nargs);
+    lua_settop(g_L, stack_base);
+    return rc;
 }
 
-/* -------------------- 对外：lua_init / lua_update_task -------------------- */
+static int lua_rt_call_direct(lua_script_instance_t *instance,
+                              lua_lifecycle_t lifecycle)
+{
+    if (!g_L || !instance || !instance->alive) return -1;
+    int callback_ref = instance->callback_refs[lifecycle];
+    if (callback_ref == LUA_NOREF) return 0;
 
-extern int luaopen_gpio(lua_State *L);
+    const int stack_base = lua_gettop(g_L);
+    lua_rawgeti(g_L, LUA_REGISTRYINDEX, callback_ref);
+    lua_rawgeti(g_L, LUA_REGISTRYINDEX, instance->self_ref);
+    int rc = lua_rt_pcall(g_L, 1, 0);
+    lua_settop(g_L, stack_base);
+    return rc;
+}
+
+static bool lua_rt_pop_input(lua_input_event_t *event)
+{
+    if (!event || g_input_count == 0u) return false;
+    *event = g_input_queue[g_input_head];
+    g_input_head = (uint8_t)((g_input_head + 1u) % LUA_RT_INPUT_QUEUE_CAPACITY);
+    --g_input_count;
+    return true;
+}
+
+static bool lua_rt_pop_message(lua_message_event_t *event)
+{
+    if (!event || g_message_count == 0u) return false;
+    *event = g_message_queue[g_message_head];
+    g_message_head =
+        (uint8_t)((g_message_head + 1u) % LUA_RT_MESSAGE_QUEUE_CAPACITY);
+    --g_message_count;
+    return true;
+}
+
+int lua_post_input(const char *action_id, const LuaInputAction *action)
+{
+    if (!action_id || !action || action_id[0] == '\0') return -1;
+    if (g_input_count >= LUA_RT_INPUT_QUEUE_CAPACITY) {
+        lua_rt_log("lua input queue full\n");
+        return -2;
+    }
+
+    lua_input_event_t *event = &g_input_queue[g_input_tail];
+    snprintf(event->action_id, sizeof(event->action_id), "%s", action_id);
+    event->action = *action;
+    g_input_tail = (uint8_t)((g_input_tail + 1u) % LUA_RT_INPUT_QUEUE_CAPACITY);
+    ++g_input_count;
+    return 0;
+}
+
+int lua_post_message(const char *message_id, const char *sender)
+{
+    if (!message_id || message_id[0] == '\0') return -1;
+    if (g_message_count >= LUA_RT_MESSAGE_QUEUE_CAPACITY) {
+        lua_rt_log("lua message queue full\n");
+        return -2;
+    }
+
+    lua_message_event_t *event = &g_message_queue[g_message_tail];
+    snprintf(event->message_id, sizeof(event->message_id), "%s", message_id);
+    snprintf(event->sender, sizeof(event->sender), "%s", sender ? sender : "");
+    g_message_tail =
+        (uint8_t)((g_message_tail + 1u) % LUA_RT_MESSAGE_QUEUE_CAPACITY);
+    ++g_message_count;
+    return 0;
+}
+
+static void lua_rt_scheduler_next_phase(lua_scheduler_phase_t phase)
+{
+    g_scheduler_phase = phase;
+    g_scheduler_instance = 0;
+}
+
+static void lua_rt_drive_scheduler(void)
+{
+    while (g_L && !g_entry_thread) {
+        lua_script_instance_t *instance = NULL;
+        int rc = 0;
+
+        switch (g_scheduler_phase) {
+        case LUA_SCHED_INIT:
+            if (g_scheduler_instance >= g_instance_count) {
+                lua_rt_scheduler_next_phase(LUA_SCHED_IDLE);
+                continue;
+            }
+            instance = &g_instances[g_scheduler_instance++];
+            if (!instance->alive || instance->initialized) continue;
+            rc = lua_rt_begin_lifecycle(instance, LUA_LIFECYCLE_INIT, 0.0f);
+            if (rc == 1) return;
+            continue;
+
+        case LUA_SCHED_INPUT:
+            if (!g_has_current_input) {
+                if (!lua_rt_pop_input(&g_current_input)) {
+                    lua_rt_scheduler_next_phase(LUA_SCHED_FIXED_UPDATE);
+                    continue;
+                }
+                g_has_current_input = true;
+            }
+            if (g_scheduler_instance >= g_instance_count) {
+                g_has_current_input = false;
+                g_scheduler_instance = 0;
+                continue;
+            }
+            instance = &g_instances[g_scheduler_instance++];
+            if (!instance->alive || !instance->initialized) continue;
+            rc = lua_rt_begin_lifecycle(instance, LUA_LIFECYCLE_INPUT, 0.0f);
+            if (rc == 1) return;
+            continue;
+
+        case LUA_SCHED_FIXED_UPDATE:
+            if (g_fixed_steps_remaining == 0u) {
+                lua_rt_scheduler_next_phase(LUA_SCHED_UPDATE);
+                continue;
+            }
+            if (g_scheduler_instance >= g_instance_count) {
+                --g_fixed_steps_remaining;
+                g_scheduler_instance = 0;
+                continue;
+            }
+            instance = &g_instances[g_scheduler_instance++];
+            if (!instance->alive || !instance->initialized) continue;
+            rc = lua_rt_begin_lifecycle(instance, LUA_LIFECYCLE_FIXED_UPDATE,
+                                        LUA_RT_FIXED_DT);
+            if (rc == 1) return;
+            continue;
+
+        case LUA_SCHED_UPDATE:
+            if (g_scheduler_instance >= g_instance_count) {
+                lua_rt_scheduler_next_phase(LUA_SCHED_LATE_UPDATE);
+                continue;
+            }
+            instance = &g_instances[g_scheduler_instance++];
+            if (!instance->alive || !instance->initialized) continue;
+            rc = lua_rt_begin_lifecycle(instance, LUA_LIFECYCLE_UPDATE, g_frame_dt);
+            if (rc == 1) return;
+            continue;
+
+        case LUA_SCHED_LATE_UPDATE:
+            if (g_scheduler_instance >= g_instance_count) {
+                lua_rt_scheduler_next_phase(LUA_SCHED_MESSAGE);
+                continue;
+            }
+            instance = &g_instances[g_scheduler_instance++];
+            if (!instance->alive || !instance->initialized) continue;
+            rc = lua_rt_begin_lifecycle(instance, LUA_LIFECYCLE_LATE_UPDATE,
+                                        g_frame_dt);
+            if (rc == 1) return;
+            continue;
+
+        case LUA_SCHED_MESSAGE:
+            if (!g_has_current_message) {
+                if (!lua_rt_pop_message(&g_current_message)) {
+                    lua_rt_scheduler_next_phase(LUA_SCHED_IDLE);
+                    continue;
+                }
+                g_has_current_message = true;
+            }
+            if (g_scheduler_instance >= g_instance_count) {
+                g_has_current_message = false;
+                g_scheduler_instance = 0;
+                continue;
+            }
+            instance = &g_instances[g_scheduler_instance++];
+            if (!instance->alive || !instance->initialized) continue;
+            rc = lua_rt_begin_lifecycle(instance, LUA_LIFECYCLE_MESSAGE, 0.0f);
+            if (rc == 1) return;
+            continue;
+
+        case LUA_SCHED_IDLE:
+        default:
+            return;
+        }
+    }
+}
+
+/* -------------------- 对外：初始化、重载、销毁与 tick -------------------- */
 
 static int lua_rt_init_state(void)
 {
     if (g_L) return 0;
 
-    g_L = luaL_newstate();
-    if (!g_L) {
-        lua_rt_log("luaL_newstate failed\n");
+    if (lua_vm_memory_init() != 0) {
+        lua_rt_log("Lua SDRAM heap init failed\n");
         return -1;
     }
 
-    lua_rt_openlibs(g_L);
+    g_L = lua_newstate(lua_vm_alloc, lua_vm_memory_allocator());
+    if (!g_L) {
+        lua_rt_log("lua_newstate failed\n");
+        lua_vm_memory_print_stats();
+        return -2;
+    }
 
+    lua_rt_openlibs(g_L);
     lua_port_bind(g_L, NULL);
 
+    memset(g_instances, 0, sizeof(g_instances));
+    memset(g_input_queue, 0, sizeof(g_input_queue));
+    memset(g_message_queue, 0, sizeof(g_message_queue));
+    g_instance_count = 0;
+    g_runtime_started = false;
+    g_scheduler_phase = LUA_SCHED_IDLE;
+    g_fixed_accumulator = 0.0f;
+    lua_vm_memory_print_stats();
     return 0;
 }
 
@@ -741,24 +1180,17 @@ static int lua_rt_run_embedded_boot(void)
         return -3;
     }
 
-    if (lua_rt_pcall(g_L, 0, 0) != 0) {
-        lua_rt_log("boot script run failed\n");
-        return -4;
-    }
-
-    return 0;
+    return lua_rt_create_instance_from_loaded(LUA_SCRIPT_SOURCE_EMBEDDED,
+                                               "boot.lua");
 }
 
 static int lua_rt_start_runtime(void)
 {
     g_last_ms = lua_rt_time_ms();
-
-    /* 调一次 start()（如果存在）。start/update 运行在可 yield 的协程里。 */
-    if (lua_rt_begin_global_call("start", LUA_RT_ENTRY_START, 0) < 0) {
-        lua_rt_log("start() failed\n");
-        return -5;
-    }
-
+    g_fixed_accumulator = 0.0f;
+    g_runtime_started = true;
+    lua_rt_scheduler_next_phase(LUA_SCHED_INIT);
+    lua_rt_drive_scheduler();
     return 0;
 }
 
@@ -769,7 +1201,6 @@ int lua_init_from_file(const char *path)
 
     rc = lua_run_file(path);
     if (rc != 0) return rc;
-
     return lua_rt_start_runtime();
 }
 
@@ -780,7 +1211,6 @@ int lua_init_from_cart(const char *cart_path)
 
     rc = lua_run_cart_entry(cart_path);
     if (rc != 0) return rc;
-
     return lua_rt_start_runtime();
 }
 
@@ -792,52 +1222,168 @@ int lua_init(void)
     const char *cart_path = lua_get_boot_cart_path();
     if (cart_path && cart_path[0] != '\0') {
         rc = lua_run_cart_entry(cart_path);
-        if (rc == 0) {
-            return lua_rt_start_runtime();
-        }
+        if (rc == 0) return lua_rt_start_runtime();
     }
 
     const char *boot_path = lua_get_boot_bytecode_path();
     if (boot_path && boot_path[0] != '\0') {
         rc = lua_run_file(boot_path);
-        if (rc == 0) {
-            return lua_rt_start_runtime();
-        }
+        if (rc == 0) return lua_rt_start_runtime();
     }
 
     rc = lua_rt_run_embedded_boot();
     if (rc != 0) return rc;
-
     return lua_rt_start_runtime();
 }
 
-#define LUA_RT_MAX_DT_MS 100u   // 最大 dt=100ms，按你需求可改 50/100/200
+static void lua_rt_unref_callbacks(lua_script_instance_t *instance)
+{
+    for (size_t i = 0; i < LUA_LIFECYCLE_COUNT; ++i) {
+        if (instance->callback_refs[i] != LUA_NOREF) {
+            luaL_unref(g_L, LUA_REGISTRYINDEX, instance->callback_refs[i]);
+            instance->callback_refs[i] = LUA_NOREF;
+        }
+    }
+}
+
+static void lua_rt_clear_env_callbacks(lua_script_instance_t *instance)
+{
+    lua_rawgeti(g_L, LUA_REGISTRYINDEX, instance->env_ref);
+    for (size_t i = 0; i < LUA_LIFECYCLE_COUNT; ++i) {
+        lua_pushstring(g_L, k_lifecycle_names[i]);
+        lua_pushnil(g_L);
+        lua_rawset(g_L, -3);
+    }
+    lua_pushliteral(g_L, "start");
+    lua_pushnil(g_L);
+    lua_rawset(g_L, -3);
+    lua_pop(g_L, 1);
+}
+
+static int lua_rt_reload_instance_from_loaded(lua_script_instance_t *instance)
+{
+    const int stack_base = lua_gettop(g_L) - 1;
+    const int chunk_index = lua_gettop(g_L);
+
+    lua_rt_unref_callbacks(instance);
+    lua_rt_clear_env_callbacks(instance);
+    instance->legacy_callbacks = false;
+
+    lua_rawgeti(g_L, LUA_REGISTRYINDEX, instance->env_ref);
+    if (lua_setupvalue(g_L, chunk_index, 1) == NULL) {
+        lua_rt_log("reload chunk has no _ENV upvalue\n");
+        lua_settop(g_L, stack_base);
+        return -1;
+    }
+
+    if (lua_rt_pcall(g_L, 0, 0) != 0) {
+        lua_settop(g_L, stack_base);
+        return -2;
+    }
+
+    lua_rt_cache_callbacks(instance);
+    lua_settop(g_L, stack_base);
+    return lua_rt_call_direct(instance, LUA_LIFECYCLE_RELOAD);
+}
+
+int lua_reload(void)
+{
+    if (!g_L || g_entry_thread || g_scheduler_phase != LUA_SCHED_IDLE) return -1;
+
+    int result = 0;
+    for (size_t i = 0; i < g_instance_count; ++i) {
+        lua_script_instance_t *instance = &g_instances[i];
+        if (!instance->alive) continue;
+
+        int rc = -1;
+        if (instance->source == LUA_SCRIPT_SOURCE_FILE) {
+            rc = lua_rt_load_file(g_L, instance->source_path);
+        } else if (instance->source == LUA_SCRIPT_SOURCE_CART) {
+            rc = lua_rt_load_cart_entry(g_L, instance->source_path);
+        } else if (instance->source == LUA_SCRIPT_SOURCE_EMBEDDED) {
+            size_t len = 0;
+            const char *code = lua_get_boot_script(&len);
+            rc = (code && len > 0u)
+                ? luaL_loadbuffer(g_L, code, len, "boot.lua")
+                : LUA_ERRSYNTAX;
+            if (rc != LUA_OK && lua_gettop(g_L) > 0) lua_pop(g_L, 1);
+        } else {
+            lua_rt_log("lua reload unsupported for bytecode instance\n");
+            result = -2;
+            continue;
+        }
+
+        if (rc != 0 || lua_rt_reload_instance_from_loaded(instance) != 0) {
+            lua_rt_log("lua reload failed\n");
+            result = -3;
+        }
+    }
+    return result;
+}
+
+int lua_shutdown(void)
+{
+    if (!g_L) return 0;
+
+    if (g_entry_thread) {
+        lua_rt_clear_entry();
+    }
+    g_scheduler_phase = LUA_SCHED_IDLE;
+
+    for (size_t i = 0; i < g_instance_count; ++i) {
+        lua_script_instance_t *instance = &g_instances[i];
+        if (instance->alive && instance->initialized && !instance->finalized) {
+            instance->finalized = true;
+            (void)lua_rt_call_direct(instance, LUA_LIFECYCLE_FINAL);
+        }
+        instance->alive = false;
+        lua_rt_unref_instance(instance);
+    }
+
+    lua_close(g_L);
+    g_L = NULL;
+    lua_vm_memory_print_stats();
+    g_instance_count = 0;
+    g_runtime_started = false;
+    g_input_head = g_input_tail = g_input_count = 0;
+    g_message_head = g_message_tail = g_message_count = 0;
+    g_has_current_input = false;
+    g_has_current_message = false;
+    return 0;
+}
 
 void lua_update_task(void)
 {
-    if (!g_L) return;
+    if (!g_L || !g_runtime_started) return;
 
     const uint32_t now = lua_rt_time_ms();
-
     if (g_entry_thread) {
-        (void)lua_rt_poll_entry(now);
-        return;
+        if (lua_rt_poll_entry(now) == 1) return;
+    }
+
+    if (g_scheduler_phase != LUA_SCHED_IDLE) {
+        lua_rt_drive_scheduler();
+        if (g_entry_thread || g_scheduler_phase != LUA_SCHED_IDLE) return;
     }
 
     uint32_t elapsed = (uint32_t)(now - g_last_ms);
-
     if (elapsed < LUA_RT_PERIOD_MS) return;
-
     g_last_ms = now;
-
-    if (!g_started) {
-        (void)lua_rt_begin_global_call("start", LUA_RT_ENTRY_START, 0);
-        return;
-    }
-
     if (elapsed > LUA_RT_MAX_DT_MS) elapsed = LUA_RT_MAX_DT_MS;
 
-    float dt = (float)elapsed / 1000.0f;
-    lua_pushnumber(g_L, (lua_Number)dt);
-    (void)lua_rt_begin_global_call("update", LUA_RT_ENTRY_UPDATE, 1);
+    g_frame_dt = (float)elapsed / 1000.0f;
+    g_fixed_accumulator += g_frame_dt;
+    g_fixed_steps_remaining = 0;
+    while (g_fixed_accumulator >= LUA_RT_FIXED_DT &&
+           g_fixed_steps_remaining < LUA_RT_MAX_FIXED_STEPS) {
+        g_fixed_accumulator -= LUA_RT_FIXED_DT;
+        ++g_fixed_steps_remaining;
+    }
+    if (g_fixed_steps_remaining == LUA_RT_MAX_FIXED_STEPS &&
+        g_fixed_accumulator >= LUA_RT_FIXED_DT) {
+        g_fixed_accumulator = 0.0f;
+    }
+
+    lua_rt_scheduler_next_phase(LUA_SCHED_INPUT);
+    lua_rt_drive_scheduler();
 }

@@ -4,7 +4,7 @@
 
 相关源码：
 
-- `Core/Src/lua_vm.c`：Lua 运行时、脚本加载、`start()` / `update(dt)` 调度。
+- `Core/Src/lua_vm.c`：Lua 运行时、脚本实例和 Defold 风格生命周期调度。
 - `Core/Inc/lua_vm.h`：运行时对外 C 接口。
 - `Core/LuaPort/lua_port.c`：把底层模块绑定到 Lua 全局环境。
 - `Core/LuaPort/modules/lua_gpio.c`：GPIO 模块。
@@ -18,22 +18,25 @@
 
 ### 1.1 脚本入口
 
-启动脚本可以定义两个函数：
+启动脚本可以按需定义以下函数：
 
 ```lua
-function start()
-  -- 初始化逻辑，只在启动后调用一次
-end
-
-function update(dt)
-  -- 周期逻辑
-  -- dt 单位：秒
-end
+function init(self) end
+function final(self) end
+function fixed_update(self, dt) end
+function update(self, dt) end
+function late_update(self, dt) end
+function on_message(self, message_id, message, sender) end
+function on_input(self, action_id, action) end
+function on_reload(self) end
 ```
 
-`lua_init()` 会创建 Lua 虚拟机，绑定 LuaPort 模块，加载 `lua_get_boot_script()` 返回的脚本，执行脚本 chunk，然后调用一次 `start()`。
+`lua_init()` 会创建 Lua 虚拟机，绑定 LuaPort 模块，加载脚本实例，然后调用一次 `init(self)`。
 
-`lua_update_task()` 需要在主循环或任务里反复调用。它会按 `LUA_RT_PERIOD_MS` 周期调用 `update(dt)`。
+`lua_update_task()` 需要在主循环或任务里反复调用。每帧依次处理输入、固定更新、普通更新、后置更新和消息。
+
+每个脚本实例拥有独立的环境和 `self` 表。详细行为见
+`Docs/lua/lua_lifecycle.md`。
 
 默认调度参数：
 
@@ -176,7 +179,7 @@ gpio.write(gpio.PORTB, 1, true)
 
 ### `delay(ms)`
 
-毫秒级延时。在 `start()` / `update(dt)` 中调用时，`delay()` 会挂起当前 Lua 协程，运行时到期后再恢复执行，不会阻塞 RTOS 线程。
+毫秒级延时。在生命周期回调中调用时，`delay()` 会挂起当前 Lua 协程，运行时到期后再恢复执行，不会阻塞 RTOS 线程。
 
 参数：
 
@@ -779,11 +782,13 @@ slider:delete()
 使用 `delay()` 可以写成顺序逻辑，Lua VM 会在延时期间让出当前协程：
 
 ```lua
-local led_on = false
+function init(self)
+  self.led_on = false
+end
 
-function update(dt)
-  led_on = not led_on
-  gpio.write(gpio.PORTB, 1, led_on)
+function update(self, dt)
+  self.led_on = not self.led_on
+  gpio.write(gpio.PORTB, 1, self.led_on)
   delay(500)
 end
 ```
@@ -791,19 +796,18 @@ end
 也可以继续使用 `dt` 做状态机：
 
 ```lua
-local acc = 0
-local led_on = false
-
-function start()
+function init(self)
+  self.acc = 0
+  self.led_on = false
   gpio.write(gpio.PORTB, 1, false)
 end
 
-function update(dt)
-  acc = acc + dt
-  if acc >= 0.5 then
-    acc = acc - 0.5
-    led_on = not led_on
-    gpio.write(gpio.PORTB, 1, led_on)
+function update(self, dt)
+  self.acc = self.acc + dt
+  if self.acc >= 0.5 then
+    self.acc = self.acc - 0.5
+    self.led_on = not self.led_on
+    gpio.write(gpio.PORTB, 1, self.led_on)
   end
 end
 ```
@@ -811,7 +815,7 @@ end
 ### 11.2 写入 SD 日志
 
 ```lua
-function start()
+function init(self)
   local f = sd.open("boot.log", "a")
   f:write("lua boot\n")
   f:close()
@@ -824,7 +828,7 @@ end
 local btn
 local slider
 
-function start()
+function init(self)
   btn = ui.button.draw(nil, 20, 20, 140, 50, "Start")
   btn:set_style_bg_color(0x2196F3, 255)
   btn:set_style_text_color(0xFFFFFF)
@@ -845,5 +849,5 @@ end
 - GPIO 端口推荐使用 `"B"`、`"PB"` 或 `gpio.PORTB`；当前不要使用 `"GPIOB"` 这种字符串。
 - UI `set_callback()` 当前只保存 Lua 回调引用，尚未真正挂接 LVGL 事件。
 - UI 事件回调当前 C 代码传入的是 lightuserdata，不是可直接调用方法的 Lua 控件 userdata。
-- `delay()` 在 `start()` / `update(dt)` 中是协程非阻塞延时；`tim.delay_us()` 仍是忙等阻塞调用。
+- `delay()` 在生命周期回调中是协程非阻塞延时；`tim.delay_us()` 仍是忙等阻塞调用。
 - SD 文件操作失败会抛 Lua 错误；需要脚本侧容错时，应先开启 `pcall` 所在标准库或在 C 侧提供封装。

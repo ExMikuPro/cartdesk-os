@@ -32,6 +32,7 @@ set(LVGL_DIR ${CORE_DIR}/APPS/LVGL)
 set(LVGL_PORT_DIR ${LVGL_DIR}/port)
 set(TASK_DIR ${CORE_DIR}/APPS/TASK)
 set(CART_DIR ${CORE_DIR}/Cart)
+set(BOARD_GPIO_DIR ${DRIVER_DIR}/GPIO)
 set(SCREEN_DIR ${CORE_DIR}/Screen)
 set(SCREEN_PAGE_DIR ${SCREEN_DIR}/Page)
 set(SCREEN_UTILS_DIR ${SCREEN_DIR}/utils)
@@ -238,13 +239,29 @@ target_include_directories(drv_misc PUBLIC
 target_link_libraries(drv_misc PUBLIC cartdesk_common)
 
 # ==============================================================================
-# 目标 6: lua_port —— Lua 与硬件的绑定层（C 模块 + VM 封装）
+# 目标 6: drv_gpio —— 板级 GPIO 逻辑映射
+# ==============================================================================
+add_library(drv_gpio STATIC
+        ${BOARD_GPIO_DIR}/board_gpio.c
+        ${BOARD_GPIO_DIR}/board_gpio.h
+        ${BOARD_GPIO_DIR}/board_pwm.c
+        ${BOARD_GPIO_DIR}/board_pwm.h
+)
+
+target_include_directories(drv_gpio PUBLIC ${BOARD_GPIO_DIR})
+target_link_libraries(drv_gpio PUBLIC cartdesk_common)
+
+# ==============================================================================
+# 目标 7: lua_port —— Lua 与硬件的绑定层（C 模块 + VM 封装）
 # ==============================================================================
 add_library(lua_port STATIC
         ${CORE_INC_DIR}/lua_vm.h
+        ${CORE_INC_DIR}/lua_vm_memory.h
         ${CORE_SRC_DIR}/lua_vm.c
+        ${CORE_SRC_DIR}/lua_vm_memory.c
         ${LUA_PORT_DIR}/lua_port.c
         ${LUA_PORT_DIR}/modules/lua_gpio.c
+        ${LUA_PORT_DIR}/modules/lua_pwm.c
         ${LUA_PORT_DIR}/modules/lua_delay.c
         ${LUA_PORT_DIR}/modules/lua_tim.c
         ${LUA_PORT_DIR}/modules/lua_sd.c
@@ -256,12 +273,13 @@ target_include_directories(lua_port PUBLIC
         ${LUA_PORT_DIR}
         ${LUA_PORT_DIR}/modules
         ${CART_DIR}
+        ${DRIVER_DIR}/SDRAM
         ${FATFS_INCLUDES}
 )
-target_link_libraries(lua_port PUBLIC cartdesk_common lua lvgl cart_core)
+target_link_libraries(lua_port PUBLIC cartdesk_common lua lvgl cart_core drv_gpio)
 
 # ==============================================================================
-# 目标 7: cart_core —— cart.bin 格式读取
+# 目标 8: cart_core —— cart.bin 格式读取
 # ==============================================================================
 add_library(cart_core STATIC
         ${CART_DIR}/cart_bin.c
@@ -295,7 +313,7 @@ if(CARTDESK_BUILD_HOST_TESTS)
 endif()
 
 # ==============================================================================
-# 目标 8: app_screen —— 应用层 UI 界面（启动器 / 缓存 / 预览）
+# 目标 9: app_screen —— 应用层 UI 界面（启动器 / 缓存 / 预览）
 # ==============================================================================
 add_library(app_screen STATIC
         ${SCREEN_PAGE_DIR}/ui_screen_launcher.c
@@ -316,7 +334,7 @@ target_include_directories(app_screen PUBLIC
 target_link_libraries(app_screen PUBLIC cartdesk_common lvgl drv_storage cart_core)
 
 # ==============================================================================
-# 目标 9: app_task —— RTOS / 裸机任务（LED / LVGL / LUA 任务）
+# 目标 10: app_task —— RTOS / 裸机任务（LED / LVGL / LUA 任务）
 # ==============================================================================
 add_library(app_task STATIC
         ${TASK_DIR}/cartdesk_task.h
@@ -329,7 +347,7 @@ target_include_directories(app_task PUBLIC ${TASK_DIR})
 target_link_libraries(app_task PUBLIC cartdesk_common lvgl lua_port)
 
 # ==============================================================================
-# 目标 10: board_test —— 板级 bring-up / smoke test 入口（默认不在 main 中执行）
+# 目标 11: board_test —— 板级 bring-up / smoke test 入口（默认不在 main 中执行）
 # ==============================================================================
 add_library(board_test STATIC
         ${DEBUG_DIR}/board_test.c
@@ -365,6 +383,7 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
         drv_display
         drv_storage
         drv_misc
+        drv_gpio
         lua_port
         app_screen
         app_task

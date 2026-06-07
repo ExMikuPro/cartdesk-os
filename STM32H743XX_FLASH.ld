@@ -61,7 +61,7 @@ RAM_D2 (xrw)      : ORIGIN = 0x30000000, LENGTH = 288K
 RAM_D3 (xrw)      : ORIGIN = 0x38000000, LENGTH = 64K
 ITCMRAM (xrw)      : ORIGIN = 0x00000000, LENGTH = 64K
 FLASH (rx)      : ORIGIN = 0x8000000, LENGTH = 2048K
-/* SDRAM 固定分区 - 依据 SDRAM_Layout_Spec_v1.0, 物理范围: 0xD0000000~0xD3FFFFFF */
+/* SDRAM 固定分区 - 依据 Docs/memory/SDRAM_Layout_Spec_v1.0.md, 物理范围: 0xD0000000~0xD3FFFFFF */
 SDRAM_LAYER1_FB0 (xrw) : ORIGIN = 0xD0000000, LENGTH = 0x00177000  /* 1.46 MiB - 主图层缓冲0 */
 SDRAM_LAYER1_FB1 (xrw) : ORIGIN = 0xD0177000, LENGTH = 0x00177000  /* 1.46 MiB - 主图层缓冲1 */
 SDRAM_LAYER2_FB0 (xrw) : ORIGIN = 0xD02EE000, LENGTH = 0x00177000  /* 1.46 MiB - 背景层单缓冲 */
@@ -115,7 +115,7 @@ SECTIONS
   } >FLASH
 
   /* ------------------------------------------------------------------ */
-  /* SDRAM 固定分区 sections - 依据 SDRAM_Layout_Spec_v1.0              */
+  /* SDRAM 固定分区 sections - 依据 Docs/memory/SDRAM_Layout_Spec_v1.0.md */
   /* ------------------------------------------------------------------ */
 
   /* Layer1_FB0: 主图层双缓冲 帧0  1.46 MiB  256字节对齐 */
@@ -156,6 +156,17 @@ SECTIONS
     *(.lvgl_heap)
     *(.lvgl_heap*)
     _eLvglHeap = .;
+  } >RAM
+
+  /* Large non-DMA runtime state: RTOS heap and Lua scheduler buffers. */
+  .ram_runtime (NOLOAD) :
+  {
+    . = ALIGN(32);
+    _sRamRuntime = .;
+    *(.ram_runtime)
+    *(.ram_runtime*)
+    . = ALIGN(32);
+    _eRamRuntime = .;
   } >RAM
 
   /* DMA_POOL: DMA专用区  4 MiB  64字节对齐 */
