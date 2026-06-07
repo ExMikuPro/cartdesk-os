@@ -41,6 +41,7 @@ extern CRC_HandleTypeDef hcrc;
 void MX_CRC_Init(void);
 
 /* USER CODE BEGIN Prototypes */
+uint32_t CRC32_IEEE_Calculate(const void *data, uint32_t size);
 
 /* USER CODE END Prototypes */
 

@@ -37,9 +37,11 @@
 #include <stdint.h>
 #include <stdio.h>
 
+#include "cmsis_os2.h"
 #include "board_test.h"
 #include "lcd.h"
 #include "sdram.h"
+#include "sdram_cold_pool.h"
 #include "ui_screen_launcher.h"
 
 
@@ -50,7 +52,7 @@
 #include "touch.h"
 #include "lvgl_init.h"
 #include "lvgl.h"
-#include "Task.h"
+#include "cartdesk_task.h"
 #include "flash.h"
 #include "lfs_port.h"
 /* USER CODE END Includes */
@@ -59,6 +61,16 @@
 /* USER CODE BEGIN PTD */
 
 static FLASH_Handle g_flash;
+static const osThreadAttr_t lvgl_task_attributes = {
+  .name = "lvgl",
+  .priority = osPriorityAboveNormal,
+  .stack_size = 8192
+};
+static const osThreadAttr_t lua_task_attributes = {
+  .name = "lua",
+  .priority = osPriorityNormal,
+  .stack_size = 8192
+};
 
 /* USER CODE END PTD */
 
@@ -83,6 +95,8 @@ static FLASH_Handle g_flash;
 void SystemClock_Config(void);
 static void MPU_Config(void);
 /* USER CODE BEGIN PFP */
+static void StartLvglTask(void *argument);
+static void StartLuaTask(void *argument);
 
 /* USER CODE END PFP */
 
@@ -152,6 +166,60 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
   }
 }
 
+void HAL_Delay(uint32_t Delay) {
+  if (osKernelGetState() == osKernelRunning) {
+    osDelay(Delay == 0U ? 1U : Delay);
+    return;
+  }
+
+  uint32_t tickstart = HAL_GetTick();
+  uint32_t wait = Delay;
+
+  if (wait < HAL_MAX_DELAY) {
+    wait += (uint32_t) uwTickFreq;
+  }
+
+  while ((HAL_GetTick() - tickstart) < wait) {
+  }
+}
+
+static void StartLvglTask(void *argument) {
+  (void) argument;
+
+  /* LCD/UI */
+  lv_init();
+
+  lv_mem_monitor_t mon;
+  lv_mem_monitor(&mon);
+
+  lv_port_disp_init(); // 显示端口初始化
+  lv_port_indev_init(); // ← 输入设备初始化
+  LCD_DisplayON();
+
+  Launcher_Init();
+  // DesignLauncher_Create(lv_display_get_default());
+
+  // lua_init();
+
+  if (osThreadNew(StartLuaTask, NULL, &lua_task_attributes) == NULL) {
+    Error_Handler();
+  }
+
+  for (;;) {
+    lvgl_task_handler();
+    osDelay(5);
+  }
+}
+
+static void StartLuaTask(void *argument) {
+  (void) argument;
+
+  for (;;) {
+    Task_LUA();
+    osDelay(5);
+  }
+}
+
 /* USER CODE END 0 */
 
 /**
@@ -205,8 +273,14 @@ int main(void)
   MX_TIM17_Init();
   MX_TIM16_Init();
   /* USER CODE BEGIN 2 */
+  if (osKernelInitialize() != osOK) {
+    Error_Handler();
+  }
+
   /* 初始化 SDRAM */
   SDRAM_Init();
+  sdram_layout_check();
+  cold_pool_init();
 
 
   /* 初始化 QSPI NOR + littlefs */
@@ -220,29 +294,19 @@ int main(void)
 #endif
 
   HAL_TIM_Base_Start_IT(&htim16);
-  /* LCD/UI */
-  lv_init();
 
-  lv_mem_monitor_t mon;
-  lv_mem_monitor(&mon);
+  if (osThreadNew(StartLvglTask, NULL, &lvgl_task_attributes) == NULL) {
+    Error_Handler();
+  }
 
-  lv_port_disp_init(); // 显示端口初始化
-  lv_port_indev_init(); // ← 输入设备初始化
-  LCD_DisplayON();
-
-  Launcher_Init();
-  // DesignLauncher_Create(lv_display_get_default());
-
-  // lua_init();
+  if (osKernelStart() != osOK) {
+    Error_Handler();
+  }
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1) {
-    /* 保持与 8ba7abf 历史可用版本一致，直接周期驱动 LVGL。 */
-    lvgl_task_handler();
-    Task_LUA();
-    HAL_Delay(5);
 
     /* USER CODE END WHILE */
 
@@ -384,7 +448,7 @@ void MPU_Config(void)
   /** Initializes and configures the Region and the memory to be protected
   */
   MPU_InitStruct.Number = MPU_REGION_NUMBER5;
-  MPU_InitStruct.BaseAddress = 0xD0000000;
+  MPU_InitStruct.BaseAddress = SDRAM_BASE_ADDR;
   MPU_InitStruct.Size = MPU_REGION_SIZE_64MB;
   MPU_InitStruct.AccessPermission = MPU_REGION_FULL_ACCESS;
   MPU_InitStruct.DisableExec = MPU_INSTRUCTION_ACCESS_ENABLE;

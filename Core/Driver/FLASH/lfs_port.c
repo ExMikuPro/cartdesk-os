@@ -7,6 +7,7 @@
 
 #include "lfs.h"
 #include "flash.h"
+#include "sdram_cold_pool.h"
 #include <string.h>
 #include <stdint.h>
 
@@ -63,14 +64,14 @@ lfs_t g_lfs;
 
 /**
  * 缓冲区说明:
- * - 放在SRAM中，32字节对齐 (对Cortex-M7 cache友好)
+ * - 从 SDRAM cold pool 分配，32字节对齐 (对Cortex-M7 cache友好)
  * - read_buf: 读缓存
  * - prog_buf: 编程缓存
  * - lookahead: 块分配前瞻缓冲区
  */
-static uint8_t g_read_buf[LFS_CACHE_SIZE]      __attribute__((aligned(32)));
-static uint8_t g_prog_buf[LFS_CACHE_SIZE]      __attribute__((aligned(32)));
-static uint8_t g_lookahead[LFS_LOOKAHEAD_SIZE] __attribute__((aligned(32)));
+static uint8_t *g_read_buf = NULL;
+static uint8_t *g_prog_buf = NULL;
+static uint8_t *g_lookahead = NULL;
 
 /** Flash驱动句柄 (由外部绑定) */
 static FLASH_Handle *s_flash = NULL;
@@ -203,10 +204,31 @@ static struct lfs_config g_cfg = {
     .lookahead_size = LFS_LOOKAHEAD_SIZE,
 
     /* 缓冲区 */
-    .read_buffer    = g_read_buf,
-    .prog_buffer    = g_prog_buf,
-    .lookahead_buffer = g_lookahead,
+    .read_buffer    = NULL,
+    .prog_buffer    = NULL,
+    .lookahead_buffer = NULL,
 };
+
+static int lfs_cold_buffers_init(void)
+{
+    if (g_read_buf != NULL && g_prog_buf != NULL && g_lookahead != NULL) {
+        return 0;
+    }
+
+    g_read_buf = (uint8_t *)cold_calloc(1u, LFS_CACHE_SIZE, 32u);
+    g_prog_buf = (uint8_t *)cold_calloc(1u, LFS_CACHE_SIZE, 32u);
+    g_lookahead = (uint8_t *)cold_calloc(1u, LFS_LOOKAHEAD_SIZE, 32u);
+
+    if (g_read_buf == NULL || g_prog_buf == NULL || g_lookahead == NULL) {
+        return -1;
+    }
+
+    g_cfg.read_buffer = g_read_buf;
+    g_cfg.prog_buffer = g_prog_buf;
+    g_cfg.lookahead_buffer = g_lookahead;
+
+    return 0;
+}
 
 /* ==================== 外部接口实现 ==================== */
 
@@ -216,6 +238,7 @@ static struct lfs_config g_cfg = {
 int LFS_PortBind(FLASH_Handle *flash)
 {
     if (!flash) return -1;
+    if (lfs_cold_buffers_init() != 0) return -1;
 
     s_flash = flash;
     g_cfg.context = flash;

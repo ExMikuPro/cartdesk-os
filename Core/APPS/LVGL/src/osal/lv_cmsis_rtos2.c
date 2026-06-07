@@ -101,7 +101,7 @@ lv_result_t lv_mutex_init(lv_mutex_t * mutex)
 
 lv_result_t lv_mutex_lock(lv_mutex_t * mutex)
 {
-    osStatus_t status = osMutexAcquire(*mutex, 0U);
+    osStatus_t status = osMutexAcquire(*mutex, osWaitForever);
     if(status != osOK)  {
         LV_LOG_WARN("Error: failed to lock cmsis-rtos2 mutex %d", (int)status);
         return LV_RESULT_INVALID;

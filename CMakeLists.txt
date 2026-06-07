@@ -16,6 +16,7 @@ project(${CMAKE_PROJECT_NAME} C ASM)
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 
 option(CARTDESK_ENABLE_BOARD_TESTS "Run board-level test diagnostics at startup" OFF)
+find_package(Python3 QUIET COMPONENTS Interpreter)
 
 # ==============================================================================
 # Project paths
@@ -39,6 +40,7 @@ set(FATFS_DIR ${PROJECT_ROOT}/FATFS)
 set(FATFS_APP_DIR ${FATFS_DIR}/App)
 set(FATFS_TARGET_DIR ${FATFS_DIR}/Target)
 set(FATFS_MIDDLEWARE_DIR ${PROJECT_ROOT}/Middlewares/Third_Party/FatFs/src)
+set(FREERTOS_DIR ${PROJECT_ROOT}/Middlewares/Third_Party/FreeRTOS/Source)
 
 set(STM32_HAL_INCLUDES
         ${PROJECT_ROOT}/Drivers/STM32H7xx_HAL_Driver/Inc
@@ -51,6 +53,13 @@ set(FATFS_INCLUDES
         ${FATFS_MIDDLEWARE_DIR}
         ${FATFS_TARGET_DIR}
         ${FATFS_APP_DIR}
+)
+
+set(FREERTOS_INCLUDES
+        ${FREERTOS_DIR}/include
+        ${FREERTOS_DIR}/portable/GCC/ARM_CM4F
+        ${FREERTOS_DIR}/CMSIS_RTOS_V2/include
+        ${PROJECT_ROOT}/Drivers/CMSIS/RTOS2/Include
 )
 
 set(LVGL_PUBLIC_INCLUDES
@@ -79,7 +88,31 @@ target_compile_definitions(cartdesk_common INTERFACE ${COMMON_DEFINES})
 target_include_directories(cartdesk_common INTERFACE
         ${CORE_INC_DIR}
         ${STM32_HAL_INCLUDES}
+        ${FREERTOS_INCLUDES}
 )
+
+# ==============================================================================
+# FreeRTOS Kernel + CMSIS-RTOS2 wrapper
+# ==============================================================================
+add_library(freertos_kernel STATIC
+        ${FREERTOS_DIR}/tasks.c
+        ${FREERTOS_DIR}/queue.c
+        ${FREERTOS_DIR}/list.c
+        ${FREERTOS_DIR}/timers.c
+        ${FREERTOS_DIR}/event_groups.c
+        ${FREERTOS_DIR}/stream_buffer.c
+        ${FREERTOS_DIR}/croutine.c
+        ${FREERTOS_DIR}/portable/GCC/ARM_CM4F/port.c
+        ${FREERTOS_DIR}/portable/MemMang/heap_4.c
+        ${FREERTOS_DIR}/CMSIS_RTOS_V2/cmsis_os2.c
+        ${FREERTOS_DIR}/CMSIS_RTOS_V2/os_systick.c
+)
+
+target_compile_definitions(freertos_kernel PUBLIC
+        CMSIS_OS2_CUSTOM_SYSTICK_HANDLER
+        CMSIS_device_header="stm32h7xx.h"
+)
+target_link_libraries(freertos_kernel PUBLIC cartdesk_common)
 
 # ==============================================================================
 # 目标 1: lua —— Lua 5.x 解释器核心
@@ -145,6 +178,8 @@ add_library(drv_display STATIC
         ${DRIVER_DIR}/LCD/lcd.h
         ${DRIVER_DIR}/SDRAM/sdram.c
         ${DRIVER_DIR}/SDRAM/sdram.h
+        ${DRIVER_DIR}/SDRAM/sdram_cold_pool.c
+        ${CORE_INC_DIR}/sdram_cold_pool.h
         ${LVGL_PORT_DIR}/lv_port_disp.c
         ${LVGL_PORT_DIR}/lv_port_disp.h
         ${LVGL_PORT_DIR}/lv_port_tick.c
@@ -220,9 +255,10 @@ add_library(lua_port STATIC
 target_include_directories(lua_port PUBLIC
         ${LUA_PORT_DIR}
         ${LUA_PORT_DIR}/modules
+        ${CART_DIR}
         ${FATFS_INCLUDES}
 )
-target_link_libraries(lua_port PUBLIC cartdesk_common lua lvgl)
+target_link_libraries(lua_port PUBLIC cartdesk_common lua lvgl cart_core)
 
 # ==============================================================================
 # 目标 7: cart_core —— cart.bin 格式读取
@@ -230,13 +266,33 @@ target_link_libraries(lua_port PUBLIC cartdesk_common lua lvgl)
 add_library(cart_core STATIC
         ${CART_DIR}/cart_bin.c
         ${CART_DIR}/cart_bin.h
+        ${CART_DIR}/xhgc_cart.c
+        ${CART_DIR}/xhgc_cart.h
 )
 
 target_include_directories(cart_core
-        PUBLIC ${CART_DIR}
-        PRIVATE ${FATFS_INCLUDES}
+        PUBLIC
+        ${CART_DIR}
+        ${FATFS_INCLUDES}
 )
-target_link_libraries(cart_core PUBLIC cartdesk_common)
+target_link_libraries(cart_core
+        PUBLIC cartdesk_common drv_storage
+)
+
+option(CARTDESK_BUILD_HOST_TESTS "Build host-side parser tests with a native toolchain" OFF)
+if(CARTDESK_BUILD_HOST_TESTS)
+    add_executable(xhgc_cart_host_test
+            ${PROJECT_ROOT}/tests/xhgc_cart_host_test.c
+            ${CART_DIR}/xhgc_cart.c
+            ${CART_DIR}/xhgc_cart.h
+    )
+    target_compile_definitions(xhgc_cart_host_test PRIVATE
+            XHGC_CART_NO_FATFS=1
+            XHGC_CART_NO_FLASH=1
+            XHGC_CART_NO_HW_CRC=1
+    )
+    target_include_directories(xhgc_cart_host_test PRIVATE ${CART_DIR})
+endif()
 
 # ==============================================================================
 # 目标 8: app_screen —— 应用层 UI 界面（启动器 / 缓存 / 预览）
@@ -254,6 +310,7 @@ add_library(app_screen STATIC
 target_include_directories(app_screen PUBLIC
         ${SCREEN_PAGE_DIR}
         ${SCREEN_UTILS_DIR}
+        ${TASK_DIR}
         ${DRIVER_DIR}/LCD
 )
 target_link_libraries(app_screen PUBLIC cartdesk_common lvgl drv_storage cart_core)
@@ -262,7 +319,7 @@ target_link_libraries(app_screen PUBLIC cartdesk_common lvgl drv_storage cart_co
 # 目标 9: app_task —— RTOS / 裸机任务（LED / LVGL / LUA 任务）
 # ==============================================================================
 add_library(app_task STATIC
-        ${TASK_DIR}/Task.h
+        ${TASK_DIR}/cartdesk_task.h
         ${TASK_DIR}/LED.c
         ${TASK_DIR}/LVGL.c
         ${TASK_DIR}/LUA.c
@@ -312,8 +369,21 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
         app_screen
         app_task
         board_test
+        freertos_kernel
         lvgl
         lua
         -Wl,--end-group
         m
 )
+
+if(Python3_Interpreter_FOUND)
+    add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
+            COMMAND ${Python3_EXECUTABLE}
+                    ${PROJECT_ROOT}/cmake/print_sdram_usage.py
+                    --map $<TARGET_FILE_DIR:${CMAKE_PROJECT_NAME}>/${CMAKE_PROJECT_NAME}.map
+            COMMENT "Printing SDRAM usage summary"
+            VERBATIM
+    )
+else()
+    message(WARNING "Python3 not found; SDRAM usage summary will not be printed after build")
+endif()

@@ -95,8 +95,8 @@
    OPERATING SYSTEM
  *=======================*/
 
-/* RTOS支持 (如果使用FreeRTOS,设置为1) */
-#define LV_USE_OS   LV_OS_NONE
+/* CMSIS-RTOS2 on FreeRTOS */
+#define LV_USE_OS   LV_OS_CMSIS_RTOS2
 
 /*========================
    RENDERING CONFIGURATION

@@ -9,7 +9,7 @@
 - `Core/LuaPort/lua_port.c`：把底层模块绑定到 Lua 全局环境。
 - `Core/LuaPort/modules/lua_gpio.c`：GPIO 模块。
 - `Core/LuaPort/modules/lua_tim.c`：微秒计时与微秒延时。
-- `Core/LuaPort/modules/lua_delay.c`：毫秒阻塞延时。
+- `Core/LuaPort/modules/lua_delay.c`：毫秒级协程延时。
 - `Core/LuaPort/modules/lua_sd.c`：FatFs SD 文件接口。
 - `Core/LuaPort/modules/lua_ui_button.c`：LVGL 按钮接口。
 - `Core/LuaPort/modules/lua_ui_slider.c`：LVGL 滑块接口。
@@ -54,15 +54,18 @@ end
 
 ### 1.3 标准库状态
 
-当前 `lua_init()` 只调用 `luaL_newstate()`，没有调用 `luaL_openlibs()`。
+当前 `lua_init()` 会打开一组适合嵌入式运行的轻量标准库：
 
-因此默认情况下，不要假设 `print`、`math`、`string`、`table`、`require` 等标准库已经存在。当前脚本侧稳定可用的是 `lua_port_bind()` 注册的全局对象和函数。
+| 库 | 说明 |
+| --- | --- |
+| `_G` / base | `print`、`type`、`pairs` 等基础函数 |
+| `coroutine` | 协程基础能力 |
+| `table` | 表处理函数 |
+| `string` | 字符串处理函数 |
+| `math` | 数学函数 |
+| `utf8` | UTF-8 辅助函数 |
 
-如需完整标准库，需要在 C 侧打开：
-
-```c
-luaL_openlibs(g_L);
-```
+`io`、`os`、`package`、`debug` 默认不打开。当前脚本侧稳定可用的是这些轻量标准库，以及 `lua_port_bind()` 注册的全局对象和函数。
 
 ## 2. 全局对象总览
 
@@ -76,7 +79,8 @@ luaL_openlibs(g_L);
 | `ui` | table | `lua_ui_button.c` / `lua_ui_slider.c` | LVGL UI 命名空间 |
 | `ui.button` | table | `lua_ui_button.c` | 按钮创建和控制 |
 | `ui.slider` | table | `lua_ui_slider.c` | 滑块创建和控制 |
-| `delay` | function | `lua_delay.c` | 毫秒阻塞延时 |
+| `delay` | function | `lua_delay.c` | 毫秒级协程延时 |
+| `print` | function | Lua base lib | 调试输出函数，输出去向由运行时日志实现决定 |
 
 ## 3. Lua 真值约定
 
@@ -172,7 +176,7 @@ gpio.write(gpio.PORTB, 1, true)
 
 ### `delay(ms)`
 
-毫秒级阻塞延时，底层调用 `HAL_Delay()`。
+毫秒级延时。在 `start()` / `update(dt)` 中调用时，`delay()` 会挂起当前 Lua 协程，运行时到期后再恢复执行，不会阻塞 RTOS 线程。
 
 参数：
 
@@ -186,7 +190,7 @@ gpio.write(gpio.PORTB, 1, true)
 delay(100)
 ```
 
-`delay()` 会阻塞当前主循环或任务。`update(dt)` 中应尽量避免长时间调用它，周期逻辑更推荐使用 `dt` 或 `tim.us()` 做状态机。
+如果 `delay()` 在不可 yield 的 Lua 上下文中调用，例如顶层 chunk 或部分 C 事件回调中，会回退到 `HAL_Delay()`。
 
 ## 6. tim API
 
@@ -772,6 +776,20 @@ slider:delete()
 
 ### 11.1 非阻塞闪灯
 
+使用 `delay()` 可以写成顺序逻辑，Lua VM 会在延时期间让出当前协程：
+
+```lua
+local led_on = false
+
+function update(dt)
+  led_on = not led_on
+  gpio.write(gpio.PORTB, 1, led_on)
+  delay(500)
+end
+```
+
+也可以继续使用 `dt` 做状态机：
+
 ```lua
 local acc = 0
 local led_on = false
@@ -822,10 +840,10 @@ end
 
 ## 12. 当前实现注意事项
 
-- `luaL_openlibs()` 当前未开启，标准库默认不可用。
+- 当前只打开 `_G` / `coroutine` / `table` / `string` / `math` / `utf8`，没有打开 `io`、`os`、`package`、`debug`。
 - `gpio.write()` 的第三个参数请使用 `true` / `false`，数字 `0` 在 Lua 中仍为真值。
 - GPIO 端口推荐使用 `"B"`、`"PB"` 或 `gpio.PORTB`；当前不要使用 `"GPIOB"` 这种字符串。
 - UI `set_callback()` 当前只保存 Lua 回调引用，尚未真正挂接 LVGL 事件。
 - UI 事件回调当前 C 代码传入的是 lightuserdata，不是可直接调用方法的 Lua 控件 userdata。
-- `delay()` 和 `tim.delay_us()` 都是阻塞调用。
+- `delay()` 在 `start()` / `update(dt)` 中是协程非阻塞延时；`tim.delay_us()` 仍是忙等阻塞调用。
 - SD 文件操作失败会抛 Lua 错误；需要脚本侧容错时，应先开启 `pcall` 所在标准库或在 C 侧提供封装。

@@ -4,11 +4,14 @@
 
 #include "ui_screen_launcher.h"
 
+#include <stdio.h>
 #include <string.h>
 
 #include "stm32h743xx.h"
 #include "cart_bin.h"
+#include "cartdesk_task.h"
 #include "ui_launcher_cache.h"
+#include "usart.h"
 
 
 /* ------------------------------------------------------------------ */
@@ -96,6 +99,37 @@ static lv_image_dsc_t s_image_dsc[DESIGN_APP_COUNT];
 
 static int s_selected_index = 0;
 
+static void prv_uart_write(const char *text)
+{
+    size_t len;
+
+    if (text == NULL || huart1.Instance != USART1) {
+        return;
+    }
+
+    len = strlen(text);
+    while (len > 0u) {
+        uint16_t chunk = (uint16_t)(len > 0xFFFFu ? 0xFFFFu : len);
+        if (HAL_UART_Transmit(&huart1, (uint8_t *)text, chunk, 100u) != HAL_OK) {
+            return;
+        }
+        text += chunk;
+        len -= chunk;
+    }
+}
+
+static void prv_uart_log_clicked_app(int index, const char *title)
+{
+    char buf[128];
+
+    if (title == NULL || title[0] == '\0') {
+        title = "(untitled)";
+    }
+
+    snprintf(buf, sizeof(buf), "[launcher] clicked app %d: %s\r\n", index, title);
+    prv_uart_write(buf);
+}
+
 /* ------------------------------------------------------------------ */
 /*  内部工具：DMA2D 从内存搬运到 SDRAM                                */
 /* ------------------------------------------------------------------ */
@@ -172,7 +206,26 @@ static void prv_set_selection(lv_obj_t *selected_obj)
 
 static void prv_box_clicked_cb(lv_event_t *e)
 {
-    prv_set_selection(lv_event_get_target(e));
+    lv_obj_t *slot = lv_event_get_current_target(e);
+    int clicked_index = -1;
+
+    prv_set_selection(slot);
+
+    for (int i = 0; i < DESIGN_APP_COUNT; i++) {
+        if (slot == s_slots[i]) {
+            clicked_index = i;
+            break;
+        }
+    }
+
+    if (clicked_index >= 0) {
+        const char *title = (clicked_index == 0) ? s_cart0_title : app_names[clicked_index];
+        prv_uart_log_clicked_app(clicked_index, title);
+    }
+
+    if (clicked_index == 0) {
+        Task_LUA_StartCart("0:/cart.bin");
+    }
 }
 
 static void prv_circle_clicked_cb(lv_event_t *e)
