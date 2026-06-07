@@ -7,10 +7,12 @@ extern "C" {
 #endif
 
 #define LUA_INPUT_ACTION_ID_MAX  24u
+#define LUA_INPUT_EVENT_MAX      24u
 #define LUA_MESSAGE_ID_MAX       32u
 #define LUA_MESSAGE_SENDER_MAX   32u
 
 typedef struct {
+  char event[LUA_INPUT_EVENT_MAX];
   bool pressed;
   bool released;
   bool repeated;

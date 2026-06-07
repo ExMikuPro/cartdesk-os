@@ -863,8 +863,10 @@ static int lua_rt_poll_entry(uint32_t now)
 
 static void lua_rt_push_input_action(lua_State *L, const LuaInputAction *action)
 {
-    lua_createtable(L, 0, 8);
+    lua_createtable(L, 0, 9);
 
+    lua_pushstring(L, action->event);
+    lua_setfield(L, -2, "event");
     lua_pushboolean(L, action->pressed);
     lua_setfield(L, -2, "pressed");
     lua_pushboolean(L, action->released);

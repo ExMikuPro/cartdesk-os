@@ -3,8 +3,10 @@
 
 #include "lua.h"
 #include "lauxlib.h"
+#include "lua_vm.h"
 #include "lvgl.h"
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 #ifndef LUA_UI_SLIDER_MODNAME
@@ -49,6 +51,7 @@ typedef struct {
   int event_cb_ref;   // Lua 事件回调函数引用（LUA_REGISTRYINDEX）
   lv_event_dsc_t* event_dsc; // LVGL 事件描述符
   lua_State* L;       // Lua 状态指针，用于事件回调
+  char input_id[LUA_INPUT_ACTION_ID_MAX];
 } ui_slider_ud_t;
 
 #define UI_SLIDER_MT "ui.slider.mt"
@@ -71,11 +74,44 @@ static const char* event_code_to_string(lv_event_code_t code) {
   switch (code) {
     case LV_EVENT_CLICKED: return "clicked";
     case LV_EVENT_PRESSED: return "pressed";
+    case LV_EVENT_PRESSING: return "pressing";
     case LV_EVENT_RELEASED: return "released";
     case LV_EVENT_LONG_PRESSED: return "long_pressed";
     case LV_EVENT_VALUE_CHANGED: return "value_changed";
     default: return "unknown";
   }
+}
+
+static bool event_code_is_input(lv_event_code_t code) {
+  switch (code) {
+    case LV_EVENT_CLICKED:
+    case LV_EVENT_PRESSED:
+    case LV_EVENT_PRESSING:
+    case LV_EVENT_RELEASED:
+    case LV_EVENT_LONG_PRESSED:
+    case LV_EVENT_VALUE_CHANGED:
+      return true;
+    default:
+      return false;
+  }
+}
+
+static void slider_init_input_id(ui_slider_ud_t* ud) {
+  snprintf(ud->input_id, sizeof(ud->input_id), "%s", "slider");
+}
+
+static void slider_post_input(ui_slider_ud_t* ud, lv_event_code_t code) {
+  if (!ud || !ud->slider || !event_code_is_input(code)) {
+    return;
+  }
+
+  LuaInputAction action = {0};
+  snprintf(action.event, sizeof(action.event), "%s", event_code_to_string(code));
+  action.pressed = (code == LV_EVENT_PRESSED || code == LV_EVENT_CLICKED);
+  action.released = (code == LV_EVENT_RELEASED || code == LV_EVENT_CLICKED);
+  action.repeated = (code == LV_EVENT_PRESSING || code == LV_EVENT_LONG_PRESSED);
+  action.value = (float)lv_slider_get_value(ud->slider);
+  (void)lua_post_input(ud->input_id, &action);
 }
 
 // 解析对齐方式
@@ -245,14 +281,21 @@ static int l_slider_set_callback(lua_State* L) {
     lua_pushvalue(L, 2);
     ud->event_cb_ref = luaL_ref(L, LUA_REGISTRYINDEX);
     ud->L = L;
-    if (ud->event_dsc == NULL) {
-      ud->event_dsc = lv_obj_add_event_cb(ud->slider, lvgl_slider_event_cb, LV_EVENT_ALL, NULL);
-    }
-  } else if (ud->event_dsc != NULL) {
-    lv_obj_remove_event_dsc(ud->slider, ud->event_dsc);
-    ud->event_dsc = NULL;
   }
 
+  return 0;
+}
+
+// slider:set_input_id(action_id)
+static int l_slider_set_input_id(lua_State* L) {
+  ui_slider_ud_t* ud = (ui_slider_ud_t*)luaL_checkudata(L, 1, UI_SLIDER_MT);
+  const char* input_id = check_string(L, 2);
+
+  check_slider_valid(ud);
+  luaL_argcheck(L, input_id[0] != '\0', 2, "input_id must not be empty");
+  luaL_argcheck(L, strlen(input_id) < LUA_INPUT_ACTION_ID_MAX, 2, "input_id is too long");
+
+  snprintf(ud->input_id, sizeof(ud->input_id), "%s", input_id);
   return 0;
 }
 
@@ -290,6 +333,7 @@ static const luaL_Reg ui_slider_methods[] = {
   {"set_style_border", l_slider_set_style_border},
   {"set_style_radius", l_slider_set_style_radius},
   {"set_callback", l_slider_set_callback},
+  {"set_input_id", l_slider_set_input_id},
   {"delete", l_slider_delete},
   {NULL, NULL}
 };
@@ -304,7 +348,11 @@ static void lvgl_slider_event_cb(lv_event_t* e) {
 
   // 从 user_data 获取用户数据
   ui_slider_ud_t* ud = (ui_slider_ud_t*)lv_obj_get_user_data(slider);
-  if (!ud || ud->event_cb_ref == LUA_NOREF || !ud->L) return;
+  if (!ud) return;
+
+  slider_post_input(ud, code);
+
+  if (ud->event_cb_ref == LUA_NOREF || !ud->L) return;
 
   // 调用 Lua 回调函数
   lua_State* L = ud->L;
@@ -349,6 +397,7 @@ static int l_slider_create(lua_State* L) {
   memset(ud, 0, sizeof(*ud));
   ud->event_cb_ref = LUA_NOREF;
   ud->L = L;
+  slider_init_input_id(ud);
 
   // 创建 LVGL 滑块
   ud->slider = lv_slider_create(parent);
@@ -359,6 +408,7 @@ static int l_slider_create(lua_State* L) {
 
   // 保存 userdata 指针到 LVGL 对象
   lv_obj_set_user_data(ud->slider, ud);
+  ud->event_dsc = lv_obj_add_event_cb(ud->slider, lvgl_slider_event_cb, LV_EVENT_ALL, NULL);
 
   // 绑定 metatable
   luaL_getmetatable(L, UI_SLIDER_MT);
@@ -392,6 +442,7 @@ static int l_slider_draw(lua_State* L) {
   memset(ud, 0, sizeof(*ud));
   ud->event_cb_ref = LUA_NOREF;
   ud->L = L;
+  slider_init_input_id(ud);
 
   // 创建 LVGL 滑块
   ud->slider = lv_slider_create(parent);
@@ -406,6 +457,7 @@ static int l_slider_draw(lua_State* L) {
 
   // 保存 userdata 指针到 LVGL 对象
   lv_obj_set_user_data(ud->slider, ud);
+  ud->event_dsc = lv_obj_add_event_cb(ud->slider, lvgl_slider_event_cb, LV_EVENT_ALL, NULL);
 
   // 绑定 metatable
   luaL_getmetatable(L, UI_SLIDER_MT);

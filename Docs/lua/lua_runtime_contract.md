@@ -89,7 +89,8 @@ end
 `on_input(self, action_id, action)`：
 
 - `action_id` 是输入动作 ID 字符串。
-- `action` 是输入事件表，宿主可提供 `pressed`、`released`、`value` 等字段。
+- `action` 是输入事件表，宿主可提供 `event`、`pressed`、`released`、`repeated`、`value`、`x`、`y`、`dx`、`dy` 等字段。
+- UI 按钮和滑块的 LVGL 输入事件统一投递到 `on_input`。控件默认 `action_id` 为 `"button"` / `"slider"`，可用 `set_input_id()` 设置脚本侧业务 ID。
 
 `on_message(self, message_id, message, sender)`：
 

@@ -323,6 +323,8 @@ static const luaL_Reg pwm_lib[] = {
   {"setup", l_pwm_setup},
   {"write", l_pwm_write},
   {"read", l_pwm_read},
+  {"set_freq", l_pwm_set_freq},
+  {"get_freq", l_pwm_get_freq},
   {"setFreq", l_pwm_set_freq},
   {"getFreq", l_pwm_get_freq},
   {"stop", l_pwm_stop},

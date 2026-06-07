@@ -8,9 +8,12 @@
 - `Core/Inc/lua_vm.h`：运行时对外 C 接口。
 - `Core/LuaPort/lua_port.c`：把底层模块绑定到 Lua 全局环境。
 - `Core/LuaPort/modules/lua_gpio.c`：GPIO 模块。
+- `Core/LuaPort/modules/lua_pwm.c`：PWM 模块。
 - `Core/LuaPort/modules/lua_tim.c`：微秒计时与微秒延时。
 - `Core/LuaPort/modules/lua_delay.c`：毫秒级协程延时。
 - `Core/LuaPort/modules/lua_sd.c`：FatFs SD 文件接口。
+- `Core/LuaPort/modules/lua_rng.c`：STM32 RNG 硬件随机数接口。
+- `Core/LuaPort/modules/lua_crc.c`：STM32 CRC 硬件 CRC32 接口。
 - `Core/LuaPort/modules/lua_ui_button.c`：LVGL 按钮接口。
 - `Core/LuaPort/modules/lua_ui_slider.c`：LVGL 滑块接口。
 
@@ -77,13 +80,29 @@ function on_reload(self) end
 | Lua 名称 | 类型 | 来源 | 说明 |
 | --- | --- | --- | --- |
 | `gpio` | table | `lua_gpio.c` | GPIO 读写、翻转 |
+| `pwm` | table | `lua_pwm.c` | PWM 配置、占空比和频率控制 |
 | `tim` | table | `lua_tim.c` | DWT 微秒计时、微秒忙等 |
 | `sd` | table | `lua_sd.c` | FatFs 文件读写 |
+| `rng` | table | `lua_rng.c` | STM32 RNG 硬件随机数 |
+| `crc` | table | `lua_crc.c` | 标准 IEEE CRC32 |
 | `ui` | table | `lua_ui_button.c` / `lua_ui_slider.c` | LVGL UI 命名空间 |
 | `ui.button` | table | `lua_ui_button.c` | 按钮创建和控制 |
 | `ui.slider` | table | `lua_ui_slider.c` | 滑块创建和控制 |
 | `delay` | function | `lua_delay.c` | 毫秒级协程延时 |
 | `print` | function | Lua base lib | 调试输出函数，输出去向由运行时日志实现决定 |
+
+## API 风格契约
+
+- 模块名使用小写名词，例如 `gpio`、`pwm`、`tim`、`sd`、`rng`、`crc`。
+- 新函数名使用 snake_case，例如 `pwm.set_freq()`、`rng.u32()`、`crc.crc32_hex()`。
+- 常量使用全大写，例如 `gpio.HIGH`、`gpio.LOW`、`pwm.DEFAULT_FREQ`。
+- 查询类 API 成功时直接返回值，失败时返回 `nil, err`。
+- 修改类 API 成功时返回 `true`，失败时返回 `nil, err`。
+- 参数数量或类型错误属于脚本错误，可以抛 Lua error。
+- 硬件失败、资源冲突、外设不可用、文件失败等运行时错误应返回 `nil, err`；SD 旧接口仍有部分历史行为会抛 Lua error，后续建议统一。
+- 旧 API 仅作为 legacy / compatibility 别名保留，新脚本优先使用推荐 API。
+- Lua 层隐藏 STM32 端口、pin mask、timer、channel、寄存器和 HAL handle 等板级细节。
+- 脚本申请的资源应在 `final(self)` 中释放，例如 `gpio.release()`、`pwm.release()` 和 UI 对象 `:delete()`。
 
 ## 3. Lua 真值约定
 
@@ -174,6 +193,45 @@ gpio.write(gpio.PORTB, 1, true)
 
 注意：当前端口解析逻辑会取字符串中第一个 `A..K` 字母。推荐使用 `"B"`、`"PB"` 或 `gpio.PORTB`。不要使用 `"GPIOB"`，因为当前实现会先命中 `G`。
 
+## PWM
+
+推荐新脚本使用 snake_case API。旧的 camelCase 名称仅作为 legacy / compatibility 别名保留。
+
+| API | 说明 |
+| --- | --- |
+| `pwm.count()` | 返回可用 PWM 数量 |
+| `pwm.list()` | 返回 PWM 列表 |
+| `pwm.info(pin)` | 返回指定 PWM 信息 |
+| `pwm.setup(pin, config)` | 设置 PWM，`config` 可为频率数字或配置表 |
+| `pwm.write(pin, duty)` | 写占空比 |
+| `pwm.read(pin)` | 读占空比 |
+| `pwm.set_freq(pin, freq)` | 设置频率 |
+| `pwm.get_freq(pin)` | 读取频率 |
+| `pwm.stop(pin)` | 停止输出 |
+| `pwm.release(pin)` | 释放 PWM |
+
+兼容别名：
+
+| API | 说明 |
+| --- | --- |
+| `pwm.setFreq(pin, freq)` | legacy，等同 `pwm.set_freq(pin, freq)` |
+| `pwm.getFreq(pin)` | legacy，等同 `pwm.get_freq(pin)` |
+
+示例：
+
+```lua
+local PWM_PIN = 0
+
+function init(self)
+  pwm.setup(PWM_PIN, { freq = pwm.DEFAULT_FREQ, duty = pwm.MIN, start = true })
+  pwm.set_freq(PWM_PIN, 2000)
+end
+
+function final(self)
+  pwm.release(PWM_PIN)
+end
+```
+
 ## 5. delay API
 
 ### `delay(ms)`
@@ -225,6 +283,60 @@ tim.delay_us(50)
 ```
 
 该函数会忙等阻塞。过大的 `us` 可能受 32 位计数计算影响，建议只用于短延时。
+
+## RNG
+
+`rng` 模块使用 STM32 HAL RNG，依赖 `MX_RNG_Init()` 已在 Lua VM 注册前完成。当前 `main()` 初始化顺序中已满足这一点。
+
+| API | 说明 |
+| --- | --- |
+| `rng.u32()` | 返回一个 `0..0xFFFFFFFF` 的整数；硬件失败返回 `nil, "rng hardware failed"` |
+| `rng.bytes(n)` | 返回长度为 `n` 的 Lua string；`n` 上限为 4096 字节 |
+
+`rng.bytes(n)` 要求 `n` 是整数；`n < 0` 或过大属于参数错误，会抛 Lua error。
+
+示例：
+
+```lua
+function init(self)
+  local n, err = rng.u32()
+  if not n then
+    print("rng failed", err)
+    return
+  end
+
+  local bytes, err = rng.bytes(16)
+  if not bytes then
+    print("rng bytes failed", err)
+    return
+  end
+
+  print("rng", n, #bytes)
+end
+```
+
+## CRC
+
+`crc` 模块使用 STM32 CRC 外设计算标准常见 IEEE CRC32。当前 `MX_CRC_Init()` 配置为默认多项式 `0x04C11DB7`、默认初始值 `0xFFFFFFFF`、输入按字节反转、输出反转，`CRC32_IEEE_Calculate()` 会追加最终异或 `0xFFFFFFFF`。因此 `crc.crc32_hex("hello")` 应返回 `"3610A686"`。
+
+| API | 说明 |
+| --- | --- |
+| `crc.crc32(data)` | `data` 为 Lua string，成功返回 CRC32 数值，硬件不可用返回 `nil, "crc hardware failed"` |
+| `crc.crc32_hex(data)` | 成功返回 8 位大写十六进制字符串 |
+
+示例：
+
+```lua
+function init(self)
+  local h, err = crc.crc32_hex("hello")
+  if not h then
+    print("crc failed", err)
+    return
+  end
+
+  print("crc32", h)
+end
+```
 
 ## 7. SD / FatFs API
 
@@ -417,13 +529,67 @@ btn:set_style_bg_color(0x2196F3, 255)
 
 `alpha` 范围建议为 `0..255`，默认 `255`。当前实现会转成 `uint8_t`，超出范围会截断。
 
-### 8.4 UI 回调说明
+### 8.4 UI 输入事件
 
-`set_callback(callback)` 会保存 Lua 回调引用，并把 C 事件回调挂到 LVGL 对象上。传入 `nil` 可清除 Lua 回调和对应 LVGL 事件描述符。
+按钮和滑块创建后会自动把 LVGL 输入事件投递到 Lua VM 的输入队列，并在下一次调度时调用：
 
-当前 C 事件回调实现把第一个参数压成 lightuserdata，不是带 metatable 的 Lua 控件对象。因此不应依赖 `obj:set_text(...)` 这种写法，除非 C 侧改为传回完整 userdata。
+```lua
+function on_input(self, action_id, action)
+end
+```
 
-推荐在 Lua 侧用闭包捕获控件对象：
+控件默认 `action_id`：
+
+| 控件 | 默认 `action_id` |
+| --- | --- |
+| `ui.button` | `"button"` |
+| `ui.slider` | `"slider"` |
+
+推荐用 `set_input_id(action_id)` 给控件设置脚本侧业务 ID，`action_id` 最长 23 字节。
+
+`action` 表字段：
+
+| 字段 | 说明 |
+| --- | --- |
+| `event` | LVGL 输入事件字符串 |
+| `pressed` | 按下或点击事件为 `true` |
+| `released` | 释放或点击事件为 `true` |
+| `repeated` | 按住重复或长按事件为 `true` |
+| `value` | 按钮为 `0/1`，滑块为当前滑块值 |
+| `x` / `y` / `dx` / `dy` | 预留给坐标类输入 |
+
+事件字符串转换函数已覆盖：
+
+| 事件字符串 |
+| --- |
+| `"clicked"` |
+| `"pressed"` |
+| `"pressing"` |
+| `"released"` |
+| `"long_pressed"` |
+| `"value_changed"` |
+| `"unknown"` |
+
+示例：
+
+```lua
+local btn = ui.button.draw(nil, 20, 20, 120, 50, "OK")
+btn:set_input_id("ok")
+
+function on_input(self, action_id, action)
+  if action_id == "ok" and action.event == "clicked" then
+    print("clicked")
+  end
+end
+```
+
+### 8.5 UI 回调兼容说明
+
+`set_callback(callback)` 会保存 Lua 回调引用，作为 legacy 兼容路径保留。传入 `nil` 可清除 Lua 回调，但不会移除控件的 LVGL 事件描述符，因为该描述符还负责投递 `on_input`。
+
+当前兼容回调实现把第一个参数压成 lightuserdata，不是带 metatable 的 Lua 控件对象。因此不应依赖 `obj:set_text(...)` 这种写法，除非 C 侧改为传回完整 userdata。
+
+需要使用兼容回调时，推荐在 Lua 侧用闭包捕获控件对象：
 
 ```lua
 local btn = ui.button.draw(nil, 20, 20, 120, 50, "OK")
@@ -441,6 +607,7 @@ end)
 | --- |
 | `"clicked"` |
 | `"pressed"` |
+| `"pressing"` |
 | `"released"` |
 | `"long_pressed"` |
 | `"value_changed"` |
@@ -602,7 +769,7 @@ end
 
 #### `button:set_callback(callback_or_nil)`
 
-设置或清除按钮事件回调。
+设置或清除按钮 legacy 事件回调。新脚本优先使用 `button:set_input_id()` 配合 `on_input()`。
 
 ```lua
 btn:set_callback(function(obj, event)
@@ -610,6 +777,14 @@ btn:set_callback(function(obj, event)
 end)
 
 btn:set_callback(nil) -- 清除回调
+```
+
+#### `button:set_input_id(action_id)`
+
+设置按钮投递到 `on_input(self, action_id, action)` 的动作 ID。`action_id` 必须非空且最长 23 字节。
+
+```lua
+btn:set_input_id("send")
 ```
 
 #### `button:delete()`
@@ -754,7 +929,7 @@ slider:set_style_radius(10)
 
 #### `slider:set_callback(callback_or_nil)`
 
-设置或清除滑块事件回调。
+设置或清除滑块 legacy 事件回调。新脚本优先使用 `slider:set_input_id()` 配合 `on_input()`。
 
 ```lua
 slider:set_callback(function(obj, event)
@@ -762,6 +937,14 @@ slider:set_callback(function(obj, event)
 end)
 
 slider:set_callback(nil) -- 清除回调
+```
+
+#### `slider:set_input_id(action_id)`
+
+设置滑块投递到 `on_input(self, action_id, action)` 的动作 ID。`action_id` 必须非空且最长 23 字节。
+
+```lua
+slider:set_input_id("volume")
 ```
 
 #### `slider:delete()`
@@ -829,15 +1012,25 @@ local slider
 
 function init(self)
   btn = ui.button.draw(nil, 20, 20, 140, 50, "Start")
+  btn:set_input_id("start")
   btn:set_style_bg_color(0x2196F3, 255)
   btn:set_style_text_color(0xFFFFFF)
   btn:set_style_radius(8)
 
   slider = ui.slider.draw(nil, 20, 100, 200, 20)
+  slider:set_input_id("level")
   slider:set_range(0, 100)
   slider:set_value(50, false)
   slider:set_style_indicator_color(0xFFC107, 255)
   slider:set_style_knob_color(0xFF9800, 255)
+end
+
+function on_input(self, action_id, action)
+  if action_id == "start" and action.event == "clicked" then
+    print("start")
+  elseif action_id == "level" and action.event == "value_changed" then
+    print("level", action.value)
+  end
 end
 ```
 
@@ -846,7 +1039,7 @@ end
 - 当前只打开 `_G` / `coroutine` / `table` / `string` / `math` / `utf8`，没有打开 `io`、`os`、`package`、`debug`。
 - `gpio.write()` 的第三个参数请使用 `true` / `false`，数字 `0` 在 Lua 中仍为真值。
 - GPIO 端口推荐使用 `"B"`、`"PB"` 或 `gpio.PORTB`；当前不要使用 `"GPIOB"` 这种字符串。
-- UI `set_callback()` 会挂接 LVGL 事件；事件名通过第二个参数传入 Lua 回调。
+- UI 控件创建后会默认挂接 LVGL 事件并投递到 `on_input()`；`set_callback()` 只是 legacy 兼容回调。
 - UI 事件回调当前 C 代码传入的是 lightuserdata，不是可直接调用方法的 Lua 控件 userdata。
 - `delay()` 在生命周期回调中是协程非阻塞延时；`tim.delay_us()` 仍是忙等阻塞调用。
 - SD 文件操作失败会抛 Lua 错误；需要脚本侧容错时，应先开启 `pcall` 所在标准库或在 C 侧提供封装。

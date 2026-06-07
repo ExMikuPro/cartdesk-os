@@ -41,6 +41,8 @@ end
 
 当前宿主实现里，`dt` 单位为秒：`update`/`late_update` 接收本帧耗时秒数，`fixed_update` 接收固定步长秒数。
 
+输入事件统一走 `on_input(self, action_id, action)`。`action.event` 表示宿主事件名，例如 `"pressed"`、`"released"`、`"clicked"`、`"long_pressed"`、`"value_changed"`；`action` 还可包含 `pressed`、`released`、`repeated`、`value`、`x`、`y`、`dx`、`dy`。UI 按钮和滑块默认 `action_id` 为 `"button"` / `"slider"`，可通过控件的 `set_input_id()` 改成脚本自己的业务名。
+
 示例：
 
 ```lua
@@ -56,6 +58,19 @@ function final(self)
     print("elapsed", self.elapsed)
 end
 ```
+
+## API 风格契约
+
+- 模块名使用小写名词，例如 `gpio`、`pwm`、`tim`、`sd`、`rng`、`crc`。
+- 新函数名使用 snake_case，例如 `pwm.set_freq()`、`rng.u32()`、`crc.crc32_hex()`。
+- 常量使用全大写，例如 `gpio.HIGH`、`gpio.LOW`、`pwm.DEFAULT_FREQ`。
+- 查询类 API 成功返回值，失败返回 `nil, err`。
+- 修改类 API 成功返回 `true`，失败返回 `nil, err`。
+- 参数错误可以抛 Lua error。
+- 运行时失败返回 `nil, err`；SD 旧接口仍有部分历史行为会抛 Lua error，未来建议统一。
+- 旧 API 仅作为兼容别名保留，新脚本优先使用推荐 API。
+- Lua 层隐藏 STM32 板级细节，不暴露 HAL handle、寄存器、timer/channel 等对象。
+- 资源应在 `final(self)` 中释放。
 
 ## 时间
 
@@ -167,10 +182,12 @@ end
 | `pwm.setup(pin, config)` | 设置 PWM，`config` 可为频率数字或配置表 |
 | `pwm.write(pin, duty)` | 写占空比 |
 | `pwm.read(pin)` | 读占空比 |
-| `pwm.setFreq(pin, freq)` | 设置频率 |
-| `pwm.getFreq(pin)` | 读取频率 |
+| `pwm.set_freq(pin, freq)` | 设置频率 |
+| `pwm.get_freq(pin)` | 读取频率 |
 | `pwm.stop(pin)` | 停止输出 |
 | `pwm.release(pin)` | 释放 PWM |
+| `pwm.setFreq(pin, freq)` | legacy 兼容别名，等同 `pwm.set_freq` |
+| `pwm.getFreq(pin)` | legacy 兼容别名，等同 `pwm.get_freq` |
 
 `pwm.setup(pin, config)` 支持：
 
@@ -206,6 +223,58 @@ end
 
 function final(self)
     pwm.release(PWM_PIN)
+end
+```
+
+## RNG
+
+`rng` 模块使用 STM32 RNG 硬件。`MX_RNG_Init()` 需要在 Lua VM 注册前完成，当前工程初始化顺序已经满足。
+
+| API | 说明 |
+| --- | --- |
+| `rng.u32()` | 返回 `0..0xFFFFFFFF` 的整数，硬件失败返回 `nil, err` |
+| `rng.bytes(n)` | 返回长度为 `n` 的 Lua string，`n` 上限为 4096 |
+
+示例：
+
+```lua
+function init(self)
+    local n, err = rng.u32()
+    if not n then
+        print("rng failed", err)
+        return
+    end
+
+    local bytes, err = rng.bytes(16)
+    if not bytes then
+        print("rng bytes failed", err)
+        return
+    end
+
+    print("rng", n, #bytes)
+end
+```
+
+## CRC
+
+`crc` 模块使用 STM32 CRC 外设计算标准 IEEE CRC32。当前参数模式为多项式 `0x04C11DB7`、初始值 `0xFFFFFFFF`、输入按字节反转、输出反转、最终异或 `0xFFFFFFFF`。`crc.crc32_hex("hello")` 应返回 `"3610A686"`。
+
+| API | 说明 |
+| --- | --- |
+| `crc.crc32(data)` | `data` 为 Lua string，成功返回 CRC32 数值，硬件失败返回 `nil, err` |
+| `crc.crc32_hex(data)` | 成功返回 8 位大写十六进制字符串 |
+
+示例：
+
+```lua
+function init(self)
+    local h, err = crc.crc32_hex("hello")
+    if not h then
+        print("crc failed", err)
+        return
+    end
+
+    print("crc32", h)
 end
 ```
 
@@ -300,7 +369,8 @@ end
 | `btn:clear_flag(flag)` | 清除 LVGL 标志字符串 |
 | `btn:set_checkable(enable)` | 设置是否可选中 |
 | `btn:is_checked()` | 返回是否选中 |
-| `btn:set_callback(function(btn, event) end)` | 设置事件回调 |
+| `btn:set_input_id(action_id)` | 设置投递到 `on_input` 的动作 ID |
+| `btn:set_callback(function(btn, event) end)` | legacy 兼容事件回调，新脚本优先使用 `on_input` |
 | `btn:delete()` | 删除按钮 |
 
 常用 `align` 字符串包括 `center`、`top_left`、`top_mid`、`top_right`、`bottom_left`、`bottom_mid`、`bottom_right`、`left_mid`、`right_mid`。常用 `flag` 字符串包括 `hidden`、`clickable`、`checkable`、`scrollable`、`press_lock`。
@@ -317,9 +387,13 @@ function init(self)
     self.btn:set_style_bg_color(0x2D8CFF, 255)
     self.btn:set_style_text_color(0xFFFFFF)
     self.btn:set_style_radius(8)
-    self.btn:set_callback(function(btn, event)
-        print("button", event)
-    end)
+    self.btn:set_input_id("start")
+end
+
+function on_input(self, action_id, action)
+    if action_id == "start" and action.event == "clicked" then
+        print("button clicked")
+    end
 end
 
 function final(self)
@@ -350,7 +424,8 @@ end
 | `slider:set_style_knob_color(color, alpha)` | 设置旋钮颜色和透明度 |
 | `slider:set_style_border(color, width)` | 设置边框。当前实现参数顺序为 `color, width` |
 | `slider:set_style_radius(radius)` | 设置圆角 |
-| `slider:set_callback(function(slider, event) end)` | 设置事件回调 |
+| `slider:set_input_id(action_id)` | 设置投递到 `on_input` 的动作 ID |
+| `slider:set_callback(function(slider, event) end)` | legacy 兼容事件回调，新脚本优先使用 `on_input` |
 | `slider:delete()` | 删除滑块 |
 
 示例：
@@ -361,9 +436,13 @@ function init(self)
     self.slider = ui.slider.draw(screen, 20, 90, 220, 24)
     self.slider:set_range(0, pwm.MAX)
     self.slider:set_value(0)
-    self.slider:set_callback(function(slider, event)
-        print("slider", event)
-    end)
+    self.slider:set_input_id("duty")
+end
+
+function on_input(self, action_id, action)
+    if action_id == "duty" and action.event == "value_changed" then
+        print("slider", action.value)
+    end
 end
 
 function final(self)

@@ -66,15 +66,18 @@ C code queues input with:
 
 ```c
 LuaInputAction action = {
+    .event = "pressed",
     .pressed = true,
     .value = 1.0f,
 };
 lua_post_input("a", &action);
 ```
 
-The Lua `action` table contains `pressed`, `released`, `repeated`, `value`,
-`x`, `y`, `dx`, and `dy`. The queue has fixed capacity and the API is intended
-for task context, not direct ISR use.
+The Lua `action` table contains `event`, `pressed`, `released`, `repeated`,
+`value`, `x`, `y`, `dx`, and `dy`. UI widgets post LVGL input events through
+this same queue. Buttons and sliders use their input ID as `action_id`, default
+to `"button"` / `"slider"`, and can be renamed with `set_input_id()`. The queue
+has fixed capacity and the API is intended for task context, not direct ISR use.
 
 ## Messages
 

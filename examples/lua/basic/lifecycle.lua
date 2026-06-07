@@ -19,7 +19,7 @@ function late_update(self, dt)
 end
 
 function on_input(self, action_id, action)
-    print("input", action_id, action.pressed, action.released, action.value)
+    print("input", action_id, action.event, action.pressed, action.released, action.value)
 end
 
 function on_message(self, message_id, message, sender)
