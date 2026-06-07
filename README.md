@@ -110,7 +110,7 @@ Core/Src/main.c
       -> 周期调用 Task_LUA()，未点击卡带槽时不会初始化 Lua VM
 ```
 
-`Launcher_Init()` 会创建启动器页面，并尝试从 `0:/cart.bin` 读取第一个卡带槽的标题和预览图。开机默认不创建 Lua VM；点击卡带槽后，启动器会显示启动状态，`Task_LUA_StartCart("0:/cart.bin")` 会请求启动脚本，随后 `Task_LUA()` 从 `cart.bin` 的 ENTRY 段加载 luac 并启动 Lua 运行时。
+`Launcher_Init()` 会创建启动器页面，并尝试从 `0:/cart.bin` 读取第一个卡带槽的标题和预览图。开机默认不创建 Lua VM；点击卡带槽后，启动器会切换到空白运行屏并保留系统 `EXIT` 按钮，`Task_LUA_StartCart("0:/cart.bin")` 会请求启动脚本，随后 `Task_LUA()` 从 `cart.bin` 的 ENTRY 段加载 luac 并启动 Lua 运行时。点击 `EXIT` 会同步停止 Lua VM、清理运行屏上的 LVGL 对象，并回到 launcher。
 
 ## cart.bin
 

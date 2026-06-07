@@ -91,6 +91,8 @@ static lv_obj_t *s_slot_labels[DESIGN_APP_COUNT];
 static lv_obj_t *s_circles[DESIGN_CIRCLE_COUNT];
 static lv_obj_t *s_circle_labels[DESIGN_CIRCLE_COUNT];
 static lv_obj_t *s_status_label = NULL;
+static lv_obj_t *s_launcher_screen = NULL;
+static lv_obj_t *s_runtime_screen = NULL;
 
 /*
  * 每个槽独立的 LVGL 图像描述符。
@@ -144,6 +146,59 @@ static void prv_set_status_text(const char *text)
 
     lv_label_set_text(s_status_label, text);
     lv_obj_remove_flag(s_status_label, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void prv_show_launcher_screen(void)
+{
+    if (s_launcher_screen == NULL) {
+        s_launcher_screen = lv_obj_create(NULL);
+    }
+
+    lv_screen_load(s_launcher_screen);
+    if (s_runtime_screen != NULL) {
+        lv_obj_delete(s_runtime_screen);
+        s_runtime_screen = NULL;
+    }
+
+    DesignLauncher_Destroy();
+    DesignLauncher_Create(NULL);
+}
+
+static void prv_runtime_exit_clicked_cb(lv_event_t *e)
+{
+    (void)e;
+
+    Task_LUA_Stop();
+    Task_LUA();
+    prv_show_launcher_screen();
+}
+
+static void prv_show_runtime_screen(void)
+{
+    if (s_runtime_screen != NULL) {
+        lv_obj_delete(s_runtime_screen);
+        s_runtime_screen = NULL;
+    }
+
+    s_runtime_screen = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(s_runtime_screen, lv_color_hex(COLOR_BG), 0);
+    lv_obj_set_style_pad_all(s_runtime_screen, 0, 0);
+
+    lv_obj_t *exit_btn = lv_button_create(s_runtime_screen);
+    lv_obj_set_size(exit_btn, 96, 42);
+    lv_obj_align(exit_btn, LV_ALIGN_TOP_RIGHT, -16, 16);
+    lv_obj_set_style_bg_color(exit_btn, lv_color_hex(COLOR_BLACK), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(exit_btn, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_radius(exit_btn, 4, LV_PART_MAIN);
+    lv_obj_add_event_cb(exit_btn, prv_runtime_exit_clicked_cb, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t *label = lv_label_create(exit_btn);
+    lv_label_set_text(label, "EXIT");
+    lv_obj_set_style_text_color(label, lv_color_hex(COLOR_BG), 0);
+    lv_obj_center(label);
+
+    DesignLauncher_Destroy();
+    lv_screen_load(s_runtime_screen);
 }
 
 /* ------------------------------------------------------------------ */
@@ -240,9 +295,11 @@ static void prv_box_clicked_cb(lv_event_t *e)
     }
 
     if (clicked_index == 0) {
-        prv_set_status_text(Task_LUA_IsRunning()
-                            ? "Lua is already running"
-                            : "Launching cart.bin...");
+        if (Task_LUA_IsRunning()) {
+            prv_set_status_text("Lua is already running");
+            return;
+        }
+        prv_show_runtime_screen();
         Task_LUA_StartCart("0:/cart.bin");
     }
 }
@@ -387,6 +444,7 @@ static void prv_create_status_label(lv_obj_t *parent)
 
 void Launcher_Init(void)
 {
+    s_launcher_screen = lv_screen_active();
     DesignLauncher_Destroy();
     DesignLauncher_Create(NULL);
 }
@@ -396,6 +454,10 @@ void DesignLauncher_Create(lv_display_t *disp)
     lv_obj_t *scr = (disp != NULL)
                     ? lv_display_get_screen_active(disp)
                     : lv_screen_active();
+
+    if (s_runtime_screen == NULL) {
+        s_launcher_screen = scr;
+    }
 
     launcher_cache_init();
     lv_obj_set_style_pad_all(scr, 0, 0);
