@@ -17,6 +17,7 @@ message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 
 option(CARTDESK_ENABLE_BOARD_TESTS "Run board-level test diagnostics at startup" OFF)
 find_package(Python3 QUIET COMPONENTS Interpreter)
+include(ExternalProject)
 
 # ==============================================================================
 # Project paths
@@ -37,6 +38,7 @@ set(SCREEN_DIR ${CORE_DIR}/Screen)
 set(SCREEN_PAGE_DIR ${SCREEN_DIR}/Page)
 set(SCREEN_UTILS_DIR ${SCREEN_DIR}/utils)
 set(DEBUG_DIR ${CORE_DIR}/Debug)
+set(TOOLS_DIR ${PROJECT_ROOT}/tools)
 set(FATFS_DIR ${PROJECT_ROOT}/FATFS)
 set(FATFS_APP_DIR ${FATFS_DIR}/App)
 set(FATFS_TARGET_DIR ${FATFS_DIR}/Target)
@@ -68,6 +70,47 @@ set(LVGL_PUBLIC_INCLUDES
         ${LVGL_DIR}/src
         ${LVGL_DIR}/src/core
         ${LVGL_PORT_DIR}
+)
+
+# ==============================================================================
+# Host tools
+#
+# The firmware presets use an arm-none-eabi toolchain. Build PC-side tools in a
+# separate native CMake project so they are runnable by packers on the host.
+# ==============================================================================
+set(HOST_TOOLS_BUILD_DIR ${PROJECT_ROOT}/build/host_tools CACHE PATH
+        "Native build directory for host-side tools")
+set(LUAVM_PACKER_TOOLS_DIR ${PROJECT_ROOT}/packer/tools CACHE PATH
+        "Directory where the packer expects the host luavm executable")
+
+if(CMAKE_HOST_WIN32)
+    set(LUAVM_HOST_EXE_NAME luavm.exe)
+else()
+    set(LUAVM_HOST_EXE_NAME luavm)
+endif()
+set(LUAVM_HOST_EXECUTABLE ${HOST_TOOLS_BUILD_DIR}/bin/${LUAVM_HOST_EXE_NAME})
+set(LUAVM_PACKER_EXECUTABLE ${LUAVM_PACKER_TOOLS_DIR}/${LUAVM_HOST_EXE_NAME})
+
+ExternalProject_Add(luavm_tool
+        SOURCE_DIR ${TOOLS_DIR}/luavm
+        BINARY_DIR ${HOST_TOOLS_BUILD_DIR}
+        CMAKE_ARGS
+            -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
+            -DCARTDESK_PROJECT_ROOT=${PROJECT_ROOT}
+        BUILD_BYPRODUCTS ${LUAVM_HOST_EXECUTABLE}
+        BUILD_ALWAYS TRUE
+        EXCLUDE_FROM_ALL TRUE
+        INSTALL_COMMAND ""
+)
+
+add_custom_target(copy_luavm_to_packer
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${LUAVM_PACKER_TOOLS_DIR}
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${LUAVM_HOST_EXECUTABLE}
+                ${LUAVM_PACKER_EXECUTABLE}
+        DEPENDS luavm_tool
+        COMMENT "Copying host luavm to ${LUAVM_PACKER_EXECUTABLE}"
+        VERBATIM
 )
 
 # ==============================================================================

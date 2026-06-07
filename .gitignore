@@ -1,5 +1,6 @@
 # CLion
 .idea/
+.DS_Store
 cmake-build-*/
 build
 
@@ -14,11 +15,14 @@ Makefile
 # 编译输出
 *.o
 *.elf
+*.exe
 *.bin
 *.hex
 *.map
 *.lst
 *.a
+packer/tools/luavm
+packer/tools/luavm.exe
 
 # CubeMX 生成的部分（按需选择是否忽略）
 # 如果你想追踪 CubeMX 生成的代码就注释掉下面这行

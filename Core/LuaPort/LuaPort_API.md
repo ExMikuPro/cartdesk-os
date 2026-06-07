@@ -168,7 +168,6 @@ end
 | `gpio.PORTK` | `"K"`，仅芯片/宏存在时导出 |
 
 推荐写法：
-
 ```lua
 gpio.write(gpio.PORTB, 1, true)
 ```
