@@ -19,6 +19,7 @@ typedef struct {
   lv_obj_t* btn;      // LVGL 按钮对象指针
   lv_obj_t* label;    // 按钮上的标签（可选）
   int event_cb_ref;   // Lua 事件回调函数引用（LUA_REGISTRYINDEX）
+  lv_event_dsc_t* event_dsc; // LVGL 事件描述符
   lua_State* L;       // Lua 状态指针，用于事件回调
 } lvgl_btn_ud_t;
 
@@ -81,7 +82,7 @@ static const char* event_code_to_string(lv_event_code_t code) {
 
 static void lvgl_btn_event_cb(lv_event_t* e) {
   lv_event_code_t code = lv_event_get_code(e);
-  lv_obj_t* btn = lv_event_get_target(e);
+  lv_obj_t* btn = lv_event_get_current_target(e);
 
   // 从 user_data 获取用户数据
   lvgl_btn_ud_t* ud = (lvgl_btn_ud_t*)lv_obj_get_user_data(btn);
@@ -311,6 +312,7 @@ static int l_btn_set_callback(lua_State* L) {
   lvgl_btn_ud_t* ud = check_btn_userdata(L, 1);
 
   check_btn_valid(ud);
+  luaL_argcheck(L, lua_isfunction(L, 2) || lua_isnil(L, 2), 2, "expected function or nil");
 
   // 清除之前的回调
   if (ud->event_cb_ref != LUA_NOREF) {
@@ -320,8 +322,15 @@ static int l_btn_set_callback(lua_State* L) {
 
   // 设置新回调
   if (lua_isfunction(L, 2)) {
+    lua_pushvalue(L, 2);
     ud->event_cb_ref = luaL_ref(L, LUA_REGISTRYINDEX);
     ud->L = L;
+    if (ud->event_dsc == NULL) {
+      ud->event_dsc = lv_obj_add_event_cb(ud->btn, lvgl_btn_event_cb, LV_EVENT_ALL, NULL);
+    }
+  } else if (ud->event_dsc != NULL) {
+    lv_obj_remove_event_dsc(ud->btn, ud->event_dsc);
+    ud->event_dsc = NULL;
   }
 
   return 0;
@@ -332,6 +341,10 @@ static int l_btn_delete(lua_State* L) {
   lvgl_btn_ud_t* ud = check_btn_userdata(L, 1);
 
   if (ud->btn) {
+    if (ud->event_dsc != NULL) {
+      lv_obj_remove_event_dsc(ud->btn, ud->event_dsc);
+      ud->event_dsc = NULL;
+    }
     lv_obj_delete(ud->btn);
     ud->btn = NULL;
     ud->label = NULL;

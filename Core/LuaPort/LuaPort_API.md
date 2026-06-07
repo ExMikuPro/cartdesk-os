@@ -417,13 +417,13 @@ btn:set_style_bg_color(0x2196F3, 255)
 
 `alpha` 范围建议为 `0..255`，默认 `255`。当前实现会转成 `uint8_t`，超出范围会截断。
 
-### 8.4 UI 回调当前限制
+### 8.4 UI 回调说明
 
-`set_callback(callback)` 当前会保存 Lua 回调引用，但源码中尚未调用 `lv_obj_add_event_cb()` 把 C 事件回调挂到 LVGL 对象上，因此事件不会自动触发。
+`set_callback(callback)` 会保存 Lua 回调引用，并把 C 事件回调挂到 LVGL 对象上。传入 `nil` 可清除 Lua 回调和对应 LVGL 事件描述符。
 
-同时，当前 C 事件回调实现把第一个参数压成 lightuserdata，不是带 metatable 的 Lua 控件对象。即使后续接上事件，也不应依赖 `obj:set_text(...)` 这种写法，除非 C 侧改为传回完整 userdata。
+当前 C 事件回调实现把第一个参数压成 lightuserdata，不是带 metatable 的 Lua 控件对象。因此不应依赖 `obj:set_text(...)` 这种写法，除非 C 侧改为传回完整 userdata。
 
-推荐未来修复事件派发后，在 Lua 侧用闭包捕获控件对象：
+推荐在 Lua 侧用闭包捕获控件对象：
 
 ```lua
 local btn = ui.button.draw(nil, 20, 20, 120, 50, "OK")
@@ -606,7 +606,7 @@ end
 
 ```lua
 btn:set_callback(function(obj, event)
-  -- 当前事件尚未自动接入 LVGL，见“UI 回调当前限制”
+  -- obj 当前是 lightuserdata，建议用闭包里的 btn 操作控件
 end)
 
 btn:set_callback(nil) -- 清除回调
@@ -758,7 +758,7 @@ slider:set_style_radius(10)
 
 ```lua
 slider:set_callback(function(obj, event)
-  -- 当前事件尚未自动接入 LVGL，见“UI 回调当前限制”
+  -- obj 当前是 lightuserdata，建议用闭包里的 slider 操作控件
 end)
 
 slider:set_callback(nil) -- 清除回调
@@ -846,7 +846,7 @@ end
 - 当前只打开 `_G` / `coroutine` / `table` / `string` / `math` / `utf8`，没有打开 `io`、`os`、`package`、`debug`。
 - `gpio.write()` 的第三个参数请使用 `true` / `false`，数字 `0` 在 Lua 中仍为真值。
 - GPIO 端口推荐使用 `"B"`、`"PB"` 或 `gpio.PORTB`；当前不要使用 `"GPIOB"` 这种字符串。
-- UI `set_callback()` 当前只保存 Lua 回调引用，尚未真正挂接 LVGL 事件。
+- UI `set_callback()` 会挂接 LVGL 事件；事件名通过第二个参数传入 Lua 回调。
 - UI 事件回调当前 C 代码传入的是 lightuserdata，不是可直接调用方法的 Lua 控件 userdata。
 - `delay()` 在生命周期回调中是协程非阻塞延时；`tim.delay_us()` 仍是忙等阻塞调用。
 - SD 文件操作失败会抛 Lua 错误；需要脚本侧容错时，应先开启 `pcall` 所在标准库或在 C 侧提供封装。

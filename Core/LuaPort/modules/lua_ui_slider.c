@@ -47,10 +47,13 @@ static inline const char* check_string(lua_State* L, int idx) {
 typedef struct {
   lv_obj_t* slider;   // LVGL 滑块对象指针
   int event_cb_ref;   // Lua 事件回调函数引用（LUA_REGISTRYINDEX）
+  lv_event_dsc_t* event_dsc; // LVGL 事件描述符
   lua_State* L;       // Lua 状态指针，用于事件回调
 } ui_slider_ud_t;
 
 #define UI_SLIDER_MT "ui.slider.mt"
+
+static void lvgl_slider_event_cb(lv_event_t* e);
 
 // -----------------------------
 // 3) 辅助函数
@@ -229,6 +232,7 @@ static int l_slider_set_callback(lua_State* L) {
   ui_slider_ud_t* ud = (ui_slider_ud_t*)luaL_checkudata(L, 1, UI_SLIDER_MT);
 
   check_slider_valid(ud);
+  luaL_argcheck(L, lua_isfunction(L, 2) || lua_isnil(L, 2), 2, "expected function or nil");
   
   // 清除之前的回调
   if (ud->event_cb_ref != LUA_NOREF) {
@@ -238,8 +242,15 @@ static int l_slider_set_callback(lua_State* L) {
 
   // 设置新回调
   if (lua_isfunction(L, 2)) {
+    lua_pushvalue(L, 2);
     ud->event_cb_ref = luaL_ref(L, LUA_REGISTRYINDEX);
     ud->L = L;
+    if (ud->event_dsc == NULL) {
+      ud->event_dsc = lv_obj_add_event_cb(ud->slider, lvgl_slider_event_cb, LV_EVENT_ALL, NULL);
+    }
+  } else if (ud->event_dsc != NULL) {
+    lv_obj_remove_event_dsc(ud->slider, ud->event_dsc);
+    ud->event_dsc = NULL;
   }
 
   return 0;
@@ -250,6 +261,10 @@ static int l_slider_delete(lua_State* L) {
   ui_slider_ud_t* ud = (ui_slider_ud_t*)luaL_checkudata(L, 1, UI_SLIDER_MT);
 
   if (ud->slider) {
+    if (ud->event_dsc != NULL) {
+      lv_obj_remove_event_dsc(ud->slider, ud->event_dsc);
+      ud->event_dsc = NULL;
+    }
     lv_obj_delete(ud->slider);
     ud->slider = NULL;
   }
@@ -285,7 +300,7 @@ static const luaL_Reg ui_slider_methods[] = {
 
 static void lvgl_slider_event_cb(lv_event_t* e) {
   lv_event_code_t code = lv_event_get_code(e);
-  lv_obj_t* slider = lv_event_get_target(e);
+  lv_obj_t* slider = lv_event_get_current_target(e);
 
   // 从 user_data 获取用户数据
   ui_slider_ud_t* ud = (ui_slider_ud_t*)lv_obj_get_user_data(slider);
