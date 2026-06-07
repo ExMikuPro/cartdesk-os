@@ -36,7 +36,7 @@ function on_reload(self) end
 `lua_update_task()` 需要在主循环或任务里反复调用。每帧依次处理输入、固定更新、普通更新、后置更新和消息。
 
 每个脚本实例拥有独立的环境和 `self` 表。详细行为见
-`Docs/lua_lifecycle.md`。
+`Docs/lua/lua_lifecycle.md`。
 
 默认调度参数：
 

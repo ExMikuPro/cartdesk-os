@@ -5,7 +5,7 @@
 #include <stdint.h>
 
 /*
- * SDRAM fixed layout defined by Docs/SDRAM_Layout_Spec_v1.0.md
+ * SDRAM fixed layout defined by Docs/memory/SDRAM_Layout_Spec_v1.0.md
  * Physical range: 0xD0000000 ~ 0xD3FFFFFF (64 MiB)
  */
 
