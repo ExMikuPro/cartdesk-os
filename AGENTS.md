@@ -57,6 +57,18 @@ Before proposing a commit message:
 
 Unless otherwise requested, output only the final commit subject.
 
+## Documentation update policy
+
+When adding, changing, or removing a feature, update the relevant Markdown documentation in the same change.
+
+Required behavior:
+
+* Update `README.md`, feature docs, API docs, usage examples, or changelog entries when user-facing or developer-facing behavior changes.
+* If a feature introduces configuration, commands, lifecycle hooks, public APIs, file formats, or editor-facing behavior, document it before considering the task complete.
+* Keep documentation consistent with the actual implementation. Do not describe planned behavior as if it already exists.
+* If no documentation update is needed, explicitly state why in the final response.
+
+
 ## Code exploration policy
 
 Before using grep/find/Read for project-wide exploration, use CodeGraph first.

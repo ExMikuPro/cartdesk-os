@@ -1,212 +1,166 @@
-# LVGL 9.5.0 移植文件包 - STM32H743
+<p align="center">
+  <img src="Docs/assets/cartdesk-os-logo.png" alt="cartdesk os logo" width="900">
+</p>
 
-## 文件列表
+# cartdesk-os
 
-### 核心驱动文件 (放在 Core/APPS/LVGL/port/)
-```
-lv_port_disp.c        # 显示驱动实现
-lv_port_disp.h        # 显示驱动头文件
-lv_port_tick.c        # 时钟驱动实现
-lv_port_tick.h        # 时钟驱动头文件
-lv_port_indev.c       # 输入设备驱动(触摸屏框架,暂未启用)
-lv_port_indev.h       # 输入设备驱动头文件
-lvgl_init.c           # LVGL初始化总入口
-lvgl_init.h           # 初始化头文件
-```
+`cartdesk-os` 是一个运行在 STM32H743 上的嵌入式桌面/启动器固件。它以 LVGL 9.5 为图形层，使用 LTDC + SDRAM 做 800x480 ARGB8888 显示，内置 Lua 运行时，并通过 SD 卡里的 `cart.bin` 读取应用标题、预览图和入口脚本。
 
-### 配置文件 (放在 Core/APPS/LVGL/)
-```
-lv_conf.h             # LVGL配置文件
-```
+这个项目目前更像一台小型掌机/桌面终端的固件底座：上电后初始化板级外设，进入 LVGL 启动器界面，用户点击卡带槽后再启动 Lua 应用。
 
-## 使用说明
+## 当前能力
 
-### 1. 文件放置位置
+- LVGL 9.5 图形栈，包含显示、tick、输入设备移植层。
+- LTDC 双缓冲显示链路，配合 VBlank/page flip 降低撕裂。
+- 64 MiB 外部 SDRAM 固定分区，用于 framebuffer、LVGL heap、DMA pool、launcher cache 和应用资源区。
+- SD 卡 `cart.bin` 读取，launcher 可显示卡带标题和 200x200 ARGB8888 预览图。
+- Lua VM 运行时，支持生命周期函数和 GPIO/PWM/SD/UI 等宿主 API。
+- FreeRTOS/CMSIS-RTOS2 任务模型，LVGL 和 Lua 在独立任务路径中调度。
+- CMake/Ninja 构建，按模块拆成显示、存储、GPIO、Lua、UI、任务等静态库。
 
-根据你的CMakeLists.txt,文件应放置在:
-```
-Core/APPS/LVGL/port/lv_port_disp.c
-Core/APPS/LVGL/port/lv_port_disp.h
-Core/APPS/LVGL/port/lv_port_tick.c
-Core/APPS/LVGL/port/lv_port_tick.h  
-Core/APPS/LVGL/port/lv_port_indev.c
-Core/APPS/LVGL/port/lv_port_indev.h
-Core/APPS/LVGL/port/lvgl_init.c
-Core/APPS/LVGL/port/lvgl_init.h
-Core/APPS/LVGL/lv_conf.h
-```
+## 硬件目标
 
-### 2. main.c中的调用示例
+当前工程面向以下硬件配置：
 
-```c
-#include "main.h"
-#include "lvgl_init.h"
-#include "lvgl.h"
+| 项目 | 配置 |
+| --- | --- |
+| MCU | STM32H743 |
+| 屏幕 | 800x480，ARGB8888 |
+| 显示 | LTDC + DMA2D |
+| 外部内存 | 64 MiB SDRAM，起始地址 `0xD0000000` |
+| 存储 | SD/FatFs，卡带镜像路径 `0:/cart.bin` |
+| 触摸 | GT911 路径已接入 LVGL 输入层 |
+| 日志 | 标准输出重定向到板级串口路径 |
 
-int main(void)
-{
-    /* MCU初始化 */
-    HAL_Init();
-    SystemClock_Config();
-    
-    /* 外设初始化 */
-    MX_GPIO_Init();
-    MX_LTDC_Init();
-    MX_DMA2D_Init();
-    MX_FMC_Init();  // SDRAM初始化
-    
-    /* LVGL初始化 */
-    lvgl_init();
-    
-    /* 创建UI示例 */
-    lv_obj_t *label = lv_label_create(lv_screen_active());
-    lv_label_set_text(label, "Hello LVGL 9.5.0!");
-    lv_obj_center(label);
-    
-    /* 主循环 */
-    while (1)
-    {
-        lvgl_task_handler();
-        HAL_Delay(5);  // 5ms调用一次
-    }
-}
+硬件管脚和 CubeMX 派生配置以仓库根目录的 `cartdesk-os.ioc`、`Core/Inc/main.h` 和 `Core/Src/*` 初始化文件为准。
+
+## 构建
+
+需要准备：
+
+- CMake 3.22+
+- Ninja
+- `arm-none-eabi-gcc` 工具链
+- Python 3，用于构建后打印 SDRAM 使用情况
+
+配置并构建 Debug 固件：
+
+```sh
+cmake --preset Debug
+cmake --build --preset Debug
 ```
 
-### 3. 关键特性说明
+Release 构建：
 
-#### 双缓冲配置
-- **Layer0**: 单缓冲 (暂不使用,可用于背景)
-- **Layer1**: 双缓冲 (LVGL使用)
-  - Front buffer: 0xD0000000 + FB_SIZE
-  - Back buffer:  0xD0000000 + FB_SIZE*2
-  
-#### 颜色格式
-- LCD驱动使用: ARGB8888 (0xAARRGGBB)
-- LVGL配置为: LV_COLOR_FORMAT_ARGB8888
-- 驱动已自动处理字节序转换
-
-#### VBlank同步
-- LCD驱动提供VBlank计数器
-- 显示驱动会等待pending swap完成
-- 支持获取帧率信息
-
-#### 缓冲区策略
-- LVGL使用部分缓冲(50行 = 1/10屏幕)
-- 双缓冲减少内存占用
-- buf_1和buf_2各占 800*50*4 = 160KB
-
-### 4. 触摸屏启用方法
-
-当你准备好触摸屏驱动后:
-
-1. 在 `lv_port_indev.c` 中设置:
-```c
-#define TOUCHPAD_ENABLED    1
+```sh
+cmake --preset Release
+cmake --build --preset Release
 ```
 
-2. 实现触摸屏读取函数:
-```c
-static void touchpad_read(lv_indev_t * indev, lv_indev_data_t * data)
-{
-    // 调用你的触摸屏驱动
-    // 示例: TouchScreen_Read(&x, &y, &pressed);
-}
+主要产物位于：
+
+```text
+build/Debug/cartdesk-os.elf
+build/Debug/cartdesk-os.map
 ```
 
-3. 初始化触摸屏硬件:
-```c
-static void touchpad_init(void)
-{
-    // 初始化I2C/SPI
-    // 复位触摸IC
-    // 配置中断
-}
+构建结束后，如果本机能找到 Python 3，CMake 会自动解析 map 文件并打印 SDRAM 各分区的静态使用情况。
+
+## 运行入口
+
+固件启动后的主要路径如下：
+
+```text
+Core/Src/main.c
+  -> 初始化 HAL、时钟、GPIO、LTDC、DMA2D、FMC、SDMMC、FreeRTOS 等外设
+  -> StartLvglTask()
+      -> lv_init()
+      -> lv_port_disp_init()
+      -> lv_port_indev_init()
+      -> LCD_DisplayON()
+      -> Launcher_Init()
+      -> 创建 Lua 任务
+      -> 周期调用 lvgl_task_handler()
 ```
 
-### 5. 性能优化建议
+`Launcher_Init()` 会创建启动器页面，并尝试从 `0:/cart.bin` 读取第一个卡带槽的标题和预览图。点击卡带槽后，Lua 任务通过 `Task_LUA_StartCart("0:/cart.bin")` 请求启动脚本。
 
-#### 使用DMA2D加速 (可选)
-如果需要进一步提升性能,可以考虑让LVGL直接使用DMA2D:
-- 修改 `lv_port_disp.c` 中的flush函数
-- 使用DMA2D的内存到内存传输
-- 参考你的LCD驱动中的DMA2D_FillRect实现
+## cart.bin
 
-#### 内存优化
-当前配置使用了:
-- LVGL内存池: 128KB (SRAM)
-- 显示缓冲: 320KB (buf_1 + buf_2, SRAM)
-- LCD Framebuffer: 4.5MB (SDRAM)
+`cart.bin` 是项目里的“卡带镜像”。当前固件会从 SD 卡根目录读取：
 
-如果SRAM紧张,可以:
-```c
-// 将buf_1和buf_2放到SDRAM
-static uint32_t buf_1[DISP_BUF_SIZE] __attribute__((section(".sdram_bss")));
+- Header 里的标题字段，用于 launcher 显示。
+- 200x200 ARGB8888 预览图，用于启动器卡槽图标。
+- ENTRY/INDEX/DATA 等段，用于 Lua 入口脚本和资源扩展。
+
+格式细节见 [Docs/cart/XHGC_cart_bin_v2_格式规范.md](Docs/cart/XHGC_cart_bin_v2_格式规范.md)。
+
+## Lua 脚本
+
+Lua 脚本推荐使用生命周期函数：
+
+```lua
+function init(self)
+end
+
+function update(self, dt)
+end
+
+function final(self)
+end
 ```
 
-### 6. 调试方法
+当前宿主环境暴露了 GPIO、PWM、delay、SD、UI button、UI slider 等 API。脚本示例在 [examples/lua](examples/lua)，完整 API 文档在 [Docs/lua/lua_api.md](Docs/lua/lua_api.md)。
 
-#### 启用LVGL日志
-在 `lv_conf.h` 中:
-```c
-#define LV_USE_LOG 1
-#define LV_LOG_LEVEL LV_LOG_LEVEL_TRACE
-#define LV_LOG_PRINTF 1
+## 目录结构
+
+```text
+Core/
+  APPS/LVGL/        LVGL 9.5 源码、配置和移植层
+  APPS/TASK/        FreeRTOS 任务封装：LVGL、Lua、LED
+  Cart/             cart.bin / XHGC 卡带格式解析
+  Driver/           LCD、SDRAM、触摸、Flash、EEPROM、GPIO、RNG 等驱动
+  LuaPort/          Lua VM、宿主 API 和硬件绑定模块
+  Screen/           启动器 UI、图标缓存、预览图工具
+  Src/              CubeMX 生成代码、main.c、系统调用、Lua VM 封装
+
+Docs/
+  cart/             cart.bin 格式规范
+  display/          DMA2D / 显示链路说明
+  lua/              Lua 生命周期和 API 文档
+  memory/           SDRAM 固定分区规范
+
+cmake/              工具链、CubeMX 子工程和构建后脚本
+examples/lua/       Lua 示例脚本
+tests/              host 侧解析测试和 Lua smoke test
 ```
 
-#### 查看帧率
-```c
-uint32_t fps = lv_port_disp_get_fps_delta();
-printf("FPS delta: %lu\n", fps);
+## 重要文档
+
+- [Docs/memory/SDRAM_Layout_Spec_v1.0.md](Docs/memory/SDRAM_Layout_Spec_v1.0.md)：SDRAM 固定分区。
+- [Docs/display/DMA2D_适配逻辑.md](Docs/display/DMA2D_适配逻辑.md)：DMA2D 与显示链路说明。
+- [Docs/cart/XHGC_cart_bin_v2_格式规范.md](Docs/cart/XHGC_cart_bin_v2_格式规范.md)：卡带镜像格式。
+- [Docs/lua/lua_runtime_contract.md](Docs/lua/lua_runtime_contract.md)：Lua 运行时约定。
+- [Core/LuaPort/LuaPort_API.md](Core/LuaPort/LuaPort_API.md)：LuaPort C 侧 API。
+- [Core/Driver/TOUCH/INTEGRATION_GUIDE.md](Core/Driver/TOUCH/INTEGRATION_GUIDE.md)：触摸驱动接入说明。
+
+## 开发提示
+
+- `Core/Driver/LCD/lcd.c` 是当前显示提交和 page flip 的主要所有者，改 LTDC/VBlank 时优先从这里追链路。
+- `Core/APPS/LVGL/port/` 是 LVGL 与板级显示/输入之间的移植层。
+- `Core/Screen/Page/ui_screen_launcher.c` 负责 launcher 页面、卡槽和 `cart.bin` 预览图接入。
+- `Core/APPS/TASK/LUA.c` 负责 Lua 启停请求；默认卡带路径是 `0:/cart.bin`。
+- `Core/Src/lua_vm.c` 负责 Lua VM、cart entry 加载和生命周期调度。
+- `Docs/memory/SDRAM_Layout_Spec_v1.0.md` 与链接脚本/`sdram_layout.h` 应保持一致。
+
+如果要临时开启板级 bring-up 测试，可以在配置时打开：
+
+```sh
+cmake --preset Debug -DCARTDESK_ENABLE_BOARD_TESTS=ON
 ```
 
-#### 检查VBlank
-```c
-uint32_t vblank_count = LCD_GetVBlankCount();
-printf("VBlank count: %lu\n", vblank_count);
-```
+如果只想构建 host 侧卡带解析测试，可以使用本机工具链单独配置 `CARTDESK_BUILD_HOST_TESTS=ON`。
 
-## 常见问题
+## 项目状态
 
-### Q1: 屏幕没有显示
-检查:
-1. LCD_DoubleBufferInit()是否正确调用
-2. Layer1是否设置为可见
-3. 背光是否打开
-4. LTDC和DMA2D是否正确初始化
-
-### Q2: 显示撕裂
-检查:
-1. VBlank中断是否正常工作
-2. LCD_IsPendingSwap()是否正确返回
-3. LCD_Refresh()是否在flush中调用
-
-### Q3: 性能不佳
-优化:
-1. 减少DISP_BUF_LINES (牺牲内存换速度)
-2. 使用DMA2D加速flush
-3. 降低LV_DEF_REFR_PERIOD
-4. 禁用不需要的控件和特效
-
-### Q4: 内存不足
-解决:
-1. 减少LV_MEM_SIZE
-2. 减少DISP_BUF_SIZE
-3. 将缓冲区放到SDRAM
-4. 禁用不需要的字体
-
-## 版本信息
-
-- LVGL版本: 9.5.0
-- MCU: STM32H743
-- 屏幕: 800x480 ARGB8888
-- 作者: Claude
-- 日期: 2025
-
-## 下一步
-
-1. 从LVGL官方仓库下载LVGL 9.5.0 源码
-2. 将本移植文件包放到对应目录
-3. 在main.c中调用lvgl_init()
-4. 开始创建UI界面
-
-祝你移植顺利! 🎉
+这是一个开发中的固件工程，README 描述的是当前代码库的真实结构和主要运行路径。硬件显示、触摸、SD 卡和 Lua 行为最终仍以实际板子验证为准。
