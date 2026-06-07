@@ -186,6 +186,13 @@ static int lua_gpio_push_status(lua_State *L, int status, const char *operation)
   return luaL_error(L, "%s: invalid gpio", operation);
 }
 
+static int lua_gpio_fail(lua_State *L, const char *message)
+{
+  lua_pushnil(L);
+  lua_pushstring(L, message);
+  return 2;
+}
+
 static int l_gpio_count(lua_State *L)
 {
   lua_pushinteger(L, (lua_Integer)Board_GPIO_Count());
@@ -229,6 +236,9 @@ static int l_gpio_read(lua_State *L)
 {
   const GpioMapEntry *entry = lua_gpio_check_pin(L, 1);
   int level = Board_GPIO_Read(entry);
+  if (level == -5) {
+    return lua_gpio_fail(L, "gpio is not configured");
+  }
   if (level < 0) {
     return luaL_error(L, "gpio.read: invalid gpio");
   }
@@ -241,13 +251,21 @@ static int l_gpio_write(lua_State *L)
 {
   const GpioMapEntry *entry = lua_gpio_check_pin(L, 1);
   int level = lua_gpio_to_level(L, 2);
-  return lua_gpio_push_status(L, Board_GPIO_Write(entry, level), "gpio.write");
+  int status = Board_GPIO_Write(entry, level);
+  if (status == -5 || status == -6) {
+    return lua_gpio_fail(L, "gpio is not configured as output");
+  }
+  return lua_gpio_push_status(L, status, "gpio.write");
 }
 
 static int l_gpio_toggle(lua_State *L)
 {
   const GpioMapEntry *entry = lua_gpio_check_pin(L, 1);
-  return lua_gpio_push_status(L, Board_GPIO_Toggle(entry), "gpio.toggle");
+  int status = Board_GPIO_Toggle(entry);
+  if (status == -5 || status == -6) {
+    return lua_gpio_fail(L, "gpio is not configured as output");
+  }
+  return lua_gpio_push_status(L, status, "gpio.toggle");
 }
 
 static int l_gpio_release(lua_State *L)

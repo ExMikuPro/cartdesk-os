@@ -6,15 +6,16 @@ Lua scripts do not need to know the STM32 GPIO port or pin mask.
 ## Logical Pins
 
 ```text
-0 / GPIO0 / D0 -> PA6
-1 / GPIO1 / D1 -> PA7
-2 / GPIO2 / D2 -> PB0
-3 / GPIO3 / D3 -> PB1
-4 / GPIO4 / D4 -> PA3
+0 / GPIO0 / D0
+1 / GPIO1 / D1
+2 / GPIO2 / D2
+3 / GPIO3 / D3
+4 / GPIO4 / D4
 ```
 
-The physical mapping is board-specific. Application scripts should use only
-the logical id or logical name:
+The physical GPIO port and pin mapping is board-specific and intentionally
+hidden from application scripts. Application scripts should use only logical
+ids or logical names:
 
 ```lua
 gpio.setup(0, gpio.OUTPUT)
@@ -22,7 +23,7 @@ gpio.setup("GPIO1", gpio.INPUT_PULLUP)
 gpio.write("D2", gpio.HIGH)
 ```
 
-Raw names such as `"PA6"` are not accepted.
+Raw physical pin names are not accepted.
 
 ## Constants
 
@@ -44,6 +45,12 @@ gpio.OUTPUT_OPEN_DRAIN
 gpio.ANALOG
 ```
 
+`gpio.ANALOG` configures the pin into analog/high-impedance safe mode. It does
+not read analog values.
+
+Analog input should be handled by a separate `adc` module in the future. Do not
+use `gpio.read()` to read analog voltage.
+
 Speeds:
 
 ```lua
@@ -52,7 +59,7 @@ gpio.SPEED_MEDIUM
 gpio.SPEED_HIGH
 ```
 
-Interrupt edges are reserved for the interrupt API:
+Interrupt edge constants are reserved for future interrupt support:
 
 ```lua
 gpio.RISING
@@ -101,6 +108,25 @@ local level = gpio.read(0)
 ```
 
 `gpio.read()` returns the integer `gpio.LOW` (`0`) or `gpio.HIGH` (`1`).
+
+GPIO does not auto-configure pins on read or write.
+
+`gpio.write(pin, value)` requires the pin to have been configured with
+`gpio.setup(pin, gpio.OUTPUT)` or
+`gpio.setup(pin, gpio.OUTPUT_OPEN_DRAIN)`. If the pin is not configured for
+output, it returns:
+
+```lua
+nil, "gpio is not configured as output"
+```
+
+`gpio.read(pin)` requires the pin to have been configured with `gpio.setup()`.
+Reading from an input or output pin is allowed. If the pin is not configured,
+it returns:
+
+```lua
+nil, "gpio is not configured"
+```
 
 Toggle the current output:
 
@@ -163,7 +189,8 @@ digitalRead(pin)
 digitalWrite(pin, value)
 ```
 
-The namespaced API is preferred for new scripts.
+The namespaced `gpio.*` API is preferred for new scripts. Arduino aliases are
+compatibility helpers and may be disabled by firmware configuration.
 
 ## Interrupts
 

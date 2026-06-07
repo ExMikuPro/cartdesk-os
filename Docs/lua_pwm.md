@@ -17,14 +17,30 @@ The script does not need to know the real GPIO port, pin, timer, or channel.
 Current PWM-capable logical pins:
 
 ```text
-0 / GPIO0 / D0 -> TIM3 channel 1
-1 / GPIO1 / D1 -> TIM3 channel 2
-2 / GPIO2 / D2 -> TIM3 channel 3
-3 / GPIO3 / D3 -> TIM3 channel 4
-4 / GPIO4 / D4 -> TIM2 channel 4
+0 / GPIO0 / D0
+1 / GPIO1 / D1
+2 / GPIO2 / D2
+3 / GPIO3 / D3
+4 / GPIO4 / D4
 ```
 
-Pins 0 through 3 are in the same `shared_group`, so changing frequency on one of them changes the timer frequency for the other TIM3 PWM channels too. Pin 4 uses its own TIM2 group.
+The real GPIO port, pin, timer, and channel mapping is board-specific and
+intentionally hidden from Lua scripts.
+
+Some PWM-capable logical pins share the same underlying PWM frequency source.
+These pins have the same `shared_group` value.
+
+Changing the frequency of one pin changes the frequency for all configured PWM
+pins in the same `shared_group`:
+
+```lua
+local a = pwm.info(0)
+local b = pwm.info(1)
+
+if a.shared_group == b.shared_group then
+    print("GPIO0 and GPIO1 share the same PWM frequency source")
+end
+```
 
 ## Constants
 
@@ -63,6 +79,54 @@ pwm.release(pin)
 ```
 
 `pwm.write(pin, value)` automatically configures the pin at `pwm.DEFAULT_FREQ` if it has not been configured yet.
+
+`pwm.count()` returns the number of PWM-capable logical pins, not the total
+number of GPIO pins.
+
+For `pwm.setup(pin, config)`, if `start` is omitted or false:
+
+- `configured = true`
+- `running = false`
+- duty is stored but PWM output is not started
+
+`pwm.setup(pin, freq)` follows the same default and configures the pin without
+starting PWM output.
+
+If `start` is true:
+
+- `configured = true`
+- `running = true`
+- PWM output starts with the configured duty
+
+`pwm.write(pin, value)` starts PWM output if the pin is configured but not
+running.
+
+`pwm.write(pin, 0)`:
+
+- sets duty to 0%
+- keeps the PWM configuration
+- keeps pin ownership as PWM
+- does not release the pin
+- makes `pwm.read(pin)` return `0`
+
+`pwm.stop(pin)`:
+
+- stops PWM output
+- keeps the PWM configuration
+- keeps the current frequency and duty value
+- keeps pin ownership as PWM
+- sets `running = false`
+
+Calling `pwm.write(pin, value)` after `pwm.stop(pin)` updates duty and starts
+PWM output again.
+
+`pwm.release(pin)`:
+
+- stops PWM output
+- clears PWM configuration
+- releases pin ownership
+- restores the pin to a safe analog/high-impedance state
+- allows the same logical pin to be used by GPIO again
 
 Failures return:
 

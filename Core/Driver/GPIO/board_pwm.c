@@ -336,6 +336,9 @@ int Board_PWM_Setup(const BoardPwmEntry *entry, const BoardPwmConfig *config)
       return -6;
     }
     s_pwm_state[index].running = 1u;
+  } else {
+    (void)HAL_TIM_PWM_Stop(timer, entry->channel);
+    s_pwm_state[index].running = 0u;
   }
 
   return 0;

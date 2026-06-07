@@ -98,7 +98,7 @@ static int lua_pwm_read_config(lua_State *L, int index, BoardPwmConfig *config)
 {
   config->freq = BOARD_PWM_DEFAULT_FREQ;
   config->duty = 0u;
-  config->start = 1u;
+  config->start = 0u;
 
   if (lua_istable(L, index)) {
     lua_getfield(L, index, "freq");
@@ -131,7 +131,7 @@ static int lua_pwm_read_config(lua_State *L, int index, BoardPwmConfig *config)
     return -5;
   }
   config->duty = 0u;
-  config->start = 1u;
+  config->start = 0u;
   return 0;
 }
 

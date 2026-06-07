@@ -20,7 +20,13 @@ static const GpioMapEntry k_gpio_map[] = {
   {4, "GPIO4", GPIOA, GPIO_PIN_3, BOARD_GPIO_TIM3_CAPS, BOARD_GPIO_MODE_INPUT, 0},
 };
 
+typedef struct {
+  uint8_t configured;
+  uint8_t mode;
+} GpioPinState;
+
 static BoardPinOwner s_gpio_owners[sizeof(k_gpio_map) / sizeof(k_gpio_map[0])];
+static GpioPinState s_gpio_state[sizeof(k_gpio_map) / sizeof(k_gpio_map[0])];
 
 static int name_equals(const char *a, const char *b)
 {
@@ -149,7 +155,7 @@ static int has_caps_for_mode(const GpioMapEntry *entry, uint8_t mode)
       return (entry->caps & (BOARD_GPIO_CAP_OUTPUT | BOARD_GPIO_CAP_OPEN_DRAIN)) ==
              (BOARD_GPIO_CAP_OUTPUT | BOARD_GPIO_CAP_OPEN_DRAIN);
     case BOARD_GPIO_MODE_ANALOG:
-      return (entry->caps & BOARD_GPIO_CAP_ADC) != 0;
+      return 1;
     default:
       return 0;
   }
@@ -268,7 +274,8 @@ const GpioMapEntry *Board_GPIO_FindByName(const char *name)
 
 int Board_GPIO_Setup(const GpioMapEntry *entry, const BoardGpioConfig *config)
 {
-  if (entry == NULL || config == NULL || entry->port == NULL || entry->pin == 0u) {
+  int index = entry_index(entry);
+  if (index < 0 || config == NULL || entry->port == NULL || entry->pin == 0u) {
     return -1;
   }
   if (!has_caps_for_mode(entry, config->mode)) {
@@ -284,7 +291,8 @@ int Board_GPIO_Setup(const GpioMapEntry *entry, const BoardGpioConfig *config)
   if (config->initial >= 0 &&
       (config->mode == BOARD_GPIO_MODE_OUTPUT ||
        config->mode == BOARD_GPIO_MODE_OUTPUT_OPEN_DRAIN)) {
-    (void)Board_GPIO_Write(entry, config->initial);
+    HAL_GPIO_WritePin((GPIO_TypeDef *)entry->port, (uint16_t)entry->pin,
+                      config->initial ? GPIO_PIN_SET : GPIO_PIN_RESET);
   }
 
   GPIO_InitTypeDef init = {0};
@@ -297,29 +305,42 @@ int Board_GPIO_Setup(const GpioMapEntry *entry, const BoardGpioConfig *config)
   init.Speed = speed_to_hal(config->speed);
 
   HAL_GPIO_Init((GPIO_TypeDef *)entry->port, &init);
+  s_gpio_state[index].configured = 1u;
+  s_gpio_state[index].mode = config->mode;
   return 0;
 }
 
 int Board_GPIO_Read(const GpioMapEntry *entry)
 {
-  if (entry == NULL || entry->port == NULL || entry->pin == 0u || entry->reserved) {
+  int index = entry_index(entry);
+  if (index < 0 || entry->port == NULL || entry->pin == 0u || entry->reserved) {
     return -1;
   }
+  if (!s_gpio_state[index].configured ||
+      s_gpio_owners[index] != BOARD_PIN_OWNER_GPIO) {
+    return -5;
+  }
+
   enable_gpio_clock(entry);
   return HAL_GPIO_ReadPin((GPIO_TypeDef *)entry->port, (uint16_t)entry->pin) == GPIO_PIN_SET ? 1 : 0;
 }
 
 int Board_GPIO_Write(const GpioMapEntry *entry, int level)
 {
-  if (entry == NULL || entry->port == NULL || entry->pin == 0u || entry->reserved) {
+  int index = entry_index(entry);
+  if (index < 0 || entry->port == NULL || entry->pin == 0u || entry->reserved) {
     return -1;
   }
   if ((entry->caps & BOARD_GPIO_CAP_OUTPUT) == 0u) {
     return -2;
   }
-  int owner_status = Board_GPIO_AcquireOwner(entry, BOARD_PIN_OWNER_GPIO);
-  if (owner_status != 0) {
-    return owner_status;
+  if (!s_gpio_state[index].configured ||
+      s_gpio_owners[index] != BOARD_PIN_OWNER_GPIO) {
+    return -5;
+  }
+  if (s_gpio_state[index].mode != BOARD_GPIO_MODE_OUTPUT &&
+      s_gpio_state[index].mode != BOARD_GPIO_MODE_OUTPUT_OPEN_DRAIN) {
+    return -6;
   }
 
   enable_gpio_clock(entry);
@@ -330,15 +351,20 @@ int Board_GPIO_Write(const GpioMapEntry *entry, int level)
 
 int Board_GPIO_Toggle(const GpioMapEntry *entry)
 {
-  if (entry == NULL || entry->port == NULL || entry->pin == 0u || entry->reserved) {
+  int index = entry_index(entry);
+  if (index < 0 || entry->port == NULL || entry->pin == 0u || entry->reserved) {
     return -1;
   }
   if ((entry->caps & BOARD_GPIO_CAP_OUTPUT) == 0u) {
     return -2;
   }
-  int owner_status = Board_GPIO_AcquireOwner(entry, BOARD_PIN_OWNER_GPIO);
-  if (owner_status != 0) {
-    return owner_status;
+  if (!s_gpio_state[index].configured ||
+      s_gpio_owners[index] != BOARD_PIN_OWNER_GPIO) {
+    return -5;
+  }
+  if (s_gpio_state[index].mode != BOARD_GPIO_MODE_OUTPUT &&
+      s_gpio_state[index].mode != BOARD_GPIO_MODE_OUTPUT_OPEN_DRAIN) {
+    return -6;
   }
 
   enable_gpio_clock(entry);
@@ -348,7 +374,8 @@ int Board_GPIO_Toggle(const GpioMapEntry *entry)
 
 int Board_GPIO_Release(const GpioMapEntry *entry)
 {
-  if (entry == NULL || entry->port == NULL || entry->pin == 0u || entry->reserved) {
+  int index = entry_index(entry);
+  if (index < 0 || entry->port == NULL || entry->pin == 0u || entry->reserved) {
     return -1;
   }
   if (Board_GPIO_GetOwner(entry) == BOARD_PIN_OWNER_PWM) {
@@ -362,6 +389,8 @@ int Board_GPIO_Release(const GpioMapEntry *entry)
   init.Mode = GPIO_MODE_ANALOG;
   init.Pull = GPIO_NOPULL;
   HAL_GPIO_Init((GPIO_TypeDef *)entry->port, &init);
+  s_gpio_state[index].configured = 0u;
+  s_gpio_state[index].mode = BOARD_GPIO_MODE_ANALOG;
   Board_GPIO_ReleaseOwner(entry, BOARD_PIN_OWNER_GPIO);
   return 0;
 }
