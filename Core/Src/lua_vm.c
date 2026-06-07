@@ -9,7 +9,9 @@
 #include "lauxlib.h"
 #include "lualib.h"
 #include "ff.h"
+#include "fatfs.h"
 #include "lua_port.h"
+#include "lua_ui.h"
 #include "lua_vm_memory.h"
 #include "xhgc_cart.h"
 
@@ -128,8 +130,6 @@ static lua_State *g_L = NULL;
 static bool       g_runtime_started = false;
 static uint32_t   g_last_ms = 0;
 static float      g_fixed_accumulator = 0.0f;
-static FATFS      g_lua_file_fs;
-static bool       g_lua_file_fs_ready = false;
 
 typedef enum {
     LUA_LIFECYCLE_INIT = 0,
@@ -491,11 +491,7 @@ static void lua_rt_make_sd_path(char *out, size_t out_size, const char *path)
 
 static FRESULT lua_rt_mount_sd(void)
 {
-    if (g_lua_file_fs_ready) return FR_OK;
-
-    FRESULT fr = f_mount(&g_lua_file_fs, LUA_RT_SD_MOUNT_PATH, 1);
-    g_lua_file_fs_ready = (fr == FR_OK);
-    return fr;
+    return SD_FATFS_Mount();
 }
 
 static const char *lua_rt_file_reader(lua_State *L, void *ud, size_t *size)
@@ -622,9 +618,18 @@ static int lua_rt_open_cart(lua_rt_cart_reader_t *reader,
     if (!reader || !path || !fatfs_path || fatfs_path_size == 0u) return -1;
 
     lua_rt_make_sd_path(fatfs_path, fatfs_path_size, path);
+    FRESULT fr = lua_rt_mount_sd();
+    if (fr != FR_OK) {
+        lua_rt_log("cart mount failed: ");
+        lua_rt_log(lua_rt_fr2str(fr));
+        lua_rt_log("\n");
+        return -2;
+    }
+
     int rc = xhgc_cart_open_fatfs(&reader->cart_file, fatfs_path);
     if (rc == XHGC_CART_E_IO) {
-        FRESULT fr = lua_rt_mount_sd();
+        SD_FATFS_InvalidateMount();
+        fr = lua_rt_mount_sd();
         if (fr != FR_OK) {
             lua_rt_log("cart mount failed: ");
             lua_rt_log(lua_rt_fr2str(fr));
@@ -968,6 +973,25 @@ static int lua_rt_call_direct(lua_script_instance_t *instance,
     int rc = lua_rt_pcall(g_L, 1, 0);
     lua_settop(g_L, stack_base);
     return rc;
+}
+
+static void lua_rt_delete_instance_children(lua_script_instance_t *instance)
+{
+    if (!g_L || !instance || instance->self_ref == LUA_NOREF) return;
+
+    const int stack_base = lua_gettop(g_L);
+    lua_rawgeti(g_L, LUA_REGISTRYINDEX, instance->self_ref);
+    if (lua_istable(g_L, -1)) {
+        lua_getfield(g_L, -1, "children");
+        if (!lua_isnil(g_L, -1)) {
+            lua_ui_delete_children(g_L, -1);
+        }
+        lua_pop(g_L, 1);
+
+        lua_pushnil(g_L);
+        lua_setfield(g_L, -2, "children");
+    }
+    lua_settop(g_L, stack_base);
 }
 
 static bool lua_rt_pop_input(lua_input_event_t *event)
@@ -1337,6 +1361,7 @@ int lua_shutdown(void)
         if (instance->alive && instance->initialized && !instance->finalized) {
             instance->finalized = true;
             (void)lua_rt_call_direct(instance, LUA_LIFECYCLE_FINAL);
+            lua_rt_delete_instance_children(instance);
         }
         instance->alive = false;
         lua_rt_unref_instance(instance);

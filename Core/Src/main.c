@@ -218,6 +218,7 @@ static void StartLvglTask(void *argument) {
   for (;;) {
     lvgl_task_handler();
     Task_LUA();
+    Launcher_Task();
     osDelay(5);
   }
 }

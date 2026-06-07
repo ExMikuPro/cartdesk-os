@@ -4,6 +4,7 @@
 
 #include "ui_screen_launcher.h"
 
+#include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -93,6 +94,8 @@ static lv_obj_t *s_circle_labels[DESIGN_CIRCLE_COUNT];
 static lv_obj_t *s_status_label = NULL;
 static lv_obj_t *s_launcher_screen = NULL;
 static lv_obj_t *s_runtime_screen = NULL;
+static bool s_runtime_exit_pending = false;
+static bool s_launcher_assets_loaded = false;
 
 /*
  * 每个槽独立的 LVGL 图像描述符。
@@ -166,15 +169,23 @@ static void prv_show_launcher_screen(void)
 
 static void prv_runtime_exit_clicked_cb(lv_event_t *e)
 {
-    (void)e;
+    lv_obj_t *target = lv_event_get_current_target(e);
 
+    if (s_runtime_exit_pending) {
+        return;
+    }
+
+    s_runtime_exit_pending = true;
+    if (target != NULL) {
+        lv_obj_add_state(target, LV_STATE_DISABLED);
+    }
     Task_LUA_Stop();
-    Task_LUA();
-    prv_show_launcher_screen();
 }
 
 static void prv_show_runtime_screen(void)
 {
+    s_runtime_exit_pending = false;
+
     if (s_runtime_screen != NULL) {
         lv_obj_delete(s_runtime_screen);
         s_runtime_screen = NULL;
@@ -445,8 +456,22 @@ static void prv_create_status_label(lv_obj_t *parent)
 void Launcher_Init(void)
 {
     s_launcher_screen = lv_screen_active();
+    s_runtime_exit_pending = false;
     DesignLauncher_Destroy();
     DesignLauncher_Create(NULL);
+}
+
+void Launcher_Task(void)
+{
+    if (!s_runtime_exit_pending) {
+        return;
+    }
+    if (Task_LUA_IsRunning()) {
+        return;
+    }
+
+    prv_show_launcher_screen();
+    s_runtime_exit_pending = false;
 }
 
 void DesignLauncher_Create(lv_display_t *disp)
@@ -459,60 +484,61 @@ void DesignLauncher_Create(lv_display_t *disp)
         s_launcher_screen = scr;
     }
 
-    launcher_cache_init();
     lv_obj_set_style_pad_all(scr, 0, 0);
 
-    int a = cart_bin_read_title_from_sd("0:/cart.bin", s_cart0_title);
-    if (a != 0) {
-        strcpy(s_cart0_title, "ERR");
-    }
+    if (!s_launcher_assets_loaded) {
+        launcher_cache_init();
 
-    /*
-     * ----------------------------------------------------------------
-     * 图片预加载：
-     *   - 槽 0：从 SD 卡读取预览图片 → SDRAM
-     *   - 其他槽：从 Flash → SDRAM（DMA2D M2M，CPU 不参与数据搬运）
-     *
-     * 对于每个有图片的槽：
-     *   1. 用 DMA2D 把像素数据搬到 launcher cache 对应槽地址
-     *   2. 初始化该槽的 lv_image_dsc_t，.data 直接指向 SDRAM 地址
-     *
-     * 完成后 LVGL 渲染时 DMA2D 读写的全是 SDRAM，
-     * 不再访问 Flash，彻底消除卡顿和撕裂。
-     * ----------------------------------------------------------------
-     */
-    // 槽 0：从 SD 卡读取预览图片
-    {
-        uint32_t dst = (uint32_t)launcher_get_big_icon(0);
-
-        int ret = cart_bin_read_preview_from_sd("0:/cart.bin", (uint8_t*)dst, CART_BIN_PREVIEW_SIZE);
-        if (ret == 0) {
-            /* 初始化独立描述符，指向 SDRAM，magic 必须设置 */
-            s_image_dsc[0].header.magic = LV_IMAGE_HEADER_MAGIC;
-            s_image_dsc[0].header.cf    = LV_COLOR_FORMAT_ARGB8888;
-            s_image_dsc[0].header.w     = CART_BIN_PREVIEW_W;
-            s_image_dsc[0].header.h     = CART_BIN_PREVIEW_H;
-            s_image_dsc[0].data_size    = CART_BIN_PREVIEW_SIZE;
-            s_image_dsc[0].data         = (const uint8_t *)dst;  /* SDRAM 地址 */
+        int a = cart_bin_read_title_from_sd("0:/cart.bin", s_cart0_title);
+        if (a != 0) {
+            strcpy(s_cart0_title, "ERR");
         }
-    }
 
-    // 其他槽：从 Flash 读取
-    for (int i = 1; i < DESIGN_APP_COUNT; i++) {
-        if (s_slot_flash_src[i] == NULL) continue;
+        /*
+         * ----------------------------------------------------------------
+         * 图片预加载：
+         *   - 槽 0：从 SD 卡读取预览图片 → SDRAM
+         *   - 其他槽：从 Flash → SDRAM（DMA2D M2M，CPU 不参与数据搬运）
+         *
+         * 这些资源在 launcher cache 分区里，Lua 运行期间不会被释放。
+         * 从 Lua 退出回 launcher 时直接复用，避免退出后立刻再次访问 SD。
+         * ----------------------------------------------------------------
+         */
+        // 槽 0：从 SD 卡读取预览图片
+        {
+            uint32_t dst = (uint32_t)launcher_get_big_icon(0);
 
-        uint32_t dst = (uint32_t)launcher_get_big_icon(i);
+            int ret = cart_bin_read_preview_from_sd("0:/cart.bin", (uint8_t*)dst, CART_BIN_PREVIEW_SIZE);
+            if (ret == 0) {
+                /* 初始化独立描述符，指向 SDRAM，magic 必须设置 */
+                s_image_dsc[0].header.magic = LV_IMAGE_HEADER_MAGIC;
+                s_image_dsc[0].header.cf    = LV_COLOR_FORMAT_ARGB8888;
+                s_image_dsc[0].header.w     = CART_BIN_PREVIEW_W;
+                s_image_dsc[0].header.h     = CART_BIN_PREVIEW_H;
+                s_image_dsc[0].data_size    = CART_BIN_PREVIEW_SIZE;
+                s_image_dsc[0].data         = (const uint8_t *)dst;  /* SDRAM 地址 */
+            }
+        }
 
-        /* DMA2D 搬运：Flash → SDRAM */
-        prv_copy_img_to_sdram(dst, s_slot_flash_src[i]);
+        // 其他槽：从 Flash 读取
+        for (int i = 1; i < DESIGN_APP_COUNT; i++) {
+            if (s_slot_flash_src[i] == NULL) continue;
 
-        /* 初始化独立描述符，指向 SDRAM，magic 必须设置 */
-        s_image_dsc[i].header.magic = LV_IMAGE_HEADER_MAGIC;
-        s_image_dsc[i].header.cf    = LV_COLOR_FORMAT_ARGB8888;
-        s_image_dsc[i].header.w     = CART_BIN_PREVIEW_W;
-        s_image_dsc[i].header.h     = CART_BIN_PREVIEW_H;
-        s_image_dsc[i].data_size    = CART_BIN_PREVIEW_SIZE;
-        s_image_dsc[i].data         = (const uint8_t *)dst;  /* SDRAM 地址 */
+            uint32_t dst = (uint32_t)launcher_get_big_icon(i);
+
+            /* DMA2D 搬运：Flash → SDRAM */
+            prv_copy_img_to_sdram(dst, s_slot_flash_src[i]);
+
+            /* 初始化独立描述符，指向 SDRAM，magic 必须设置 */
+            s_image_dsc[i].header.magic = LV_IMAGE_HEADER_MAGIC;
+            s_image_dsc[i].header.cf    = LV_COLOR_FORMAT_ARGB8888;
+            s_image_dsc[i].header.w     = CART_BIN_PREVIEW_W;
+            s_image_dsc[i].header.h     = CART_BIN_PREVIEW_H;
+            s_image_dsc[i].data_size    = CART_BIN_PREVIEW_SIZE;
+            s_image_dsc[i].data         = (const uint8_t *)dst;  /* SDRAM 地址 */
+        }
+
+        s_launcher_assets_loaded = true;
     }
 
     /* 主容器 */

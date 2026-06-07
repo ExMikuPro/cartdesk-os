@@ -1,513 +1,315 @@
-// lua_ui_slider.c
-// LVGL 9.5.0 滑块模块
+#include "lua_ui.h"
 
-#include "lua.h"
-#include "lauxlib.h"
-#include "lua_vm.h"
-#include "lvgl.h"
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
-#ifndef LUA_UI_SLIDER_MODNAME
-#define LUA_UI_SLIDER_MODNAME "ui.slider"
-#endif
-
-// -----------------------------
-// 0) 可选：取全局 cfg 的通用写法
-// -----------------------------
-
-static inline void* ui_slider_get_cfg(lua_State* L) {
-  lua_getfield(L, LUA_REGISTRYINDEX, "port.cfg");
-  void* cfg = lua_touserdata(L, -1);
-  lua_pop(L, 1);
-  return cfg;
-}
-
-// -----------------------------
-// 1) 参数检查/错误模板
-// -----------------------------
-
-static inline int32_t check_int32(lua_State* L, int idx) {
-  return (int32_t)luaL_checkinteger(L, idx);
-}
-
-static inline uint32_t check_uint32(lua_State* L, int idx) {
-  lua_Integer v = luaL_checkinteger(L, idx);
-  if (v < 0) luaL_error(L, "argument %d must be non-negative", idx);
-  return (uint32_t)v;
-}
-
-static inline const char* check_string(lua_State* L, int idx) {
-  return luaL_checkstring(L, idx);
-}
-
-// -----------------------------
-// 2) 类型定义和常量
-// -----------------------------
+#include "lauxlib.h"
+#include "lua_vm.h"
+#include "lvgl.h"
 
 typedef struct {
-  lv_obj_t* slider;   // LVGL 滑块对象指针
-  int event_cb_ref;   // Lua 事件回调函数引用（LUA_REGISTRYINDEX）
-  lv_event_dsc_t* event_dsc; // LVGL 事件描述符
-  lua_State* L;       // Lua 状态指针，用于事件回调
+  lv_obj_t* slider;
+  lv_event_dsc_t* event_dsc;
+  lua_State* L;
+  char id[LUA_UI_DRAWABLE_ID_MAX];
   char input_id[LUA_INPUT_ACTION_ID_MAX];
 } ui_slider_ud_t;
 
 #define UI_SLIDER_MT "ui.slider.mt"
 
-static void lvgl_slider_event_cb(lv_event_t* e);
+static ui_slider_ud_t* test_slider(lua_State* L, int idx) {
+  return (ui_slider_ud_t*)luaL_testudata(L, idx, UI_SLIDER_MT);
+}
 
-// -----------------------------
-// 3) 辅助函数
-// -----------------------------
+static ui_slider_ud_t* check_slider(lua_State* L, int idx) {
+  return (ui_slider_ud_t*)luaL_checkudata(L, idx, UI_SLIDER_MT);
+}
 
-// 检查滑块是否有效
-static void check_slider_valid(ui_slider_ud_t* ud) {
-  if (!ud->slider) {
-    luaL_error(ud->L, "slider has been deleted");
+static void check_slider_valid(lua_State* L, ui_slider_ud_t* ud) {
+  if (!ud || !ud->slider) {
+    luaL_error(L, "slider has been deleted");
   }
 }
 
-// 事件类型转换
-static const char* event_code_to_string(lv_event_code_t code) {
-  switch (code) {
-    case LV_EVENT_CLICKED: return "clicked";
-    case LV_EVENT_PRESSED: return "pressed";
-    case LV_EVENT_PRESSING: return "pressing";
-    case LV_EVENT_RELEASED: return "released";
-    case LV_EVENT_LONG_PRESSED: return "long_pressed";
-    case LV_EVENT_VALUE_CHANGED: return "value_changed";
-    default: return "unknown";
+static bool table_get_int(lua_State* L, int table, const char* key, int32_t* out) {
+  table = lua_absindex(L, table);
+  lua_getfield(L, table, key);
+  if (lua_isnil(L, -1)) {
+    lua_pop(L, 1);
+    return false;
   }
+  *out = (int32_t)luaL_checkinteger(L, -1);
+  lua_pop(L, 1);
+  return true;
 }
 
-static bool event_code_is_input(lv_event_code_t code) {
-  switch (code) {
-    case LV_EVENT_CLICKED:
-    case LV_EVENT_PRESSED:
-    case LV_EVENT_PRESSING:
-    case LV_EVENT_RELEASED:
-    case LV_EVENT_LONG_PRESSED:
-    case LV_EVENT_VALUE_CHANGED:
-      return true;
-    default:
-      return false;
-  }
+static bool table_get_uint(lua_State* L, int table, const char* key, uint32_t* out) {
+  int32_t value = 0;
+  if (!table_get_int(L, table, key, &value)) return false;
+  luaL_argcheck(L, value >= 0, 1, "color must be non-negative");
+  *out = (uint32_t)value;
+  return true;
 }
 
-static void slider_init_input_id(ui_slider_ud_t* ud) {
-  snprintf(ud->input_id, sizeof(ud->input_id), "%s", "slider");
+static bool table_get_int_index(lua_State* L, int table, lua_Integer index, int32_t* out) {
+  table = lua_absindex(L, table);
+  lua_geti(L, table, index);
+  if (lua_isnil(L, -1)) {
+    lua_pop(L, 1);
+    return false;
+  }
+  *out = (int32_t)luaL_checkinteger(L, -1);
+  lua_pop(L, 1);
+  return true;
+}
+
+static bool table_get_string(lua_State* L, int table, const char* key, const char** out) {
+  table = lua_absindex(L, table);
+  lua_getfield(L, table, key);
+  if (lua_isnil(L, -1)) {
+    lua_pop(L, 1);
+    return false;
+  }
+  *out = luaL_checkstring(L, -1);
+  lua_pop(L, 1);
+  return true;
+}
+
+static void slider_set_input_id(lua_State* L, ui_slider_ud_t* ud, const char* input_id) {
+  luaL_argcheck(L, input_id && input_id[0] != '\0', 1, "input must not be empty");
+  luaL_argcheck(L, strlen(input_id) < LUA_INPUT_ACTION_ID_MAX, 1, "input is too long");
+  snprintf(ud->input_id, sizeof(ud->input_id), "%s", input_id);
 }
 
 static void slider_post_input(ui_slider_ud_t* ud, lv_event_code_t code) {
-  if (!ud || !ud->slider || !event_code_is_input(code)) {
-    return;
-  }
+  if (!ud || !ud->slider || code != LV_EVENT_VALUE_CHANGED) return;
 
   LuaInputAction action = {0};
-  snprintf(action.event, sizeof(action.event), "%s", event_code_to_string(code));
-  action.pressed = (code == LV_EVENT_PRESSED || code == LV_EVENT_CLICKED);
-  action.released = (code == LV_EVENT_RELEASED || code == LV_EVENT_CLICKED);
-  action.repeated = (code == LV_EVENT_PRESSING || code == LV_EVENT_LONG_PRESSED);
+  snprintf(action.event, sizeof(action.event), "%s", "changed");
   action.value = (float)lv_slider_get_value(ud->slider);
   (void)lua_post_input(ud->input_id, &action);
 }
 
-// 解析对齐方式
-static lv_align_t parse_align_type(const char* align_str) {
-  if (strcmp(align_str, "center") == 0) return LV_ALIGN_CENTER;
-  if (strcmp(align_str, "top_left") == 0) return LV_ALIGN_TOP_LEFT;
-  if (strcmp(align_str, "top_mid") == 0) return LV_ALIGN_TOP_MID;
-  if (strcmp(align_str, "top_right") == 0) return LV_ALIGN_TOP_RIGHT;
-  if (strcmp(align_str, "bottom_left") == 0) return LV_ALIGN_BOTTOM_LEFT;
-  if (strcmp(align_str, "bottom_mid") == 0) return LV_ALIGN_BOTTOM_MID;
-  if (strcmp(align_str, "bottom_right") == 0) return LV_ALIGN_BOTTOM_RIGHT;
-  if (strcmp(align_str, "left_mid") == 0) return LV_ALIGN_LEFT_MID;
-  if (strcmp(align_str, "right_mid") == 0) return LV_ALIGN_RIGHT_MID;
-  return LV_ALIGN_CENTER; // 默认居中
+static void slider_event_cb(lv_event_t* e) {
+  lv_event_code_t code = lv_event_get_code(e);
+  lv_obj_t* slider = lv_event_get_current_target(e);
+  ui_slider_ud_t* ud = (ui_slider_ud_t*)lv_obj_get_user_data(slider);
+  slider_post_input(ud, code);
 }
 
-// -----------------------------
-// 4) 滑块方法（slider:xxx）
-// -----------------------------
+static void apply_common_config(lua_State* L, ui_slider_ud_t* ud, int config_idx) {
+  int32_t x = 0;
+  int32_t y = 0;
+  int32_t w = 200;
+  int32_t h = 20;
+  config_idx = lua_absindex(L, config_idx);
 
-// slider:set_size(width, height)
-static int l_slider_set_size(lua_State* L) {
-  ui_slider_ud_t* ud = (ui_slider_ud_t*)luaL_checkudata(L, 1, UI_SLIDER_MT);
-  int32_t width = check_int32(L, 2);
-  int32_t height = check_int32(L, 3);
+  lua_getfield(L, config_idx, "rect");
+  if (lua_istable(L, -1)) {
+    (void)table_get_int_index(L, -1, 1, &x);
+    (void)table_get_int_index(L, -1, 2, &y);
+    (void)table_get_int_index(L, -1, 3, &w);
+    (void)table_get_int_index(L, -1, 4, &h);
+  }
+  lua_pop(L, 1);
 
-  check_slider_valid(ud);
-  lv_obj_set_size(ud->slider, width, height);
-  return 0;
-}
+  lua_getfield(L, config_idx, "pos");
+  if (lua_istable(L, -1)) {
+    (void)table_get_int_index(L, -1, 1, &x);
+    (void)table_get_int_index(L, -1, 2, &y);
+  }
+  lua_pop(L, 1);
 
-// slider:set_pos(x, y)
-static int l_slider_set_pos(lua_State* L) {
-  ui_slider_ud_t* ud = (ui_slider_ud_t*)luaL_checkudata(L, 1, UI_SLIDER_MT);
-  int32_t x = check_int32(L, 2);
-  int32_t y = check_int32(L, 3);
+  lua_getfield(L, config_idx, "size");
+  if (lua_istable(L, -1)) {
+    (void)table_get_int_index(L, -1, 1, &w);
+    (void)table_get_int_index(L, -1, 2, &h);
+  }
+  lua_pop(L, 1);
 
-  check_slider_valid(ud);
+  // Explicit x/y/w/h fields intentionally override rect/pos/size.
+  (void)table_get_int(L, config_idx, "x", &x);
+  (void)table_get_int(L, config_idx, "y", &y);
+  (void)table_get_int(L, config_idx, "w", &w);
+  (void)table_get_int(L, config_idx, "h", &h);
+
   lv_obj_set_pos(ud->slider, x, y);
+  lv_obj_set_size(ud->slider, w, h);
+
+  lua_getfield(L, config_idx, "hidden");
+  if (!lua_isnil(L, -1)) {
+    if (lua_toboolean(L, -1)) lv_obj_add_flag(ud->slider, LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_remove_flag(ud->slider, LV_OBJ_FLAG_HIDDEN);
+  }
+  lua_pop(L, 1);
+}
+
+static void apply_slider_style(lua_State* L, ui_slider_ud_t* ud, int style_idx) {
+  uint32_t color = 0;
+  int32_t alpha = 255;
+  int32_t radius = 0;
+  int32_t border_width = 0;
+  style_idx = lua_absindex(L, style_idx);
+
+  if (table_get_uint(L, style_idx, "bg", &color)) {
+    lv_obj_set_style_bg_color(ud->slider, lv_color_hex(color), LV_PART_MAIN | LV_STATE_DEFAULT);
+    alpha = 255;
+    (void)table_get_int(L, style_idx, "bg_alpha", &alpha);
+    lv_obj_set_style_bg_opa(ud->slider, (lv_opa_t)alpha, LV_PART_MAIN | LV_STATE_DEFAULT);
+  } else if (table_get_int(L, style_idx, "bg_alpha", &alpha)) {
+    lv_obj_set_style_bg_opa(ud->slider, (lv_opa_t)alpha, LV_PART_MAIN | LV_STATE_DEFAULT);
+  }
+
+  if (table_get_uint(L, style_idx, "indicator", &color)) {
+    lv_obj_set_style_bg_color(ud->slider, lv_color_hex(color), LV_PART_INDICATOR | LV_STATE_DEFAULT);
+    alpha = 255;
+    (void)table_get_int(L, style_idx, "indicator_alpha", &alpha);
+    lv_obj_set_style_bg_opa(ud->slider, (lv_opa_t)alpha, LV_PART_INDICATOR | LV_STATE_DEFAULT);
+  } else if (table_get_int(L, style_idx, "indicator_alpha", &alpha)) {
+    lv_obj_set_style_bg_opa(ud->slider, (lv_opa_t)alpha, LV_PART_INDICATOR | LV_STATE_DEFAULT);
+  }
+
+  if (table_get_uint(L, style_idx, "knob", &color)) {
+    lv_obj_set_style_bg_color(ud->slider, lv_color_hex(color), LV_PART_KNOB | LV_STATE_DEFAULT);
+    alpha = 255;
+    (void)table_get_int(L, style_idx, "knob_alpha", &alpha);
+    lv_obj_set_style_bg_opa(ud->slider, (lv_opa_t)alpha, LV_PART_KNOB | LV_STATE_DEFAULT);
+  } else if (table_get_int(L, style_idx, "knob_alpha", &alpha)) {
+    lv_obj_set_style_bg_opa(ud->slider, (lv_opa_t)alpha, LV_PART_KNOB | LV_STATE_DEFAULT);
+  }
+
+  lua_getfield(L, style_idx, "border");
+  if (lua_istable(L, -1)) {
+    if (table_get_uint(L, -1, "color", &color)) {
+      lv_obj_set_style_border_color(ud->slider, lv_color_hex(color), LV_PART_MAIN | LV_STATE_DEFAULT);
+    }
+    if (table_get_int(L, -1, "width", &border_width)) {
+      lv_obj_set_style_border_width(ud->slider, border_width, LV_PART_MAIN | LV_STATE_DEFAULT);
+    }
+  }
+  lua_pop(L, 1);
+
+  if (table_get_int(L, style_idx, "radius", &radius)) {
+    lv_obj_set_style_radius(ud->slider, radius, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_radius(ud->slider, radius, LV_PART_INDICATOR | LV_STATE_DEFAULT);
+    lv_obj_set_style_radius(ud->slider, radius, LV_PART_KNOB | LV_STATE_DEFAULT);
+  }
+}
+
+static int apply_slider_config(lua_State* L, ui_slider_ud_t* ud, int config_idx) {
+  const char* id = NULL;
+  const char* input = NULL;
+  int32_t min = 0;
+  int32_t max = 100;
+  int32_t value = 0;
+  config_idx = lua_absindex(L, config_idx);
+
+  check_slider_valid(L, ud);
+  apply_common_config(L, ud, config_idx);
+
+  if (table_get_string(L, config_idx, "id", &id)) {
+    snprintf(ud->id, sizeof(ud->id), "%s", id);
+  }
+  if (table_get_string(L, config_idx, "input", &input)) {
+    slider_set_input_id(L, ud, input);
+  }
+
+  lua_getfield(L, config_idx, "range");
+  if (lua_istable(L, -1)) {
+    (void)table_get_int_index(L, -1, 1, &min);
+    (void)table_get_int_index(L, -1, 2, &max);
+    lv_slider_set_range(ud->slider, min, max);
+  }
+  lua_pop(L, 1);
+
+  if (table_get_int(L, config_idx, "value", &value)) {
+    lv_slider_set_value(ud->slider, value, LV_ANIM_OFF);
+  }
+
+  lua_getfield(L, config_idx, "style");
+  if (lua_istable(L, -1)) {
+    apply_slider_style(L, ud, -1);
+  }
+  lua_pop(L, 1);
   return 0;
 }
 
-// slider:align(align_type, x_offset, y_offset)
-static int l_slider_align(lua_State* L) {
-  ui_slider_ud_t* ud = (ui_slider_ud_t*)luaL_checkudata(L, 1, UI_SLIDER_MT);
-  const char* align_str = check_string(L, 2);
-  int32_t x_ofs = luaL_optinteger(L, 3, 0);
-  int32_t y_ofs = luaL_optinteger(L, 4, 0);
+static int l_slider_call(lua_State* L) {
+  luaL_checktype(L, 2, LUA_TTABLE);
 
-  check_slider_valid(ud);
-  lv_align_t align = parse_align_type(align_str);
-  lv_obj_align(ud->slider, align, x_ofs, y_ofs);
-  return 0;
-}
+  ui_slider_ud_t* ud = (ui_slider_ud_t*)lua_newuserdatauv(L, sizeof(ui_slider_ud_t), 0);
+  memset(ud, 0, sizeof(*ud));
+  ud->L = L;
+  snprintf(ud->input_id, sizeof(ud->input_id), "%s", "slider");
 
-// slider:set_value(value, anim)
-static int l_slider_set_value(lua_State* L) {
-  ui_slider_ud_t* ud = (ui_slider_ud_t*)luaL_checkudata(L, 1, UI_SLIDER_MT);
-  int32_t value = check_int32(L, 2);
-  int anim = lua_toboolean(L, 3);
+  ud->slider = lv_slider_create(lv_screen_active());
+  if (!ud->slider) {
+    lua_pushnil(L);
+    lua_pushliteral(L, "failed to create slider");
+    return 2;
+  }
 
-  check_slider_valid(ud);
-  lv_slider_set_value(ud->slider, value, anim);
-  return 0;
-}
+  lv_obj_set_user_data(ud->slider, ud);
+  ud->event_dsc = lv_obj_add_event_cb(ud->slider, slider_event_cb, LV_EVENT_ALL, NULL);
+  luaL_getmetatable(L, UI_SLIDER_MT);
+  lua_setmetatable(L, -2);
 
-// slider:get_value() -> value
-static int l_slider_get_value(lua_State* L) {
-  ui_slider_ud_t* ud = (ui_slider_ud_t*)luaL_checkudata(L, 1, UI_SLIDER_MT);
-
-  check_slider_valid(ud);
-  int32_t value = lv_slider_get_value(ud->slider);
-  lua_pushinteger(L, value);
+  apply_slider_config(L, ud, 2);
   return 1;
 }
 
-// slider:set_range(min, max)
-static int l_slider_set_range(lua_State* L) {
-  ui_slider_ud_t* ud = (ui_slider_ud_t*)luaL_checkudata(L, 1, UI_SLIDER_MT);
-  int32_t min = check_int32(L, 2);
-  int32_t max = check_int32(L, 3);
-
-  check_slider_valid(ud);
-  lv_slider_set_range(ud->slider, min, max);
+static int l_slider_gc(lua_State* L) {
+  lua_ui_slider_delete(L, 1);
   return 0;
 }
 
-// slider:set_style_bg_color(color, alpha)
-static int l_slider_set_style_bg_color(lua_State* L) {
-  ui_slider_ud_t* ud = (ui_slider_ud_t*)luaL_checkudata(L, 1, UI_SLIDER_MT);
-  uint32_t color_hex = check_uint32(L, 2);
-  uint8_t alpha = (uint8_t)luaL_optinteger(L, 3, 255);
-
-  check_slider_valid(ud);
-  lv_color_t color = lv_color_hex(color_hex);
-  lv_obj_set_style_bg_color(ud->slider, color, LV_PART_MAIN | LV_STATE_DEFAULT);
-  lv_obj_set_style_bg_opa(ud->slider, alpha, LV_PART_MAIN | LV_STATE_DEFAULT);
-  return 0;
+bool lua_ui_slider_is(lua_State* L, int idx) {
+  return test_slider(L, idx) != NULL;
 }
 
-// slider:set_style_indicator_color(color, alpha)
-static int l_slider_set_style_indicator_color(lua_State* L) {
-  ui_slider_ud_t* ud = (ui_slider_ud_t*)luaL_checkudata(L, 1, UI_SLIDER_MT);
-  uint32_t color_hex = check_uint32(L, 2);
-  uint8_t alpha = (uint8_t)luaL_optinteger(L, 3, 255);
-
-  check_slider_valid(ud);
-  lv_color_t color = lv_color_hex(color_hex);
-  lv_obj_set_style_bg_color(ud->slider, color, LV_PART_INDICATOR | LV_STATE_DEFAULT);
-  lv_obj_set_style_bg_opa(ud->slider, alpha, LV_PART_INDICATOR | LV_STATE_DEFAULT);
-  return 0;
+const char* lua_ui_slider_id(lua_State* L, int idx) {
+  ui_slider_ud_t* ud = test_slider(L, idx);
+  return ud ? ud->id : NULL;
 }
 
-// slider:set_style_knob_color(color, alpha)
-static int l_slider_set_style_knob_color(lua_State* L) {
-  ui_slider_ud_t* ud = (ui_slider_ud_t*)luaL_checkudata(L, 1, UI_SLIDER_MT);
-  uint32_t color_hex = check_uint32(L, 2);
-  uint8_t alpha = (uint8_t)luaL_optinteger(L, 3, 255);
-
-  check_slider_valid(ud);
-  lv_color_t color = lv_color_hex(color_hex);
-  lv_obj_set_style_bg_color(ud->slider, color, LV_PART_KNOB | LV_STATE_DEFAULT);
-  lv_obj_set_style_bg_opa(ud->slider, alpha, LV_PART_KNOB | LV_STATE_DEFAULT);
-  return 0;
+int lua_ui_slider_patch(lua_State* L, int drawable_idx, int patch_idx) {
+  ui_slider_ud_t* ud = check_slider(L, drawable_idx);
+  luaL_checktype(L, patch_idx, LUA_TTABLE);
+  return apply_slider_config(L, ud, patch_idx);
 }
 
-// slider:set_style_border(color, width)
-static int l_slider_set_style_border(lua_State* L) {
-  ui_slider_ud_t* ud = (ui_slider_ud_t*)luaL_checkudata(L, 1, UI_SLIDER_MT);
-  uint32_t color_hex = check_uint32(L, 2);
-  uint8_t width = (uint8_t)luaL_optinteger(L, 3, 1);
-
-  check_slider_valid(ud);
-  lv_color_t color = lv_color_hex(color_hex);
-  lv_obj_set_style_border_color(ud->slider, color, LV_PART_MAIN | LV_STATE_DEFAULT);
-  lv_obj_set_style_border_width(ud->slider, width, LV_PART_MAIN | LV_STATE_DEFAULT);
-  return 0;
-}
-
-// slider:set_style_radius(radius)
-static int l_slider_set_style_radius(lua_State* L) {
-  ui_slider_ud_t* ud = (ui_slider_ud_t*)luaL_checkudata(L, 1, UI_SLIDER_MT);
-  uint8_t radius = (uint8_t)luaL_checkinteger(L, 2);
-
-  check_slider_valid(ud);
-  lv_obj_set_style_radius(ud->slider, radius, LV_PART_MAIN | LV_STATE_DEFAULT);
-  lv_obj_set_style_radius(ud->slider, radius, LV_PART_INDICATOR | LV_STATE_DEFAULT);
-  lv_obj_set_style_radius(ud->slider, radius, LV_PART_KNOB | LV_STATE_DEFAULT);
-  return 0;
-}
-
-// slider:set_callback(callback)
-static int l_slider_set_callback(lua_State* L) {
-  ui_slider_ud_t* ud = (ui_slider_ud_t*)luaL_checkudata(L, 1, UI_SLIDER_MT);
-
-  check_slider_valid(ud);
-  luaL_argcheck(L, lua_isfunction(L, 2) || lua_isnil(L, 2), 2, "expected function or nil");
-  
-  // 清除之前的回调
-  if (ud->event_cb_ref != LUA_NOREF) {
-    luaL_unref(L, LUA_REGISTRYINDEX, ud->event_cb_ref);
-    ud->event_cb_ref = LUA_NOREF;
-  }
-
-  // 设置新回调
-  if (lua_isfunction(L, 2)) {
-    lua_pushvalue(L, 2);
-    ud->event_cb_ref = luaL_ref(L, LUA_REGISTRYINDEX);
-    ud->L = L;
-  }
-
-  return 0;
-}
-
-// slider:set_input_id(action_id)
-static int l_slider_set_input_id(lua_State* L) {
-  ui_slider_ud_t* ud = (ui_slider_ud_t*)luaL_checkudata(L, 1, UI_SLIDER_MT);
-  const char* input_id = check_string(L, 2);
-
-  check_slider_valid(ud);
-  luaL_argcheck(L, input_id[0] != '\0', 2, "input_id must not be empty");
-  luaL_argcheck(L, strlen(input_id) < LUA_INPUT_ACTION_ID_MAX, 2, "input_id is too long");
-
-  snprintf(ud->input_id, sizeof(ud->input_id), "%s", input_id);
-  return 0;
-}
-
-// slider:delete()
-static int l_slider_delete(lua_State* L) {
-  ui_slider_ud_t* ud = (ui_slider_ud_t*)luaL_checkudata(L, 1, UI_SLIDER_MT);
+void lua_ui_slider_delete(lua_State* L, int idx) {
+  ui_slider_ud_t* ud = test_slider(L, idx);
+  if (!ud) return;
 
   if (ud->slider) {
-    if (ud->event_dsc != NULL) {
+    if (ud->event_dsc) {
       lv_obj_remove_event_dsc(ud->slider, ud->event_dsc);
       ud->event_dsc = NULL;
     }
     lv_obj_delete(ud->slider);
     ud->slider = NULL;
   }
-
-  if (ud->event_cb_ref != LUA_NOREF) {
-    luaL_unref(L, LUA_REGISTRYINDEX, ud->event_cb_ref);
-    ud->event_cb_ref = LUA_NOREF;
-  }
-
-  return 0;
 }
 
-static const luaL_Reg ui_slider_methods[] = {
-  {"set_size", l_slider_set_size},
-  {"set_pos", l_slider_set_pos},
-  {"align", l_slider_align},
-  {"set_value", l_slider_set_value},
-  {"get_value", l_slider_get_value},
-  {"set_range", l_slider_set_range},
-  {"set_style_bg_color", l_slider_set_style_bg_color},
-  {"set_style_indicator_color", l_slider_set_style_indicator_color},
-  {"set_style_knob_color", l_slider_set_style_knob_color},
-  {"set_style_border", l_slider_set_style_border},
-  {"set_style_radius", l_slider_set_style_radius},
-  {"set_callback", l_slider_set_callback},
-  {"set_input_id", l_slider_set_input_id},
-  {"delete", l_slider_delete},
-  {NULL, NULL}
-};
-
-// -----------------------------
-// 5) 滑块事件回调
-// -----------------------------
-
-static void lvgl_slider_event_cb(lv_event_t* e) {
-  lv_event_code_t code = lv_event_get_code(e);
-  lv_obj_t* slider = lv_event_get_current_target(e);
-
-  // 从 user_data 获取用户数据
-  ui_slider_ud_t* ud = (ui_slider_ud_t*)lv_obj_get_user_data(slider);
-  if (!ud) return;
-
-  slider_post_input(ud, code);
-
-  if (ud->event_cb_ref == LUA_NOREF || !ud->L) return;
-
-  // 调用 Lua 回调函数
-  lua_State* L = ud->L;
-  lua_rawgeti(L, LUA_REGISTRYINDEX, ud->event_cb_ref);
-  
-  // 推送滑块对象
-  lua_pushlightuserdata(L, ud);
-  
-  // 推送事件类型
-  lua_pushstring(L, event_code_to_string(code));
-  
-  // 调用回调函数
-  if (lua_pcall(L, 2, 0, 0) != LUA_OK) {
-    const char* err = lua_tostring(L, -1);
-    if (err) {
-      // 这里可以添加日志
-    }
-    lua_pop(L, 1);
-  }
-}
-
-// -----------------------------
-// 6) 模块表 API
-// -----------------------------
-
-// ui.slider.create(parent) -> slider_userdata
-static int l_slider_create(lua_State* L) {
-  lv_obj_t* parent = NULL;
-
-  // 检查第一个参数是否为 userdata（父对象）
-  if (lua_isuserdata(L, 1)) {
-    parent = (lv_obj_t*)lua_touserdata(L, 1);
-  } else if (lua_isnil(L, 1) || lua_gettop(L) == 0) {
-    // 使用当前活动屏幕
-    parent = lv_screen_active();
-  } else {
-    return luaL_error(L, "invalid parent object");
-  }
-
-  // 创建 userdata
-  ui_slider_ud_t* ud = (ui_slider_ud_t*)lua_newuserdatauv(L, sizeof(ui_slider_ud_t), 0);
-  memset(ud, 0, sizeof(*ud));
-  ud->event_cb_ref = LUA_NOREF;
-  ud->L = L;
-  slider_init_input_id(ud);
-
-  // 创建 LVGL 滑块
-  ud->slider = lv_slider_create(parent);
-
-  if (!ud->slider) {
-    return luaL_error(L, "failed to create slider");
-  }
-
-  // 保存 userdata 指针到 LVGL 对象
-  lv_obj_set_user_data(ud->slider, ud);
-  ud->event_dsc = lv_obj_add_event_cb(ud->slider, lvgl_slider_event_cb, LV_EVENT_ALL, NULL);
-
-  // 绑定 metatable
-  luaL_getmetatable(L, UI_SLIDER_MT);
-  lua_setmetatable(L, -2);
-
-  return 1;
-}
-
-// ui.slider.draw(parent, x, y, width, height) -> slider_userdata
-static int l_slider_draw(lua_State* L) {
-  lv_obj_t* parent = NULL;
-
-  // 检查第一个参数是否为 userdata（父对象）
-  if (lua_isuserdata(L, 1)) {
-    parent = (lv_obj_t*)lua_touserdata(L, 1);
-  } else if (lua_isnil(L, 1) || lua_gettop(L) == 0) {
-    // 使用当前活动屏幕
-    parent = lv_screen_active();
-  } else {
-    return luaL_error(L, "invalid parent object");
-  }
-
-  // 获取位置和大小参数
-  int32_t x = luaL_optinteger(L, 2, 0);
-  int32_t y = luaL_optinteger(L, 3, 0);
-  int32_t width = luaL_optinteger(L, 4, 200);
-  int32_t height = luaL_optinteger(L, 5, 20);
-
-  // 创建 userdata
-  ui_slider_ud_t* ud = (ui_slider_ud_t*)lua_newuserdatauv(L, sizeof(ui_slider_ud_t), 0);
-  memset(ud, 0, sizeof(*ud));
-  ud->event_cb_ref = LUA_NOREF;
-  ud->L = L;
-  slider_init_input_id(ud);
-
-  // 创建 LVGL 滑块
-  ud->slider = lv_slider_create(parent);
-
-  if (!ud->slider) {
-    return luaL_error(L, "failed to create slider");
-  }
-
-  // 设置位置和大小
-  lv_obj_set_pos(ud->slider, x, y);
-  lv_obj_set_size(ud->slider, width, height);
-
-  // 保存 userdata 指针到 LVGL 对象
-  lv_obj_set_user_data(ud->slider, ud);
-  ud->event_dsc = lv_obj_add_event_cb(ud->slider, lvgl_slider_event_cb, LV_EVENT_ALL, NULL);
-
-  // 绑定 metatable
-  luaL_getmetatable(L, UI_SLIDER_MT);
-  lua_setmetatable(L, -2);
-
-  return 1;
-}
-
-// ui.slider.get_screen() -> screen_object
-static int l_slider_get_screen(lua_State* L) {
-  lv_obj_t* scr = lv_screen_active();
-  lua_pushlightuserdata(L, scr);
-  return 1;
-}
-
-static const luaL_Reg ui_slider_funcs[] = {
-  {"create", l_slider_create},
-  {"draw", l_slider_draw},
-  {"get_screen", l_slider_get_screen},
-  {NULL, NULL}
-};
-
-// -----------------------------
-// 7) 创建 metatable
-// -----------------------------
-
-static void ui_slider_create_metatable(lua_State* L) {
+static void create_slider_metatable(lua_State* L) {
   if (luaL_newmetatable(L, UI_SLIDER_MT)) {
-    // mt.__index = methods_table
     lua_newtable(L);
-    luaL_setfuncs(L, ui_slider_methods, 0);
     lua_setfield(L, -2, "__index");
-
-    // mt.__gc = delete
-    lua_pushcfunction(L, l_slider_delete);
+    lua_pushcfunction(L, l_slider_gc);
     lua_setfield(L, -2, "__gc");
   }
-  lua_pop(L, 1); // pop metatable
+  lua_pop(L, 1);
 }
 
-// -----------------------------
-// 8) 模块导出
-// -----------------------------
-
 int luaopen_ui_slider(lua_State* L) {
-  // 创建 metatable
-  ui_slider_create_metatable(L);
+  create_slider_metatable(L);
 
-  // 创建模块表
-  luaL_newlib(L, ui_slider_funcs);
-
-  return 1; // 返回模块表
+  lua_newtable(L);
+  lua_newtable(L);
+  lua_pushcfunction(L, l_slider_call);
+  lua_setfield(L, -2, "__call");
+  lua_setmetatable(L, -2);
+  return 1;
 }

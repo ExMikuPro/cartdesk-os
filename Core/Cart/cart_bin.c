@@ -1,17 +1,19 @@
 #include "cart_bin.h"
 
 #include "ff.h"
+#include "fatfs.h"
 
 #include <string.h>
 
-static FATFS s_cart_fs;
-static int s_cart_fs_ready = 0;
-
 int cart_bin_fs_init(void)
 {
-    FRESULT fr = f_mount(&s_cart_fs, "0:", 1);
-    s_cart_fs_ready = (fr == FR_OK);
-    return s_cart_fs_ready ? 0 : -1;
+    FRESULT fr = SD_FATFS_Mount();
+    return (fr == FR_OK) ? 0 : -1;
+}
+
+static int cart_bin_fs_ensure(void)
+{
+    return cart_bin_fs_init();
 }
 
 int cart_bin_read_title_from_sd(const char *path, char out_title[CART_BIN_TITLE_BUFFER_SIZE])
@@ -19,9 +21,7 @@ int cart_bin_read_title_from_sd(const char *path, char out_title[CART_BIN_TITLE_
     if (!out_title) return -10;
     out_title[0] = '\0';
 
-    if (!s_cart_fs_ready) {
-        if (cart_bin_fs_init() != 0) return -11;
-    }
+    if (cart_bin_fs_ensure() != 0) return -11;
 
     FIL fp;
     UINT br = 0;
@@ -49,9 +49,7 @@ int cart_bin_read_preview_from_sd(const char *path, uint8_t *out_buf, uint32_t b
     if (!out_buf) return -10;
     if (buf_size < CART_BIN_PREVIEW_SIZE) return -11;
 
-    if (!s_cart_fs_ready) {
-        if (cart_bin_fs_init() != 0) return -12;
-    }
+    if (cart_bin_fs_ensure() != 0) return -12;
 
     FIL fp;
     UINT br = 0;

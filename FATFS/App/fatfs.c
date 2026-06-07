@@ -24,6 +24,7 @@ FATFS SDFatFS;    /* File system object for SD logical drive */
 FIL SDFile;       /* File object for SD */
 
 /* USER CODE BEGIN Variables */
+static uint8_t s_sd_fatfs_mounted = 0;
 
 /* USER CODE END Variables */
 
@@ -33,6 +34,7 @@ void MX_FATFS_Init(void)
   retSD = FATFS_LinkDriver(&SD_Driver, SDPath);
 
   /* USER CODE BEGIN Init */
+  s_sd_fatfs_mounted = 0;
   /* additional user code for init */
   /* USER CODE END Init */
 }
@@ -50,5 +52,25 @@ DWORD get_fattime(void)
 }
 
 /* USER CODE BEGIN Application */
+FRESULT SD_FATFS_Mount(void)
+{
+  if (retSD != 0U) {
+    return FR_INVALID_DRIVE;
+  }
+
+  if (s_sd_fatfs_mounted) {
+    return FR_OK;
+  }
+
+  const char *path = (SDPath[0] != '\0') ? SDPath : "0:";
+  FRESULT fr = f_mount(&SDFatFS, path, 1);
+  s_sd_fatfs_mounted = (fr == FR_OK) ? 1U : 0U;
+  return fr;
+}
+
+void SD_FATFS_InvalidateMount(void)
+{
+  s_sd_fatfs_mounted = 0;
+}
 
 /* USER CODE END Application */

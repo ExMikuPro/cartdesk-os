@@ -39,6 +39,8 @@ extern FIL SDFile; /* File object for SD */
 void MX_FATFS_Init(void);
 
 /* USER CODE BEGIN Prototypes */
+FRESULT SD_FATFS_Mount(void);
+void SD_FATFS_InvalidateMount(void);
 
 /* USER CODE END Prototypes */
 #ifdef __cplusplus

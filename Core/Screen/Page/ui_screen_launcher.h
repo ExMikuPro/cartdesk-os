@@ -13,6 +13,11 @@ extern const lv_font_t lv_menu_font;
 void Launcher_Init(void);
 
 /**
+ * @brief 驱动 Launcher 延迟动作，需要在 LVGL 主循环中周期调用
+ */
+void Launcher_Task(void);
+
+/**
  * @brief 创建设计稿风格的启动器界面
  * @param disp LVGL 显示对象，为 NULL 时使用默认显示
  */
