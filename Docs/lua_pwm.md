@@ -173,39 +173,70 @@ Use `pwm.release(pin)` when switching a PWM pin back to GPIO. It stops PWM, rele
 Simple half-duty output:
 
 ```lua
-pwm.write(0, 128)
+function init(self)
+    pwm.write(0, 128)
+end
+
+function final(self)
+    pwm.release(0)
+end
 ```
 
 Fade:
 
 ```lua
-pwm.setup(0, 1000)
+local STEP_TIME = 0.005
 
-while true do
-    for i = 0, 255 do
-        pwm.write(0, i)
-        delay.ms(5)
+function init(self)
+    self.duty = 0
+    self.direction = 1
+    self.accumulator = 0
+    pwm.setup(0, 1000)
+    pwm.write(0, self.duty)
+end
+
+function update(self, dt)
+    self.accumulator = self.accumulator + dt
+
+    while self.accumulator >= STEP_TIME do
+        self.accumulator = self.accumulator - STEP_TIME
+        self.duty = self.duty + self.direction
+
+        if self.duty >= pwm.MAX then
+            self.duty = pwm.MAX
+            self.direction = -1
+        elseif self.duty <= pwm.MIN then
+            self.duty = pwm.MIN
+            self.direction = 1
+        end
     end
 
-    for i = 255, 0, -1 do
-        pwm.write(0, i)
-        delay.ms(5)
-    end
+    pwm.write(0, self.duty)
+end
+
+function final(self)
+    pwm.release(0)
 end
 ```
 
 Change frequency:
 
 ```lua
-pwm.setup(1, 1000)
-pwm.write(1, 128)
-delay.ms(300)
+function init(self)
+    pwm.setup(1, 1000)
+    pwm.write(1, 128)
+    delay(300)
 
-pwm.setFreq(1, 2000)
-delay.ms(300)
+    pwm.setFreq(1, 2000)
+    delay(300)
 
-pwm.setFreq(1, 4000)
-delay.ms(300)
+    pwm.setFreq(1, 4000)
+    delay(300)
 
-pwm.stop(1)
+    pwm.stop(1)
+end
+
+function final(self)
+    pwm.release(1)
+end
 ```

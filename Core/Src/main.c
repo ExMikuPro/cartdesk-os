@@ -224,7 +224,9 @@ static void StartLvglTask(void *argument) {
 static void StartLuaTask(void *argument) {
   (void) argument;
 
-  if (lua_init() != 0) {
+  int lua_rc = lua_init();
+  if (lua_rc != 0) {
+    printf("lua_init failed: %d\r\n", lua_rc);
     Error_Handler();
   }
 

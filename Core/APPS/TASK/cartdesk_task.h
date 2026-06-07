@@ -14,6 +14,7 @@ void Task_LED();
 void Task_LVGL();
 void Task_LUA();
 void Task_LUA_StartCart(const char *cart_path);
+void Task_LUA_Stop(void);
 uint8_t Task_LUA_IsRunning(void);
 
 

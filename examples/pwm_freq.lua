@@ -1,12 +1,19 @@
-pwm.setup(1, 1000)
-pwm.write(1, 128)
+local PWM_PIN = 1
 
-delay.ms(300)
+function init(self)
+    pwm.setup(PWM_PIN, 1000)
+    pwm.write(PWM_PIN, 128)
 
-pwm.setFreq(1, 2000)
-delay.ms(300)
+    delay(300)
+    pwm.setFreq(PWM_PIN, 2000)
 
-pwm.setFreq(1, 4000)
-delay.ms(300)
+    delay(300)
+    pwm.setFreq(PWM_PIN, 4000)
 
-pwm.stop(1)
+    delay(300)
+    pwm.stop(PWM_PIN)
+end
+
+function final(self)
+    pwm.release(PWM_PIN)
+end

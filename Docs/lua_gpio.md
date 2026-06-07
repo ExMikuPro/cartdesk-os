@@ -223,14 +223,24 @@ nil, "gpio interrupt not supported"
 ```lua
 local pin = 0
 
-gpio.setup(pin, {
-    mode = gpio.OUTPUT,
-    initial = gpio.LOW,
-    speed = gpio.SPEED_LOW
-})
+function init(self)
+    self.elapsed = 0
+    self.level = gpio.LOW
+    gpio.pinMode(pin, gpio.OUTPUT)
+    gpio.digitalWrite(pin, self.level)
+end
 
-while true do
-    gpio.toggle(pin)
-    delay.ms(500)
+function update(self, dt)
+    self.elapsed = self.elapsed + dt
+    if self.elapsed >= 0.5 then
+        self.elapsed = self.elapsed - 0.5
+        self.level = self.level == gpio.LOW and gpio.HIGH or gpio.LOW
+        gpio.digitalWrite(pin, self.level)
+    end
+end
+
+function final(self)
+    gpio.digitalWrite(pin, gpio.LOW)
+    gpio.release(pin)
 end
 ```

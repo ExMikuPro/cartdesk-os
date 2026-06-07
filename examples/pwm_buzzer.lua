@@ -1,6 +1,13 @@
-pwm.setup(1, 2000)
-pwm.write(1, 128)
+local BUZZER_PIN = 1
 
-delay.ms(200)
+function init(self)
+    pwm.setup(BUZZER_PIN, 2000)
+    pwm.write(BUZZER_PIN, 128)
 
-pwm.stop(1)
+    delay(200)
+    pwm.stop(BUZZER_PIN)
+end
+
+function final(self)
+    pwm.release(BUZZER_PIN)
+end

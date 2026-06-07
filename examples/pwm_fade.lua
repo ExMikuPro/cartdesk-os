@@ -1,13 +1,34 @@
-pwm.setup(0, 1000)
+local PWM_PIN = 0
+local STEP_TIME = 0.005
 
-while true do
-    for i = 0, 255 do
-        pwm.write(0, i)
-        delay.ms(5)
+function init(self)
+    self.duty = 0
+    self.direction = 1
+    self.accumulator = 0
+
+    pwm.setup(PWM_PIN, 1000)
+    pwm.write(PWM_PIN, self.duty)
+end
+
+function update(self, dt)
+    self.accumulator = self.accumulator + dt
+
+    while self.accumulator >= STEP_TIME do
+        self.accumulator = self.accumulator - STEP_TIME
+        self.duty = self.duty + self.direction
+
+        if self.duty >= pwm.MAX then
+            self.duty = pwm.MAX
+            self.direction = -1
+        elseif self.duty <= pwm.MIN then
+            self.duty = pwm.MIN
+            self.direction = 1
+        end
     end
 
-    for i = 255, 0, -1 do
-        pwm.write(0, i)
-        delay.ms(5)
-    end
+    pwm.write(PWM_PIN, self.duty)
+end
+
+function final(self)
+    pwm.release(PWM_PIN)
 end
