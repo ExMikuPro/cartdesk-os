@@ -27,3 +27,6 @@ Makefile
 # 调试
 *.jlink
 *.svd
+
+# CodeGraph runtime
+.codegraph/daemon.pid

@@ -31,6 +31,11 @@
 #include <sys/times.h>
 
 #include "stm32h7xx_hal.h"
+#include "usart.h"
+
+#ifndef STDIO_UART_TIMEOUT_MS
+#define STDIO_UART_TIMEOUT_MS 100u
+#endif
 
 
 /* Variables */
@@ -43,6 +48,31 @@ char **environ = __env;
 
 
 /* Functions */
+int __io_putchar(int ch)
+{
+  uint8_t c = (uint8_t)ch;
+  if (huart1.Instance != USART1) {
+    return ch;
+  }
+
+  (void)HAL_UART_Transmit(&huart1, &c, 1u, STDIO_UART_TIMEOUT_MS);
+  return ch;
+}
+
+int __io_getchar(void)
+{
+  uint8_t c = 0;
+  if (huart1.Instance != USART1) {
+    return -1;
+  }
+
+  if (HAL_UART_Receive(&huart1, &c, 1u, STDIO_UART_TIMEOUT_MS) != HAL_OK) {
+    return -1;
+  }
+
+  return (int)c;
+}
+
 void initialise_monitor_handles()
 {
 }
@@ -82,12 +112,24 @@ __attribute__((weak)) int _read(int file, char *ptr, int len)
 __attribute__((weak)) int _write(int file, char *ptr, int len)
 {
   (void)file;
-  int DataIdx;
+  int sent = 0;
 
-  for (DataIdx = 0; DataIdx < len; DataIdx++)
-  {
-    __io_putchar(*ptr++);
+  if (ptr == NULL || len <= 0) {
+    return 0;
   }
+
+  if (huart1.Instance != USART1) {
+    return len;
+  }
+
+  while (sent < len) {
+    uint16_t chunk = (uint16_t)((len - sent) > 0xFFFF ? 0xFFFF : (len - sent));
+    if (HAL_UART_Transmit(&huart1, (uint8_t *)&ptr[sent], chunk, STDIO_UART_TIMEOUT_MS) != HAL_OK) {
+      break;
+    }
+    sent += chunk;
+  }
+
   return len;
 }
 

@@ -13,6 +13,8 @@ extern uint32_t TaskTicks_LUA;
 void Task_LED();
 void Task_LVGL();
 void Task_LUA();
+void Task_LUA_StartCart(const char *cart_path);
+uint8_t Task_LUA_IsRunning(void);
 
 
 

@@ -255,9 +255,10 @@ add_library(lua_port STATIC
 target_include_directories(lua_port PUBLIC
         ${LUA_PORT_DIR}
         ${LUA_PORT_DIR}/modules
+        ${CART_DIR}
         ${FATFS_INCLUDES}
 )
-target_link_libraries(lua_port PUBLIC cartdesk_common lua lvgl)
+target_link_libraries(lua_port PUBLIC cartdesk_common lua lvgl cart_core)
 
 # ==============================================================================
 # 目标 7: cart_core —— cart.bin 格式读取
@@ -309,6 +310,7 @@ add_library(app_screen STATIC
 target_include_directories(app_screen PUBLIC
         ${SCREEN_PAGE_DIR}
         ${SCREEN_UTILS_DIR}
+        ${TASK_DIR}
         ${DRIVER_DIR}/LCD
 )
 target_link_libraries(app_screen PUBLIC cartdesk_common lvgl drv_storage cart_core)
