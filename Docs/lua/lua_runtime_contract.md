@@ -68,7 +68,6 @@ end
 - 删除 UI 对象，例如 `btn:delete()`、`slider:delete()`。
 - 释放 GPIO，例如 `gpio.release(pin)`。
 - 停止或释放 PWM，例如 `pwm.stop(pin)`、`pwm.release(pin)`。
-- 关闭 SD 文件句柄，例如 `f:close()`。
 - 清空 `self` 上不再有效的句柄。
 
 `final` 应尽量短小、幂等。即使资源已经释放或创建失败，也应安全返回。

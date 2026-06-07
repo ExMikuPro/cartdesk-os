@@ -11,7 +11,6 @@
 - `Core/LuaPort/modules/lua_pwm.c`：PWM 模块。
 - `Core/LuaPort/modules/lua_tim.c`：微秒计时与微秒延时。
 - `Core/LuaPort/modules/lua_delay.c`：毫秒级协程延时。
-- `Core/LuaPort/modules/lua_sd.c`：FatFs SD 文件接口。
 - `Core/LuaPort/modules/lua_rng.c`：STM32 RNG 硬件随机数接口。
 - `Core/LuaPort/modules/lua_crc.c`：STM32 CRC 硬件 CRC32 接口。
 - `Core/LuaPort/modules/lua_ui_button.c`：LVGL 按钮接口。
@@ -82,7 +81,6 @@ function on_reload(self) end
 | `gpio` | table | `lua_gpio.c` | GPIO 读写、翻转 |
 | `pwm` | table | `lua_pwm.c` | PWM 配置、占空比和频率控制 |
 | `tim` | table | `lua_tim.c` | DWT 微秒计时、微秒忙等 |
-| `sd` | table | `lua_sd.c` | FatFs 文件读写 |
 | `rng` | table | `lua_rng.c` | STM32 RNG 硬件随机数 |
 | `crc` | table | `lua_crc.c` | 标准 IEEE CRC32 |
 | `ui` | table | `lua_ui_button.c` / `lua_ui_slider.c` | LVGL UI 命名空间 |
@@ -93,13 +91,13 @@ function on_reload(self) end
 
 ## API 风格契约
 
-- 模块名使用小写名词，例如 `gpio`、`pwm`、`tim`、`sd`、`rng`、`crc`。
+- 模块名使用小写名词，例如 `gpio`、`pwm`、`tim`、`rng`、`crc`。
 - 新函数名使用 snake_case，例如 `pwm.set_freq()`、`rng.u32()`、`crc.crc32_hex()`。
 - 常量使用全大写，例如 `gpio.HIGH`、`gpio.LOW`、`pwm.DEFAULT_FREQ`。
 - 查询类 API 成功时直接返回值，失败时返回 `nil, err`。
 - 修改类 API 成功时返回 `true`，失败时返回 `nil, err`。
 - 参数数量或类型错误属于脚本错误，可以抛 Lua error。
-- 硬件失败、资源冲突、外设不可用、文件失败等运行时错误应返回 `nil, err`；SD 旧接口仍有部分历史行为会抛 Lua error，后续建议统一。
+- 硬件失败、资源冲突、外设不可用等运行时错误应返回 `nil, err`。
 - 旧 API 仅作为 legacy / compatibility 别名保留，新脚本优先使用推荐 API。
 - Lua 层隐藏 STM32 端口、pin mask、timer、channel、寄存器和 HAL handle 等板级细节。
 - 脚本申请的资源应在 `final(self)` 中释放，例如 `gpio.release()`、`pwm.release()` 和 UI 对象 `:delete()`。
@@ -336,153 +334,6 @@ function init(self)
 
   print("crc32", h)
 end
-```
-
-## 7. SD / FatFs API
-
-`sd` 模块提供 FatFs 文件读写。第一次 `sd.open()` 会自动挂载，也可以手动调用 `sd.mount()`。
-
-### 7.1 路径规则
-
-默认宏：
-
-| 宏 | 默认值 |
-| --- | --- |
-| `LUA_SD_DRIVE` | `"0:"` |
-| `LUA_SD_MOUNT_PATH` | `LUA_SD_DRIVE` |
-
-路径处理规则：
-
-- 传入路径包含 `:` 时，按原样传给 FatFs。
-- 传入路径不包含 `:` 且以 `/` 开头时，自动拼成 `0:/xxx`。
-- 传入路径不包含 `:` 且不以 `/` 开头时，自动拼成 `0:/xxx`。
-
-示例：
-
-```lua
-sd.open("log.txt", "a")      -- 实际路径：0:/log.txt
-sd.open("/dir/a.txt", "r")   -- 实际路径：0:/dir/a.txt
-sd.open("1:/a.txt", "r")     -- 保持原样
-```
-
-内部路径缓冲区长度为 256 字节，脚本侧应避免过长路径。
-
-### 7.2 `sd.mount() -> boolean`
-
-强制挂载 SD 文件系统。
-
-成功返回 `true`，失败抛出 Lua 错误。
-
-```lua
-sd.mount()
-```
-
-### 7.3 `sd.umount() -> boolean`
-
-卸载 SD 文件系统。
-
-成功返回 `true`，失败抛出 Lua 错误。
-
-```lua
-sd.umount()
-```
-
-### 7.4 `sd.open(path, mode?) -> file`
-
-打开文件并返回 `sd.file` userdata。
-
-参数：
-
-| 参数 | 类型 | 默认值 | 说明 |
-| --- | --- | --- | --- |
-| `path` | string | 必填 | 文件路径 |
-| `mode` | string | `"r"` | 打开模式 |
-
-支持的模式：
-
-| 模式 | 含义 |
-| --- | --- |
-| `"r"` / `"rb"` | 只读，文件必须存在 |
-| `"r+"` / `"rb+"` | 读写，文件必须存在 |
-| `"w"` / `"wb"` | 写入，创建或清空 |
-| `"w+"` / `"wb+"` | 读写，创建或清空 |
-| `"a"` / `"ab"` | 追加写，文件不存在则创建 |
-| `"a+"` / `"ab+"` | 追加读写，文件不存在则创建 |
-
-```lua
-local f = sd.open("log.txt", "a")
-```
-
-打开失败会抛出 Lua 错误，错误信息包含 FatFs `FRESULT` 名称和值。
-
-### 7.5 文件对象方法
-
-#### `file:write(data) -> written_len`
-
-写入字符串数据，返回实际写入字节数。
-
-```lua
-local n = f:write("hello\n")
-```
-
-#### `file:read(n) -> string`
-
-最多读取 `n` 字节，返回字符串。读到 EOF 时返回内容可能短于 `n`。
-
-```lua
-local data = f:read(128)
-```
-
-`n` 必须大于等于 0。
-
-#### `file:seek(pos) -> new_pos`
-
-跳转到文件绝对位置 `pos`，返回跳转后的当前位置。
-
-```lua
-f:seek(0)
-```
-
-`pos` 必须大于等于 0。当前接口不支持 `SEEK_CUR` / `SEEK_END` 风格参数。
-
-#### `file:size() -> size`
-
-返回文件大小，单位字节。
-
-```lua
-local size = f:size()
-```
-
-#### `file:close()`
-
-关闭文件。已关闭文件再次关闭不会报错。
-
-```lua
-f:close()
-```
-
-兼容别名：`file:wirte(data)` 等价于 `file:write(data)`，这是为了兼容已有 typo，不推荐新代码使用。
-
-### 7.6 模块级包装函数
-
-以下函数等价于对应的文件对象方法：
-
-| 模块级函数 | 等价写法 |
-| --- | --- |
-| `sd.write(f, data)` | `f:write(data)` |
-| `sd.read(f, n)` | `f:read(n)` |
-| `sd.seek(f, pos)` | `f:seek(pos)` |
-| `sd.size(f)` | `f:size()` |
-| `sd.close(f)` | `f:close()` |
-
-兼容别名：`sd.wirte(f, data)` 等价于 `sd.write(f, data)`，不推荐新代码使用。
-
-示例：
-
-```lua
-local f = sd.open("hello.txt", "w")
-sd.write(f, "hello\n")
-sd.close(f)
 ```
 
 ## 8. UI 通用约定
@@ -994,16 +845,6 @@ function update(self, dt)
 end
 ```
 
-### 11.2 写入 SD 日志
-
-```lua
-function init(self)
-  local f = sd.open("boot.log", "a")
-  f:write("lua boot\n")
-  f:close()
-end
-```
-
 ### 11.3 创建按钮和滑块
 
 ```lua
@@ -1042,4 +883,3 @@ end
 - UI 控件创建后会默认挂接 LVGL 事件并投递到 `on_input()`；`set_callback()` 只是 legacy 兼容回调。
 - UI 事件回调当前 C 代码传入的是 lightuserdata，不是可直接调用方法的 Lua 控件 userdata。
 - `delay()` 在生命周期回调中是协程非阻塞延时；`tim.delay_us()` 仍是忙等阻塞调用。
-- SD 文件操作失败会抛 Lua 错误；需要脚本侧容错时，应先开启 `pcall` 所在标准库或在 C 侧提供封装。

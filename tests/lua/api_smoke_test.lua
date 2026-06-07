@@ -72,16 +72,7 @@ require_type("tim", tim, "table")
 require_type("tim.us", tim.us, "function")
 require_type("tim.delay_us", tim.delay_us, "function")
 
-require_type("sd", sd, "table")
-require_type("sd.open", sd.open, "function")
-require_type("sd.close", sd.close, "function")
-require_type("sd.write", sd.write, "function")
-require_type("sd.wirte", sd.wirte, "function")
-require_type("sd.read", sd.read, "function")
-require_type("sd.seek", sd.seek, "function")
-require_type("sd.size", sd.size, "function")
-require_type("sd.mount", sd.mount, "function")
-require_type("sd.umount", sd.umount, "function")
+if sd ~= nil then error("old api should be removed: sd") end
 
 require_type("rng", rng, "table")
 require_type("rng.u32", rng.u32, "function")

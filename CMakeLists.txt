@@ -307,7 +307,6 @@ add_library(lua_port STATIC
         ${LUA_PORT_DIR}/modules/lua_pwm.c
         ${LUA_PORT_DIR}/modules/lua_delay.c
         ${LUA_PORT_DIR}/modules/lua_tim.c
-        ${LUA_PORT_DIR}/modules/lua_sd.c
         ${LUA_PORT_DIR}/modules/lua_rng.c
         ${LUA_PORT_DIR}/modules/lua_crc.c
         ${LUA_PORT_DIR}/modules/lua_ui_button.c

@@ -7,7 +7,6 @@
 int  luaopen_gpio(lua_State* L);
 int  luaopen_pwm(lua_State* L);
 int  luaopen_tim(lua_State* L);
-int  luaopen_sd(lua_State* L);
 int  luaopen_rng(lua_State* L);
 int  luaopen_crc(lua_State* L);
 void lua_register_delay(lua_State* L);
@@ -30,10 +29,6 @@ void lua_port_bind(lua_State* L, const lua_port_config_t* cfg)
   // tim.xxx
   luaopen_tim(L);
   lua_setglobal(L, "tim");
-
-  // sd.xxx
-  luaopen_sd(L);
-  lua_setglobal(L, "sd");
 
   // rng.xxx
   luaopen_rng(L);

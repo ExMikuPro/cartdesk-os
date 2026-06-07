@@ -61,13 +61,13 @@ end
 
 ## API 风格契约
 
-- 模块名使用小写名词，例如 `gpio`、`pwm`、`tim`、`sd`、`rng`、`crc`。
+- 模块名使用小写名词，例如 `gpio`、`pwm`、`tim`、`rng`、`crc`。
 - 新函数名使用 snake_case，例如 `pwm.set_freq()`、`rng.u32()`、`crc.crc32_hex()`。
 - 常量使用全大写，例如 `gpio.HIGH`、`gpio.LOW`、`pwm.DEFAULT_FREQ`。
 - 查询类 API 成功返回值，失败返回 `nil, err`。
 - 修改类 API 成功返回 `true`，失败返回 `nil, err`。
 - 参数错误可以抛 Lua error。
-- 运行时失败返回 `nil, err`；SD 旧接口仍有部分历史行为会抛 Lua error，未来建议统一。
+- 运行时失败返回 `nil, err`。
 - 旧 API 仅作为兼容别名保留，新脚本优先使用推荐 API。
 - Lua 层隐藏 STM32 板级细节，不暴露 HAL handle、寄存器、timer/channel 等对象。
 - 资源应在 `final(self)` 中释放。
@@ -299,55 +299,6 @@ function update(self, dt)
 end
 ```
 
-## SD
-
-`sd` 模块：
-
-| API | 说明 |
-| --- | --- |
-| `sd.open(path, mode)` | 打开文件 |
-| `sd.close(f)` | 关闭文件 |
-| `sd.write(f, data)` | 写入数据 |
-| `sd.wirte(f, data)` | 拼写错误兼容别名，不推荐新代码使用 |
-| `sd.read(f, n)` | 读取最多 `n` 字节 |
-| `sd.seek(f, pos)` | 移动文件位置 |
-| `sd.size(f)` | 返回文件大小 |
-| `sd.mount()` | 挂载 SD 文件系统 |
-| `sd.umount()` | 卸载 SD 文件系统 |
-
-文件对象方法：
-
-| API | 说明 |
-| --- | --- |
-| `f:close()` | 关闭文件 |
-| `f:write(data)` | 写入数据 |
-| `f:wirte(data)` | 拼写错误兼容别名，不推荐新代码使用 |
-| `f:read(n)` | 读取最多 `n` 字节 |
-| `f:seek(pos)` | 移动文件位置 |
-| `f:size()` | 返回文件大小 |
-
-`sd.wirte` 和 `f:wirte` 是历史拼写错误兼容别名，只为旧脚本保留；新代码使用 `write`。
-
-当前实现中，部分 SD 错误会直接抛出 Lua 错误。需要处理失败时，可以使用 `pcall`：
-
-```lua
-function init(self)
-    local ok, err = pcall(function()
-        sd.mount()
-        local f = sd.open("/hello.txt", "w+")
-        f:write("hello\n")
-        f:seek(0)
-        print(f:read(f:size()))
-        f:close()
-        sd.umount()
-    end)
-
-    if not ok then
-        print("sd failed", err)
-    end
-end
-```
-
 ## UI Button
 
 `ui.button` 模块：
@@ -471,7 +422,7 @@ end
 - `debug`
 - `package`
 
-脚本示例和应用脚本不要依赖未打开的标准库。文件访问请使用 `sd` 模块。
+脚本示例和应用脚本不要依赖未打开的标准库。Lua 侧不提供文件访问 API。
 
 ## 暂未实现与兼容说明
 
@@ -480,4 +431,3 @@ end
 - `gpio.ANALOG` 当前只是接口层常量。
 - ADC 本轮未实现。
 - GPIO interrupt 本轮未实现。
-- `sd.wirte`、`f:wirte` 是拼写错误兼容别名，不推荐新代码使用。
