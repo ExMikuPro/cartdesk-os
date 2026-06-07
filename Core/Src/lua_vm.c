@@ -60,22 +60,19 @@ __attribute__((weak))
 const char* lua_get_boot_script(size_t *out_len)
 {
     static const char kScript[] =
-    "-- PA3 PWM breathing test (GPIO4 / TIM2 CH4)\n"
-    "local PWM_PIN = 4\n"
+    "-- PA0 input controls the onboard LED on PB1\n"
+    "local BUTTON_PIN = 5\n"
+    "local LED_PIN = 3\n"
     "\n"
     "function start()\n"
-    "  print(\"pa3 pwm breathing start\")\n"
-    "  pwm.setup(PWM_PIN, 1000)\n"
-    "  while true do\n"
-    "    for duty = 0, 255 do\n"
-    "      pwm.write(PWM_PIN, duty)\n"
-    "      delay.ms(5)\n"
-    "    end\n"
-    "    for duty = 255, 0, -1 do\n"
-    "      pwm.write(PWM_PIN, duty)\n"
-    "      delay.ms(5)\n"
-    "    end\n"
-    "  end\n"
+    "  gpio.pinMode(BUTTON_PIN, gpio.INPUT_PULLUP)\n"
+    "  gpio.pinMode(LED_PIN, gpio.OUTPUT)\n"
+    "  gpio.digitalWrite(LED_PIN, gpio.LOW)\n"
+    "end\n"
+    "\n"
+    "function update(dt)\n"
+    "  local pressed = gpio.digitalRead(BUTTON_PIN) == gpio.LOW\n"
+    "  gpio.digitalWrite(LED_PIN, pressed and gpio.HIGH or gpio.LOW)\n"
     "end\n";
 
     if(out_len) *out_len = sizeof(kScript) - 1;

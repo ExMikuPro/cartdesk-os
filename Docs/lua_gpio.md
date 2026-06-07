@@ -11,19 +11,20 @@ Lua scripts do not need to know the STM32 GPIO port or pin mask.
 2 / GPIO2 / D2
 3 / GPIO3 / D3
 4 / GPIO4 / D4
+5 / PA0 / D5
+6 / PC13 / D6
 ```
 
-The physical GPIO port and pin mapping is board-specific and intentionally
-hidden from application scripts. Application scripts should use only logical
-ids or logical names:
+Application scripts may use logical ids or exported pin names:
 
 ```lua
-gpio.setup(0, gpio.OUTPUT)
-gpio.setup("GPIO1", gpio.INPUT_PULLUP)
-gpio.write("D2", gpio.HIGH)
+gpio.pinMode(5, gpio.INPUT_PULLUP)
+gpio.pinMode("PC13", gpio.OUTPUT)
+gpio.digitalWrite(6, gpio.HIGH)
 ```
 
-Raw physical pin names are not accepted.
+Other STM32 physical pin names are not accepted. All seven GPIO pins support
+digital input and output. Only `GPIO0` through `GPIO4` support PWM.
 
 ## Constants
 
@@ -71,13 +72,20 @@ gpio.HIGH_LEVEL
 
 ## Setup
 
+Arduino-style setup:
+
+```lua
+gpio.pinMode(0, gpio.INPUT)
+gpio.pinMode(5, gpio.INPUT_PULLUP)
+gpio.pinMode(6, gpio.INPUT_PULLDOWN)
+gpio.pinMode(6, gpio.OUTPUT)
+```
+
 Simple mode:
 
 ```lua
 gpio.setup(0, gpio.OUTPUT)
-gpio.setup(1, gpio.INPUT_PULLUP)
-gpio.setup(2, gpio.INPUT_PULLDOWN)
-gpio.setup(3, gpio.OUTPUT_OPEN_DRAIN)
+gpio.setup(5, gpio.INPUT_PULLUP)
 ```
 
 Table configuration:
@@ -89,7 +97,7 @@ gpio.setup(0, {
     speed = gpio.SPEED_LOW
 })
 
-gpio.setup(1, {
+gpio.setup(5, {
     mode = gpio.INPUT_PULLUP
 })
 ```
@@ -99,6 +107,9 @@ Optional `pull` values are `"none"`, `"up"`, and `"down"`.
 ## Read And Write
 
 ```lua
+gpio.digitalWrite(6, gpio.HIGH)
+local input = gpio.digitalRead(5)
+
 gpio.write(0, gpio.HIGH)
 gpio.write(0, gpio.LOW)
 gpio.write(0, 1)
@@ -168,7 +179,7 @@ gpio.release(0)
 ```
 
 Release restores the pin to analog/no-pull safe state and clears its GPIO
-ownership. Release a GPIO before using the same logical pin as PWM:
+ownership. Release a PWM-capable GPIO before using the same logical pin as PWM:
 
 ```lua
 gpio.setup(0, gpio.OUTPUT)
@@ -176,21 +187,21 @@ gpio.release(0)
 pwm.write(0, 128)
 ```
 
-GPIO and PWM cannot own the same logical pin at the same time. Use
-`pwm.release(pin)` before switching a PWM pin back to GPIO.
+GPIO and PWM cannot own the same PWM-capable pin at the same time. `PA0` and
+`PC13` do not support PWM.
 
-## Arduino Aliases
+## Arduino API
 
-The following global compatibility functions are available:
+The preferred Arduino-style API is available on the `gpio` table:
 
 ```lua
-pinMode(pin, mode)
-digitalRead(pin)
-digitalWrite(pin, value)
+gpio.pinMode(pin, mode)
+gpio.digitalRead(pin)
+gpio.digitalWrite(pin, value)
 ```
 
-The namespaced `gpio.*` API is preferred for new scripts. Arduino aliases are
-compatibility helpers and may be disabled by firmware configuration.
+The global `pinMode`, `digitalRead`, and `digitalWrite` aliases remain
+available for compatibility.
 
 ## Interrupts
 

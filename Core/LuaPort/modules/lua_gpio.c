@@ -9,6 +9,11 @@
 #define LUA_GPIO_LOW   0
 #define LUA_GPIO_HIGH  1
 
+#define LUA_GPIO_INPUT           0
+#define LUA_GPIO_INPUT_PULLUP    1
+#define LUA_GPIO_INPUT_PULLDOWN  2
+#define LUA_GPIO_OUTPUT          3
+
 #define LUA_GPIO_RISING      0
 #define LUA_GPIO_FALLING     1
 #define LUA_GPIO_CHANGE      2
@@ -62,6 +67,25 @@ static uint8_t lua_gpio_check_mode(lua_State *L, int index)
   luaL_argcheck(L, mode >= BOARD_GPIO_MODE_INPUT && mode <= BOARD_GPIO_MODE_ANALOG,
                 index, "invalid gpio mode");
   return (uint8_t)mode;
+}
+
+static uint8_t lua_gpio_check_pin_mode(lua_State *L, int index)
+{
+  lua_Integer mode = luaL_checkinteger(L, index);
+
+  switch (mode) {
+    case LUA_GPIO_OUTPUT:
+      return BOARD_GPIO_MODE_OUTPUT;
+    case LUA_GPIO_INPUT:
+      return BOARD_GPIO_MODE_INPUT;
+    case LUA_GPIO_INPUT_PULLUP:
+      return BOARD_GPIO_MODE_INPUT_PULLUP;
+    case LUA_GPIO_INPUT_PULLDOWN:
+      return BOARD_GPIO_MODE_INPUT_PULLDOWN;
+    default:
+      luaL_argerror(L, index, "invalid gpio mode");
+      return BOARD_GPIO_MODE_INPUT;
+  }
 }
 
 static uint8_t lua_gpio_check_speed(lua_State *L, int index)
@@ -296,7 +320,15 @@ static int l_gpio_off(lua_State *L)
 
 static int l_global_pin_mode(lua_State *L)
 {
-  return l_gpio_setup(L);
+  const GpioMapEntry *entry = lua_gpio_check_pin(L, 1);
+  BoardGpioConfig config = {
+    .mode = lua_gpio_check_pin_mode(L, 2),
+    .speed = BOARD_GPIO_SPEED_LOW,
+    .initial = -1,
+    .pull = -1
+  };
+
+  return lua_gpio_push_status(L, Board_GPIO_Setup(entry, &config), "gpio.pinMode");
 }
 
 static int l_global_digital_read(lua_State *L)
@@ -326,6 +358,9 @@ static const luaL_Reg gpio_lib[] = {
   {"release", l_gpio_release},
   {"on", l_gpio_on},
   {"off", l_gpio_off},
+  {"pinMode", l_global_pin_mode},
+  {"digitalRead", l_global_digital_read},
+  {"digitalWrite", l_global_digital_write},
   {NULL, NULL}
 };
 
@@ -336,10 +371,10 @@ int luaopen_gpio(lua_State *L)
   set_int_field(L, "LOW", LUA_GPIO_LOW);
   set_int_field(L, "HIGH", LUA_GPIO_HIGH);
 
-  set_int_field(L, "INPUT", BOARD_GPIO_MODE_INPUT);
-  set_int_field(L, "INPUT_PULLUP", BOARD_GPIO_MODE_INPUT_PULLUP);
-  set_int_field(L, "INPUT_PULLDOWN", BOARD_GPIO_MODE_INPUT_PULLDOWN);
-  set_int_field(L, "OUTPUT", BOARD_GPIO_MODE_OUTPUT);
+  set_int_field(L, "OUTPUT", LUA_GPIO_OUTPUT);
+  set_int_field(L, "INPUT", LUA_GPIO_INPUT);
+  set_int_field(L, "INPUT_PULLUP", LUA_GPIO_INPUT_PULLUP);
+  set_int_field(L, "INPUT_PULLDOWN", LUA_GPIO_INPUT_PULLDOWN);
   set_int_field(L, "OUTPUT_OPEN_DRAIN", BOARD_GPIO_MODE_OUTPUT_OPEN_DRAIN);
   set_int_field(L, "ANALOG", BOARD_GPIO_MODE_ANALOG);
 
