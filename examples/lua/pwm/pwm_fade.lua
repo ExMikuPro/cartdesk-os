@@ -2,31 +2,35 @@ local PWM_PIN = 0
 local STEP_TIME = 0.005
 
 function init(self)
-    self.duty = 0
-    self.direction = 1
-    self.accumulator = 0
+    self.state = {
+        duty = pwm.MIN,
+        direction = 1,
+        accumulator = 0,
+    }
 
     pwm.setup(PWM_PIN, 1000)
-    pwm.write(PWM_PIN, self.duty)
+    pwm.write(PWM_PIN, self.state.duty)
 end
 
 function update(self, dt)
-    self.accumulator = self.accumulator + dt
+    local s = self.state
 
-    while self.accumulator >= STEP_TIME do
-        self.accumulator = self.accumulator - STEP_TIME
-        self.duty = self.duty + self.direction
+    s.accumulator = s.accumulator + dt
 
-        if self.duty >= pwm.MAX then
-            self.duty = pwm.MAX
-            self.direction = -1
-        elseif self.duty <= pwm.MIN then
-            self.duty = pwm.MIN
-            self.direction = 1
+    while s.accumulator >= STEP_TIME do
+        s.accumulator = s.accumulator - STEP_TIME
+        s.duty = s.duty + s.direction
+
+        if s.duty >= pwm.MAX then
+            s.duty = pwm.MAX
+            s.direction = -1
+        elseif s.duty <= pwm.MIN then
+            s.duty = pwm.MIN
+            s.direction = 1
         end
     end
 
-    pwm.write(PWM_PIN, self.duty)
+    pwm.write(PWM_PIN, s.duty)
 end
 
 function final(self)

@@ -84,14 +84,16 @@ require_type("crc.crc32_hex", crc.crc32_hex, "function")
 
 require_type("ui", ui, "table")
 require_type("ui.button", ui.button, "table")
-require_type("ui.button.create", ui.button.create, "function")
-require_type("ui.button.draw", ui.button.draw, "function")
-require_type("ui.button.get_screen", ui.button.get_screen, "function")
+if ui.button.create ~= nil then error("old api should be removed: ui.button.create") end
+if ui.button.draw ~= nil then error("old api should be removed: ui.button.draw") end
+if ui.button.get_screen ~= nil then error("old api should be removed: ui.button.get_screen") end
 
 require_type("ui.slider", ui.slider, "table")
-require_type("ui.slider.create", ui.slider.create, "function")
-require_type("ui.slider.draw", ui.slider.draw, "function")
-require_type("ui.slider.get_screen", ui.slider.get_screen, "function")
+if ui.slider.create ~= nil then error("old api should be removed: ui.slider.create") end
+if ui.slider.draw ~= nil then error("old api should be removed: ui.slider.draw") end
+if ui.slider.get_screen ~= nil then error("old api should be removed: ui.slider.get_screen") end
+require_type("ui.find", ui.find, "function")
+require_type("ui.patch", ui.patch, "function")
 
 require_type("_G", _G, "table")
 require_type("coroutine", coroutine, "table")

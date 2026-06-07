@@ -5,10 +5,10 @@ function init(self)
     pwm.write(PWM_PIN, 128)
 
     delay(300)
-    pwm.setFreq(PWM_PIN, 2000)
+    pwm.set_freq(PWM_PIN, 2000)
 
     delay(300)
-    pwm.setFreq(PWM_PIN, 4000)
+    pwm.set_freq(PWM_PIN, 4000)
 
     delay(300)
     pwm.stop(PWM_PIN)

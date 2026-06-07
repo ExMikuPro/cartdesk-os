@@ -1,22 +1,28 @@
 function init(self)
-    local screen = ui.button.get_screen()
+    self.children = ui.button({
+        id = "button_demo",
+        text = "Run",
+        rect = { 24, 24, 120, 48 },
+        input = "button_demo",
+        style = {
+            bg = 0x2D8CFF,
+            bg_alpha = 255,
+            text = 0xFFFFFF,
+            border = {
+                color = 0x145DA0,
+                width = 2,
+            },
+            radius = 8,
+        },
+    })
+end
 
-    self.button = ui.button.create(screen)
-    self.button:set_text("Run")
-    self.button:set_pos(24, 24)
-    self.button:set_size(120, 48)
-    self.button:set_style_bg_color(0x2D8CFF, 255)
-    self.button:set_style_text_color(0xFFFFFF)
-    self.button:set_style_border(0x145DA0, 2)
-    self.button:set_style_radius(8)
-    self.button:set_callback(function(btn, event)
-        print("button event", event)
-    end)
+function on_input(self, action_id, action)
+    if action_id == "button_demo" then
+        print("button event", action.event)
+    end
 end
 
 function final(self)
-    if self.button then
-        self.button:delete()
-        self.button = nil
-    end
+    -- UI children are deleted by the host after final(self).
 end

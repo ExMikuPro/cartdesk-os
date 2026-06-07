@@ -1,21 +1,26 @@
 function init(self)
-    self.count = 0
-    self.fixed_count = 0
+    self.state = {
+        count = 0,
+        fixed_count = 0,
+        fixed_dt = 0,
+    }
     print("init")
 end
 
 function fixed_update(self, dt)
-    self.fixed_count = self.fixed_count + 1
-    self.fixed_dt = dt
+    local s = self.state
+    s.fixed_count = s.fixed_count + 1
+    s.fixed_dt = dt
 end
 
 function update(self, dt)
-    self.count = self.count + 1
-    print("update", self.count, dt)
+    local s = self.state
+    s.count = s.count + 1
+    print("update", s.count, dt)
 end
 
 function late_update(self, dt)
-    print("late_update", self.count, dt)
+    print("late_update", self.state.count, dt)
 end
 
 function on_input(self, action_id, action)
@@ -27,9 +32,10 @@ function on_message(self, message_id, message, sender)
 end
 
 function on_reload(self)
-    print("reload", self.count)
+    print("reload", self.state.count)
 end
 
 function final(self)
-    print("final", self.count, self.fixed_count)
+    local s = self.state
+    print("final", s.count, s.fixed_count)
 end

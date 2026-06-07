@@ -2,34 +2,38 @@ local PWM_PIN = 0
 local STEP_INTERVAL = 0.02
 
 function init(self)
-    self.elapsed = 0
-    self.duty = pwm.MIN
-    self.direction = 1
+    self.state = {
+        elapsed = 0,
+        duty = pwm.MIN,
+        direction = 1,
+    }
 
     pwm.setup(PWM_PIN, {
         freq = pwm.DEFAULT_FREQ,
-        duty = self.duty,
+        duty = self.state.duty,
         start = true,
     })
 end
 
 function update(self, dt)
-    self.elapsed = self.elapsed + dt
+    local s = self.state
 
-    while self.elapsed >= STEP_INTERVAL do
-        self.elapsed = self.elapsed - STEP_INTERVAL
-        self.duty = self.duty + self.direction
+    s.elapsed = s.elapsed + dt
 
-        if self.duty >= pwm.MAX then
-            self.duty = pwm.MAX
-            self.direction = -1
-        elseif self.duty <= pwm.MIN then
-            self.duty = pwm.MIN
-            self.direction = 1
+    while s.elapsed >= STEP_INTERVAL do
+        s.elapsed = s.elapsed - STEP_INTERVAL
+        s.duty = s.duty + s.direction
+
+        if s.duty >= pwm.MAX then
+            s.duty = pwm.MAX
+            s.direction = -1
+        elseif s.duty <= pwm.MIN then
+            s.duty = pwm.MIN
+            s.direction = 1
         end
     end
 
-    pwm.write(PWM_PIN, self.duty)
+    pwm.write(PWM_PIN, s.duty)
 end
 
 function final(self)

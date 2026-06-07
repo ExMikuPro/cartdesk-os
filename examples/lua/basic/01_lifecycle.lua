@@ -1,19 +1,23 @@
 function init(self)
-    self.elapsed = 0
-    self.ticks = 0
+    self.state = {
+        elapsed = 0,
+        ticks = 0,
+    }
     print("lifecycle init")
 end
 
 function update(self, dt)
-    self.elapsed = self.elapsed + dt
+    local s = self.state
 
-    if self.elapsed >= 1.0 then
-        self.elapsed = self.elapsed - 1.0
-        self.ticks = self.ticks + 1
-        print("lifecycle tick", self.ticks)
+    s.elapsed = s.elapsed + dt
+
+    if s.elapsed >= 1.0 then
+        s.elapsed = s.elapsed - 1.0
+        s.ticks = s.ticks + 1
+        print("lifecycle tick", s.ticks)
     end
 end
 
 function final(self)
-    print("lifecycle final", self.ticks)
+    print("lifecycle final", self.state.ticks)
 end
