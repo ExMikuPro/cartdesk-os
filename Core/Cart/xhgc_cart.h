@@ -2,6 +2,7 @@
 #define XHGC_CART_H
 
 #include <stdint.h>
+#include <stdbool.h>
 
 #ifndef XHGC_CART_NO_FATFS
 #include "ff.h"
@@ -106,6 +107,40 @@ typedef struct {
     uint32_t crc32;
 } XHGC_CartFile;
 
+#define XHGC_INDEX_MAGIC              "XHGCIDX2"
+#define XHGC_INDEX_MAGIC_SIZE         8u
+#define XHGC_INDEX_VERSION            1u
+#define XHGC_INDEX_ENTRY_SIZE         32u
+
+#define XHGC_RES_IMAGE                1u
+#define XHGC_RES_SCRIPT               2u
+#define XHGC_RES_FONT                 3u
+#define XHGC_RES_SOUND                4u
+
+#define XHGC_IMG_NONE                 0u
+#define XHGC_IMG_BGRA8888             1u
+#define XHGC_IMG_RGB565               2u
+#define XHGC_IMG_A8                   3u
+#define XHGC_IMG_LVGL_BIN             4u
+
+typedef struct {
+    uint32_t path_hash;
+    uint32_t path_off;
+    uint32_t data_off;
+    uint32_t size;
+    uint32_t crc32;
+    uint8_t type;
+    uint8_t format;
+    uint16_t width;
+    uint16_t height;
+    uint16_t flags;
+    uint32_t reserved;
+} XhgcIndexEntry;
+
+typedef bool (*XHGC_CartResourceVisitor)(const char *path,
+                                         const XhgcIndexEntry *entry,
+                                         void *ctx);
+
 int xhgc_cart_open_reader(XHGC_Cart *cart,
                           XHGC_CartReader read,
                           void *reader_ctx,
@@ -127,6 +162,15 @@ int xhgc_cart_manf_get_u64(const XHGC_Cart *cart,
 int xhgc_cart_find_file(const XHGC_Cart *cart,
                         const char *path,
                         XHGC_CartFile *out_file);
+bool cart_mount_index(XHGC_Cart *cart);
+bool cart_find_resource(XHGC_Cart *cart,
+                        const char *path,
+                        uint16_t expected_type,
+                        XhgcIndexEntry *out_entry);
+int xhgc_cart_for_each_resource(const XHGC_Cart *cart,
+                                XHGC_CartResourceVisitor visitor,
+                                void *ctx);
+bool xhgc_cart_path_is_valid(const char *path);
 int xhgc_cart_read_file(const XHGC_Cart *cart,
                         const XHGC_CartFile *file,
                         uint32_t file_offset,

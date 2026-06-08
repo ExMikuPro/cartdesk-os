@@ -13,6 +13,7 @@
 #include "lua_port.h"
 #include "lua_ui.h"
 #include "lua_vm_memory.h"
+#include "resource_manager.h"
 #include "xhgc_cart.h"
 
 #ifndef LUA_RT_PERIOD_MS
@@ -781,6 +782,12 @@ int lua_run_cart_entry(const char *cart_path)
     int rc = lua_rt_load_cart_entry(g_L, cart_path);
     if (rc != 0) return rc;
 
+    if (!res_manager_mount_cart(cart_path)) {
+        lua_rt_log("cart resource index mount failed: ");
+        lua_rt_log(res_last_error() ? res_last_error() : "unknown");
+        lua_rt_log("\n");
+    }
+
     int create_rc =
         lua_rt_create_instance_from_loaded(LUA_SCRIPT_SOURCE_CART, cart_path);
     return create_rc == 0 ? 0 : -7;
@@ -799,6 +806,14 @@ void lua_rt_delay_ms(uint32_t delay_ms)
 {
     g_entry_wake_ms = lua_rt_time_ms() + delay_ms;
     g_entry_sleeping = true;
+}
+
+const char *lua_current_cart_path(void)
+{
+    if (!g_entry_instance || g_entry_instance->source != LUA_SCRIPT_SOURCE_CART) {
+        return NULL;
+    }
+    return g_entry_instance->source_path[0] != '\0' ? g_entry_instance->source_path : NULL;
 }
 
 static void lua_rt_clear_entry(void)
@@ -1175,6 +1190,7 @@ static int lua_rt_init_state(void)
 
     lua_rt_openlibs(g_L);
     lua_port_bind(g_L, NULL);
+    res_manager_init();
 
     memset(g_instances, 0, sizeof(g_instances));
     memset(g_input_queue, 0, sizeof(g_input_queue));
@@ -1366,6 +1382,7 @@ int lua_shutdown(void)
         instance->alive = false;
         lua_rt_unref_instance(instance);
     }
+    res_scene_reset();
 
     lua_close(g_L);
     g_L = NULL;
@@ -1385,12 +1402,16 @@ void lua_update_task(void)
 
     const uint32_t now = lua_rt_time_ms();
     if (g_entry_thread) {
-        if (lua_rt_poll_entry(now) == 1) return;
+        if (lua_rt_poll_entry(now) == 1) {
+            return;
+        }
     }
 
     if (g_scheduler_phase != LUA_SCHED_IDLE) {
         lua_rt_drive_scheduler();
-        if (g_entry_thread || g_scheduler_phase != LUA_SCHED_IDLE) return;
+        if (g_entry_thread || g_scheduler_phase != LUA_SCHED_IDLE) {
+            return;
+        }
     }
 
     uint32_t elapsed = (uint32_t)(now - g_last_ms);

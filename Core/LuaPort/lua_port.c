@@ -16,14 +16,16 @@ void lua_register_delay(lua_State* L);
 
 static bool lua_ui_is_drawable(lua_State* L, int idx)
 {
-  return lua_ui_button_is(L, idx) || lua_ui_slider_is(L, idx);
+  return lua_ui_button_is(L, idx) || lua_ui_slider_is(L, idx) || lua_ui_image_is(L, idx);
 }
 
 static const char* lua_ui_drawable_id(lua_State* L, int idx)
 {
   const char* id = lua_ui_button_id(L, idx);
   if (id) return id;
-  return lua_ui_slider_id(L, idx);
+  id = lua_ui_slider_id(L, idx);
+  if (id) return id;
+  return lua_ui_image_id(L, idx);
 }
 
 static bool lua_ui_push_find_in_value(lua_State* L, int idx, const char* id)
@@ -96,6 +98,13 @@ static int l_ui_patch(lua_State* L)
     (void)lua_ui_button_patch(L, -1, 3);
   } else if (lua_ui_slider_is(L, -1)) {
     (void)lua_ui_slider_patch(L, -1, 3);
+  } else if (lua_ui_image_is(L, -1)) {
+    if (lua_ui_image_patch(L, -1, 3) != 0) {
+      lua_pop(L, 1);
+      lua_pushnil(L);
+      lua_pushliteral(L, "patching image src is not supported");
+      return 2;
+    }
   } else {
     lua_pop(L, 1);
     lua_pushnil(L);
@@ -119,6 +128,10 @@ void lua_ui_delete_children(lua_State* L, int idx)
   }
   if (lua_ui_slider_is(L, idx)) {
     lua_ui_slider_delete(L, idx);
+    return;
+  }
+  if (lua_ui_image_is(L, idx)) {
+    lua_ui_image_delete(L, idx);
     return;
   }
   if (!lua_istable(L, idx)) return;
@@ -171,6 +184,9 @@ void lua_port_bind(lua_State* L, const lua_port_config_t* cfg)
   // ui.slider 模块  <-- 添加这部分
   luaopen_ui_slider(L);
   lua_setfield(L, -2, "slider");
+
+  luaopen_ui_image(L);
+  lua_setfield(L, -2, "image");
 
   lua_pushcfunction(L, l_ui_find);
   lua_setfield(L, -2, "find");

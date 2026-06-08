@@ -263,37 +263,8 @@ static int32_t evaluate_cb(lv_draw_unit_t * draw_unit, lv_draw_task_t * task)
                 }
             }
             break;
-        case LV_DRAW_TASK_TYPE_IMAGE: {
-                lv_draw_image_dsc_t * dsc = task->draw_dsc;
-                /* 仅允许完全不透明、且源图本身不带 alpha 的图片走 DMA2D。
-                 * 这样可以避开当前 H743 + LTDC + SDRAM 场景下不稳定的 image/blend 路径，
-                 * 同时为纯 RGB/XRGB 资源保留部分硬件加速收益。 */
-                if(!(dsc->header.cf < LV_COLOR_FORMAT_PROPRIETARY_START
-                     && dsc->clip_radius == 0
-                     && dsc->bitmap_mask_src == NULL
-                     && dsc->sup == NULL
-                     && dsc->tile == 0
-                     && dsc->blend_mode == LV_BLEND_MODE_NORMAL
-                     && dsc->recolor_opa <= LV_OPA_MIN
-                     && dsc->skew_y == 0
-                     && dsc->skew_x == 0
-                     && dsc->scale_x == 256
-                     && dsc->scale_y == 256
-                     && dsc->rotation == 0
-                     && dsc->opa >= LV_OPA_MAX
-                     && lv_image_src_get_type(dsc->src) == LV_IMAGE_SRC_VARIABLE
-                     && !lv_color_format_has_alpha(dsc->header.cf)
-                     && (dsc->header.cf == LV_COLOR_FORMAT_XRGB8888
-                         || dsc->header.cf == LV_COLOR_FORMAT_RGB888
-                         || dsc->header.cf == LV_COLOR_FORMAT_RGB565)
-                     && (dsc->base.layer->color_format == LV_COLOR_FORMAT_ARGB8888
-                         || dsc->base.layer->color_format == LV_COLOR_FORMAT_XRGB8888
-                         || dsc->base.layer->color_format == LV_COLOR_FORMAT_RGB888
-                         || dsc->base.layer->color_format == LV_COLOR_FORMAT_RGB565))) {
-                    return 0;
-                }
-            }
-            break;
+        case LV_DRAW_TASK_TYPE_IMAGE:
+            return 0;
         default:
             return 0;
     }

@@ -302,7 +302,13 @@ add_library(lua_port STATIC
         ${CORE_INC_DIR}/lua_vm_memory.h
         ${CORE_SRC_DIR}/lua_vm.c
         ${CORE_SRC_DIR}/lua_vm_memory.c
+        ${LUA_PORT_DIR}/app_arena.c
+        ${LUA_PORT_DIR}/app_arena.h
+        ${LUA_PORT_DIR}/lua_cart_resource_cache.c
+        ${LUA_PORT_DIR}/lua_cart_resource_cache.h
         ${LUA_PORT_DIR}/lua_port.c
+        ${LUA_PORT_DIR}/resource_manager.c
+        ${LUA_PORT_DIR}/resource_manager.h
         ${LUA_PORT_DIR}/modules/lua_gpio.c
         ${LUA_PORT_DIR}/modules/lua_pwm.c
         ${LUA_PORT_DIR}/modules/lua_delay.c
@@ -311,6 +317,7 @@ add_library(lua_port STATIC
         ${LUA_PORT_DIR}/modules/lua_crc.c
         ${LUA_PORT_DIR}/modules/lua_ui_button.c
         ${LUA_PORT_DIR}/modules/lua_ui_slider.c
+        ${LUA_PORT_DIR}/modules/lua_ui_image.c
 )
 
 target_include_directories(lua_port PUBLIC
@@ -328,6 +335,8 @@ target_link_libraries(lua_port PUBLIC cartdesk_common lua lvgl cart_core drv_gpi
 add_library(cart_core STATIC
         ${CART_DIR}/cart_bin.c
         ${CART_DIR}/cart_bin.h
+        ${CART_DIR}/cart_index.c
+        ${CART_DIR}/cart_index.h
         ${CART_DIR}/xhgc_cart.c
         ${CART_DIR}/xhgc_cart.h
 )

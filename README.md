@@ -113,15 +113,17 @@ Core/Src/main.c
 
 `Launcher_Init()` 会创建启动器页面，并尝试从 `0:/cart.bin` 读取第一个卡带槽的标题和预览图。开机默认不创建 Lua VM；点击卡带槽后，启动器会切换到空白运行屏并保留系统 `EXIT` 按钮，`Task_LUA_StartCart("0:/cart.bin")` 会请求启动脚本，随后 `Task_LUA()` 从 `cart.bin` 的 ENTRY 段加载 luac 并启动 Lua 运行时。点击 `EXIT` 会同步停止 Lua VM、清理运行屏上的 LVGL 对象，并回到 launcher。
 
+`StartLvglTask()` 同时承载 LVGL 刷新、Lua 生命周期调度和 cart 资源读取，线程栈按 32 KiB 配置，避免 Lua 初始化、FatFs 读取和 LVGL 对象创建叠加时栈空间不足。
+
 ## cart.bin
 
 `cart.bin` 是项目里的“卡带镜像”。当前固件会从 SD 卡根目录读取：
 
 - Header 里的标题字段，用于 launcher 显示。
 - 200x200 BGRA8888 预览图，用于启动器卡槽图标。
-- ENTRY/INDEX/DATA 等段，用于 Lua 入口脚本和资源扩展。
+- ENTRY/INDEX/DATA 等段，用于 Lua 入口脚本和图片资源懒加载。
 
-格式细节见 [Docs/cart/XHGC_cart_bin_v2_格式规范.md](Docs/cart/XHGC_cart_bin_v2_格式规范.md)。
+格式细节见 [Docs/cart/xhgc-cartbin-format-spec-v2.2.md](Docs/cart/xhgc-cartbin-format-spec-v2.2.md)。
 
 ## Lua 脚本
 
@@ -138,7 +140,7 @@ function final(self)
 end
 ```
 
-当前宿主环境暴露了 GPIO、PWM、delay、声明式 UI children（button / slider）等 API。脚本示例在 [examples/lua](examples/lua)，完整 API 文档在 [Docs/lua/lua_api.md](Docs/lua/lua_api.md)。
+当前宿主环境暴露了 GPIO、PWM、delay、声明式 UI children（button / slider / image）等 API。`ui.image()` 使用 cart 内部相对路径从 INDEX/DATA 资源区同步懒加载 BGRA8888 图片，并在同一场景内共享相同 `src` 的像素数据。脚本示例在 [examples/lua](examples/lua)，完整 API 文档在 [Docs/lua/lua_api.md](Docs/lua/lua_api.md)。
 
 ## 目录结构
 
@@ -168,7 +170,7 @@ tests/              host 侧解析测试和 Lua smoke test
 - [Docs/memory/SDRAM_Layout_Spec_v1.0.md](Docs/memory/SDRAM_Layout_Spec_v1.0.md)：SDRAM 固定分区。
 - [Docs/display/DMA2D_适配逻辑.md](Docs/display/DMA2D_适配逻辑.md)：DMA2D 与显示链路说明。
 - [Docs/display/launcher_action_hints.md](Docs/display/launcher_action_hints.md)：Launcher 操作提示栏说明和手动测试步骤。
-- [Docs/cart/XHGC_cart_bin_v2_格式规范.md](Docs/cart/XHGC_cart_bin_v2_格式规范.md)：卡带镜像格式。
+- [Docs/cart/xhgc-cartbin-format-spec-v2.2.md](Docs/cart/xhgc-cartbin-format-spec-v2.2.md)：卡带镜像格式。
 - [Docs/lua/lua_runtime_contract.md](Docs/lua/lua_runtime_contract.md)：Lua 运行时约定。
 - [Core/LuaPort/LuaPort_API.md](Core/LuaPort/LuaPort_API.md)：LuaPort C 侧 API。
 - [Core/Driver/TOUCH/INTEGRATION_GUIDE.md](Core/Driver/TOUCH/INTEGRATION_GUIDE.md)：触摸驱动接入说明。

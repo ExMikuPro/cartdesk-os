@@ -35,6 +35,7 @@ int  lua_post_input(const char *action_id, const LuaInputAction *action);
 int  lua_post_message(const char *message_id, const char *sender);
 void lua_update_task(void);
 void lua_rt_delay_ms(uint32_t delay_ms);
+const char *lua_current_cart_path(void);
 
 #ifdef __cplusplus
 }

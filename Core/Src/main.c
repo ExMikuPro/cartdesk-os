@@ -70,14 +70,14 @@ static FLASH_Handle g_flash;
 static const osThreadAttr_t lvgl_task_attributes = {
   .name = "lvgl",
   .priority = osPriorityAboveNormal,
-  .stack_size = 8192
+  .stack_size = 32768
 };
 #endif
 #if CARTDESK_RUN_LUA_VM_ONLY
 static const osThreadAttr_t lua_task_attributes = {
   .name = "lua",
   .priority = osPriorityNormal,
-  .stack_size = 8192
+  .stack_size = 32768
 };
 #endif
 

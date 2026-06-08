@@ -48,9 +48,15 @@ end
 
 ## UI Children
 
-`self.children` 可以是单个 Drawable，也可以是 Drawable 数组。宿主会在 `final(self)` 返回后自动删除 `self.children`，并清空该字段。脚本通常不需要在 `final(self)` 中删除 UI。
+`self.children` 可以是单个 Drawable，也可以是 Drawable 数组。当前 Drawable 包括 `ui.button()`、`ui.slider()` 和 `ui.image()`。宿主会在 `final(self)` 返回后自动删除 `self.children`，并清空该字段。脚本通常不需要在 `final(self)` 中删除 UI。
 
 需要更新 UI 时使用 `ui.patch(self, id, patch)`。需要查找 UI 时使用 `ui.find(self, id)`。
+
+`ui.image()` 的 `src` 是当前 `cart.bin` 内部的资源相对路径，由宿主通过 INDEX/DATA 查找并管理图片内存。Lua 层不接触 cart offset、size、CRC、framebuffer 指针或 LVGL image descriptor。
+
+加载 cart 入口脚本时，宿主会解析资源索引并生成图片资源目录。图片资源第一版采用同步懒加载：`ui.image()` 创建时才从 DATA 段读取 `XHGC_RES_IMAGE` + `XHGC_IMG_BGRA8888` 内容到 SDRAM 的 `APP_ARENA_REST` scene arena，不使用 MDMA 异步搬运、LRU 或压缩资源。
+
+图片 Drawable 创建时会持有宿主侧资源 handle；相同 `src` 共享同一份 SDRAM 像素数据。Drawable 删除或 `self.children` 被宿主清理时释放引用。引用计数归零后资源只进入未使用状态，不单独释放 arena 中间块；场景结束时宿主统一 reset scene arena 并让旧 handle 失效。Lua 层不能访问资源 handle、SDRAM 地址、cart offset、size 或 CRC。
 
 ## 硬件外设与 self.state
 

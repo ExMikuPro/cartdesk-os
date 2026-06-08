@@ -11,8 +11,7 @@
 #define XHGC_MANF_VERSION          1u
 #define XHGC_MANF_HEADER_SIZE      16u
 #define XHGC_MANF_FIELD_ENTRY_SIZE 8u
-#define XHGC_INDEX_HEADER_SIZE     8u
-#define XHGC_INDEX_ENTRY_HEAD_SIZE 16u
+#define XHGC_RES_INDEX_HEADER_SIZE 32u
 
 #define XHGC_MANF_FIELD_TITLE      0x01u
 #define XHGC_MANF_FIELD_TITLE_ZH   0x02u
@@ -38,6 +37,16 @@ static uint32_t read_le32(const uint8_t *p)
 static uint64_t read_le64(const uint8_t *p)
 {
     return ((uint64_t)read_le32(p)) | ((uint64_t)read_le32(p + 4u) << 32);
+}
+
+static uint32_t fnv1a32(const char *s)
+{
+    uint32_t hash = 2166136261u;
+    while (s && *s) {
+        hash ^= (uint8_t)*s++;
+        hash *= 16777619u;
+    }
+    return hash;
 }
 
 static int add_overflow_u64(uint64_t a, uint64_t b, uint64_t *out)
@@ -380,24 +389,280 @@ static uint32_t path_len_u8(const char *path)
     return len;
 }
 
-static int index_name_equals(const XHGC_Cart *cart,
-                             uint64_t name_offset,
-                             const char *path,
-                             uint32_t path_len)
+bool xhgc_cart_path_is_valid(const char *path)
+{
+    const char *seg = path;
+    uint8_t utf8_tail = 0u;
+
+    if (!path || path[0] == '\0') return false;
+    if (path[0] == '/') return false;
+
+    for (const char *p = path; *p; ++p) {
+        unsigned char c = (unsigned char)*p;
+        if (*p == '\\') return false;
+        if (*p == ':') return false;
+        if (c < 0x20u) return false;
+        if (utf8_tail != 0u) {
+            if ((c & 0xC0u) != 0x80u) return false;
+            utf8_tail--;
+        } else if (c >= 0x80u) {
+            if ((c & 0xE0u) == 0xC0u) utf8_tail = 1u;
+            else if ((c & 0xF0u) == 0xE0u) utf8_tail = 2u;
+            else if ((c & 0xF8u) == 0xF0u) utf8_tail = 3u;
+            else return false;
+        }
+        if (*p == '/') {
+            if (p == seg) return false;
+            if ((p - seg) == 2 && seg[0] == '.' && seg[1] == '.') return false;
+            seg = p + 1;
+        }
+    }
+
+    if (seg[0] == '\0') return false;
+    if (seg[0] == '.' && seg[1] == '.' && seg[2] == '\0') return false;
+    if (utf8_tail != 0u) return false;
+    return true;
+}
+
+static int read_resource_index_header(const XHGC_Cart *cart,
+                                      XHGC_CartSlot *index_slot,
+                                      XHGC_CartSlot *data_slot,
+                                      uint32_t *count,
+                                      uint32_t *entries_off,
+                                      uint32_t *strings_off,
+                                      uint32_t *strings_size)
+{
+    uint8_t buf[XHGC_RES_INDEX_HEADER_SIZE];
+    uint16_t version = 0;
+    uint16_t entry_size = 0;
+    uint32_t flags = 0;
+    uint64_t entries_end = 0;
+    int rc = get_present_slot(cart, XHGC_CART_SLOT_INDEX, index_slot);
+    if (rc != XHGC_CART_OK) return rc;
+    rc = get_present_slot(cart, XHGC_CART_SLOT_DATA, data_slot);
+    if (rc != XHGC_CART_OK) return rc;
+    if (index_slot->size < XHGC_RES_INDEX_HEADER_SIZE) return XHGC_CART_E_FORMAT;
+
+    rc = cart_read_exact(cart, index_slot->offset, buf, sizeof(buf));
+    if (rc != XHGC_CART_OK) return rc;
+    if (memcmp(buf, XHGC_INDEX_MAGIC, XHGC_INDEX_MAGIC_SIZE) != 0) return XHGC_CART_E_FORMAT;
+
+    version = read_le16(buf + 8u);
+    entry_size = read_le16(buf + 10u);
+    *count = read_le32(buf + 12u);
+    *entries_off = read_le32(buf + 16u);
+    *strings_off = read_le32(buf + 20u);
+    *strings_size = read_le32(buf + 24u);
+    flags = read_le32(buf + 28u);
+
+    if (version != XHGC_INDEX_VERSION) return XHGC_CART_E_VERSION;
+    if (entry_size != XHGC_INDEX_ENTRY_SIZE) return XHGC_CART_E_FORMAT;
+    if (flags != 0u) return XHGC_CART_E_FORMAT;
+    if (*entries_off < XHGC_RES_INDEX_HEADER_SIZE) return XHGC_CART_E_FORMAT;
+
+    entries_end = (uint64_t)(*entries_off) + (uint64_t)(*count) * XHGC_INDEX_ENTRY_SIZE;
+    if (entries_end > index_slot->size) return XHGC_CART_E_RANGE;
+    if (*strings_off < entries_end) return XHGC_CART_E_FORMAT;
+    if ((uint64_t)(*strings_off) + *strings_size > index_slot->size) return XHGC_CART_E_RANGE;
+    return XHGC_CART_OK;
+}
+
+static int index_string_equals(const XHGC_Cart *cart,
+                               const XHGC_CartSlot *index_slot,
+                               uint32_t strings_off,
+                               uint32_t strings_size,
+                               uint32_t path_off,
+                               const char *path)
 {
     uint8_t buf[64];
     uint32_t done = 0;
+    uint32_t path_len = path_len_u8(path);
+    int rc = XHGC_CART_OK;
+
+    if (path_len == 0u || path_len > 255u) return XHGC_CART_E_PARAM;
+    if (path_off >= strings_size) return XHGC_CART_E_RANGE;
+    if ((uint64_t)path_off + path_len >= strings_size) return XHGC_CART_E_RANGE;
 
     while (done < path_len) {
         uint32_t want = (uint32_t)sizeof(buf);
         if (want > path_len - done) want = path_len - done;
-        int rc = cart_read_exact(cart, name_offset + done, buf, want);
+        rc = cart_read_exact(cart,
+                             index_slot->offset + strings_off + path_off + done,
+                             buf,
+                             want);
         if (rc != XHGC_CART_OK) return rc;
         if (memcmp(buf, path + done, want) != 0) return XHGC_CART_E_NOT_FOUND;
         done += want;
     }
 
+    rc = cart_read_exact(cart, index_slot->offset + strings_off + path_off + path_len, buf, 1u);
+    if (rc != XHGC_CART_OK) return rc;
+    return buf[0] == 0u ? XHGC_CART_OK : XHGC_CART_E_NOT_FOUND;
+}
+
+static void decode_index_entry(const uint8_t buf[XHGC_INDEX_ENTRY_SIZE],
+                               XhgcIndexEntry *ent)
+{
+    ent->path_hash = read_le32(buf);
+    ent->path_off = read_le32(buf + 4u);
+    ent->data_off = read_le32(buf + 8u);
+    ent->size = read_le32(buf + 12u);
+    ent->crc32 = read_le32(buf + 16u);
+    ent->type = buf[20];
+    ent->format = buf[21];
+    ent->width = read_le16(buf + 22u);
+    ent->height = read_le16(buf + 24u);
+    ent->flags = read_le16(buf + 26u);
+    ent->reserved = read_le32(buf + 28u);
+}
+
+static int read_index_string(const XHGC_Cart *cart,
+                             const XHGC_CartSlot *index_slot,
+                             uint32_t strings_off,
+                             uint32_t strings_size,
+                             uint32_t path_off,
+                             char *out,
+                             uint32_t out_size)
+{
+    uint8_t ch = 0u;
+    uint32_t i = 0;
+
+    if (!cart || !index_slot || !out || out_size == 0u) return XHGC_CART_E_PARAM;
+    out[0] = '\0';
+    if (path_off >= strings_size) return XHGC_CART_E_RANGE;
+
+    while (path_off + i < strings_size) {
+        int rc = cart_read_exact(cart,
+                                 index_slot->offset + strings_off + path_off + i,
+                                 &ch,
+                                 1u);
+        if (rc != XHGC_CART_OK) return rc;
+        if (ch == 0u) {
+            out[i] = '\0';
+            return xhgc_cart_path_is_valid(out) ? XHGC_CART_OK : XHGC_CART_E_FORMAT;
+        }
+        if (i + 1u >= out_size) return XHGC_CART_E_RANGE;
+        out[i++] = (char)ch;
+    }
+
+    return XHGC_CART_E_FORMAT;
+}
+
+bool cart_mount_index(XHGC_Cart *cart)
+{
+    XHGC_CartSlot index_slot;
+    XHGC_CartSlot data_slot;
+    uint32_t count = 0;
+    uint32_t entries_off = 0;
+    uint32_t strings_off = 0;
+    uint32_t strings_size = 0;
+
+    return read_resource_index_header(cart,
+                                      &index_slot,
+                                      &data_slot,
+                                      &count,
+                                      &entries_off,
+                                      &strings_off,
+                                      &strings_size) == XHGC_CART_OK;
+}
+
+int xhgc_cart_for_each_resource(const XHGC_Cart *cart,
+                                XHGC_CartResourceVisitor visitor,
+                                void *ctx)
+{
+    XHGC_CartSlot index_slot;
+    XHGC_CartSlot data_slot;
+    uint32_t count = 0;
+    uint32_t entries_off = 0;
+    uint32_t strings_off = 0;
+    uint32_t strings_size = 0;
+    uint8_t buf[XHGC_INDEX_ENTRY_SIZE];
+    char path[256];
+    int rc;
+
+    if (!cart || !visitor) return XHGC_CART_E_PARAM;
+
+    rc = read_resource_index_header(cart,
+                                    &index_slot,
+                                    &data_slot,
+                                    &count,
+                                    &entries_off,
+                                    &strings_off,
+                                    &strings_size);
+    if (rc != XHGC_CART_OK) return rc;
+
+    for (uint32_t i = 0; i < count; ++i) {
+        uint64_t ent_offset = index_slot.offset + entries_off + (uint64_t)i * XHGC_INDEX_ENTRY_SIZE;
+        XhgcIndexEntry ent;
+
+        rc = cart_read_exact(cart, ent_offset, buf, sizeof(buf));
+        if (rc != XHGC_CART_OK) return rc;
+
+        decode_index_entry(buf, &ent);
+        if (ent.flags != 0u || ent.reserved != 0u) return XHGC_CART_E_FORMAT;
+        if ((uint64_t)ent.data_off + ent.size > data_slot.size) return XHGC_CART_E_RANGE;
+
+        rc = read_index_string(cart,
+                               &index_slot,
+                               strings_off,
+                               strings_size,
+                               ent.path_off,
+                               path,
+                               sizeof(path));
+        if (rc != XHGC_CART_OK) return rc;
+
+        if (!visitor(path, &ent, ctx)) break;
+    }
+
     return XHGC_CART_OK;
+}
+
+bool cart_find_resource(XHGC_Cart *cart,
+                        const char *path,
+                        uint16_t expected_type,
+                        XhgcIndexEntry *out_entry)
+{
+    XHGC_CartSlot index_slot;
+    XHGC_CartSlot data_slot;
+    uint32_t count = 0;
+    uint32_t entries_off = 0;
+    uint32_t strings_off = 0;
+    uint32_t strings_size = 0;
+    uint32_t hash = 0;
+    uint8_t buf[XHGC_INDEX_ENTRY_SIZE];
+
+    if (!cart || !path || !out_entry) return false;
+    if (!xhgc_cart_path_is_valid(path)) return false;
+    if (read_resource_index_header(cart,
+                                   &index_slot,
+                                   &data_slot,
+                                   &count,
+                                   &entries_off,
+                                   &strings_off,
+                                   &strings_size) != XHGC_CART_OK) {
+        return false;
+    }
+
+    hash = fnv1a32(path);
+    for (uint32_t i = 0; i < count; ++i) {
+        uint64_t ent_offset = index_slot.offset + entries_off + (uint64_t)i * XHGC_INDEX_ENTRY_SIZE;
+        XhgcIndexEntry ent;
+        int rc = cart_read_exact(cart, ent_offset, buf, sizeof(buf));
+        if (rc != XHGC_CART_OK) return false;
+
+        decode_index_entry(buf, &ent);
+        if (ent.flags != 0u || ent.reserved != 0u) return false;
+
+        if (ent.path_hash != hash || ent.type != expected_type) continue;
+        rc = index_string_equals(cart, &index_slot, strings_off, strings_size, ent.path_off, path);
+        if (rc == XHGC_CART_E_NOT_FOUND) continue;
+        if (rc != XHGC_CART_OK) return false;
+        if ((uint64_t)ent.data_off + ent.size > data_slot.size) return false;
+        *out_entry = ent;
+        return true;
+    }
+
+    return false;
 }
 
 int xhgc_cart_find_file(const XHGC_Cart *cart,
@@ -406,66 +671,52 @@ int xhgc_cart_find_file(const XHGC_Cart *cart,
 {
     XHGC_CartSlot index_slot;
     XHGC_CartSlot data_slot;
-    uint8_t buf[XHGC_INDEX_ENTRY_HEAD_SIZE];
-    uint32_t entry_count = 0;
-    uint64_t cursor = XHGC_INDEX_HEADER_SIZE;
-    uint32_t path_len = path_len_u8(path);
+    uint8_t buf[XHGC_INDEX_ENTRY_SIZE];
+    uint32_t count = 0;
+    uint32_t entries_off = 0;
+    uint32_t strings_off = 0;
+    uint32_t strings_size = 0;
+    uint32_t hash = 0;
     int rc;
 
     if (!cart || !path || !out_file) return XHGC_CART_E_PARAM;
-    if (path_len == 0u || path_len > 255u) return XHGC_CART_E_PARAM;
+    if (!xhgc_cart_path_is_valid(path)) return XHGC_CART_E_PARAM;
 
-    rc = get_present_slot(cart, XHGC_CART_SLOT_INDEX, &index_slot);
+    rc = read_resource_index_header(cart,
+                                    &index_slot,
+                                    &data_slot,
+                                    &count,
+                                    &entries_off,
+                                    &strings_off,
+                                    &strings_size);
     if (rc != XHGC_CART_OK) return rc;
-    rc = get_present_slot(cart, XHGC_CART_SLOT_DATA, &data_slot);
-    if (rc != XHGC_CART_OK) return rc;
 
-    if (index_slot.size < XHGC_INDEX_HEADER_SIZE) return XHGC_CART_E_FORMAT;
-    rc = cart_read_exact(cart, index_slot.offset, buf, XHGC_INDEX_HEADER_SIZE);
-    if (rc != XHGC_CART_OK) return rc;
-
-    entry_count = read_le32(buf);
-
-    for (uint32_t i = 0; i < entry_count; i++) {
-        uint32_t data_offset = 0;
-        uint32_t data_size = 0;
-        uint32_t file_crc32 = 0;
-        uint8_t name_len = 0;
-        uint64_t name_offset = 0;
+    hash = fnv1a32(path);
+    for (uint32_t i = 0; i < count; ++i) {
         uint64_t file_image_offset = 0;
+        uint64_t ent_offset = index_slot.offset + entries_off + (uint64_t)i * XHGC_INDEX_ENTRY_SIZE;
+        XhgcIndexEntry ent;
 
-        if (cursor + XHGC_INDEX_ENTRY_HEAD_SIZE > index_slot.size) return XHGC_CART_E_RANGE;
-
-        rc = cart_read_exact(cart, index_slot.offset + cursor, buf, XHGC_INDEX_ENTRY_HEAD_SIZE);
+        rc = cart_read_exact(cart, ent_offset, buf, sizeof(buf));
         if (rc != XHGC_CART_OK) return rc;
 
-        data_offset = read_le32(buf);
-        data_size = read_le32(buf + 4u);
-        file_crc32 = read_le32(buf + 8u);
-        name_len = buf[12];
-        if (name_len == 0u) return XHGC_CART_E_FORMAT;
+        decode_index_entry(buf, &ent);
+        if (ent.flags != 0u || ent.reserved != 0u) return XHGC_CART_E_FORMAT;
+        if (ent.path_hash != hash) continue;
 
-        cursor += XHGC_INDEX_ENTRY_HEAD_SIZE;
-        if (cursor + name_len > index_slot.size) return XHGC_CART_E_RANGE;
+        rc = index_string_equals(cart, &index_slot, strings_off, strings_size, ent.path_off, path);
+        if (rc == XHGC_CART_E_NOT_FOUND) continue;
+        if (rc != XHGC_CART_OK) return rc;
 
-        if ((uint64_t)data_offset + data_size > data_slot.size) return XHGC_CART_E_RANGE;
-        if (add_overflow_u64(data_slot.offset, data_offset, &file_image_offset)) return XHGC_CART_E_RANGE;
-        if (!range_in_image(file_image_offset, data_size, cart->image_size)) return XHGC_CART_E_RANGE;
+        if ((uint64_t)ent.data_off + ent.size > data_slot.size) return XHGC_CART_E_RANGE;
+        if (add_overflow_u64(data_slot.offset, ent.data_off, &file_image_offset)) return XHGC_CART_E_RANGE;
+        if (!range_in_image(file_image_offset, ent.size, cart->image_size)) return XHGC_CART_E_RANGE;
 
-        name_offset = index_slot.offset + cursor;
-        if (name_len == path_len) {
-            rc = index_name_equals(cart, name_offset, path, path_len);
-            if (rc == XHGC_CART_OK) {
-                out_file->image_offset = file_image_offset;
-                out_file->data_offset = data_offset;
-                out_file->data_size = data_size;
-                out_file->crc32 = file_crc32;
-                return XHGC_CART_OK;
-            }
-            if (rc != XHGC_CART_E_NOT_FOUND) return rc;
-        }
-
-        cursor += name_len;
+        out_file->image_offset = file_image_offset;
+        out_file->data_offset = ent.data_off;
+        out_file->data_size = ent.size;
+        out_file->crc32 = ent.crc32;
+        return XHGC_CART_OK;
     }
 
     return XHGC_CART_E_NOT_FOUND;

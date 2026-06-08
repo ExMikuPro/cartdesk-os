@@ -484,6 +484,29 @@ function on_input(self, action_id, action)
 end
 ```
 
+### 图片
+
+`ui.image(config)` 从当前 `cart.bin` 的 INDEX/DATA 中按相对路径读取图片资源。`src` 是 cart 根目录内路径，不是 SD/eMMC 文件系统路径；脚本不能访问 cart offset、size、CRC、LVGL descriptor 或 framebuffer 指针。
+
+cart 脚本启动时，宿主会解析 Header、地址表和 `XHGCIDX2` INDEX，建立资源目录。`ui.image()` 创建 Drawable 时按 `src` 同步从 DATA 段懒加载 `XHGC_RES_IMAGE` + `XHGC_IMG_BGRA8888` 图片到 SDRAM `APP_ARENA_REST` 资源区；相同 `src` 会共享同一份像素数据并递增引用计数。Drawable 被删除或 `self.children` 被清理后释放引用，引用计数归零只标记为未使用，不单独释放 arena 中间块；场景结束后宿主统一 reset scene arena 并让旧 handle 失效。
+
+```lua
+function init(self)
+    self.children = {
+        ui.image({
+            id = "player",
+            src = "assets/images/player.png",
+            rect = { 40, 60, 32, 32 },
+            style = {
+                alpha = 255,
+            },
+        }),
+    }
+end
+```
+
+图片路径必须使用 `/` 分隔，不能是空字符串，不能以 `/` 开头，不能包含 `\`、`..` 路径段、`0:/`、`C:\` 等文件系统前缀。合法示例：`assets/player.png`、`assets/images/bg.png`、`app/images/logo.png`。
+
 ### 通过 id 更新 UI
 
 ```lua
@@ -505,12 +528,15 @@ end
 | --- | --- |
 | `ui.button(config)` | 创建按钮 Drawable |
 | `ui.slider(config)` | 创建滑块 Drawable |
+| `ui.image(config)` | 创建 cart 内图片 Drawable |
 | `ui.find(self, id)` | 在 `self.children` 中递归查找 Drawable；找不到返回 `nil` |
 | `ui.patch(self, id, patch)` | 用 config 同名字段更新 Drawable；找不到返回 `nil, "ui id not found"` |
 
 Button config 支持 `text`、`input`，以及 `style.bg`、`style.bg_alpha`、`style.text`、`style.border.color`、`style.border.width`、`style.radius`。
 
 Slider config 支持 `range = { min, max }`、`value`、`input`，以及 `style.bg`、`style.bg_alpha`、`style.indicator`、`style.indicator_alpha`、`style.knob`、`style.knob_alpha`、`style.border.color`、`style.border.width`、`style.radius`。
+
+Image config 支持 `src`、`region = { sx, sy, sw, sh }`，通用 `id`、`x/y/w/h`、`rect`、`pos`、`size`、`hidden`，以及 `style.alpha`、`style.tint`、`style.flip_x`、`style.flip_y`。若未设置 `w/h`，默认使用资源宽高；`region` 缺省表示完整源图。当前 `ui.patch()` 不支持修改 image `src`，传入 `src` 会报错 `"patching image src is not supported"`。
 
 按钮事件为 `"pressed"`、`"released"`、`"clicked"`。滑块事件为 `"changed"`，`action.value` 为当前滑块值。
 
