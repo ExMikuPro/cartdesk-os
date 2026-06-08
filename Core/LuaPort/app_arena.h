@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -22,6 +23,9 @@ void app_arena_reset_to(app_arena_t *a, app_arena_mark_t mark);
 void app_arena_reset(app_arena_t *a);
 size_t app_arena_used(const app_arena_t *a);
 size_t app_arena_remaining(const app_arena_t *a);
+#if XHGC_MEMINFO_SELFTEST_ENABLE
+bool app_arena_meminfo_selftest(void);
+#endif
 
 #ifdef __cplusplus
 }

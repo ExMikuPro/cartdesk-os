@@ -38,11 +38,16 @@
 #include <stdio.h>
 
 #include "cmsis_os2.h"
+#if XHGC_MEMINFO_SELFTEST_ENABLE
+#include "app_arena.h"
+#endif
 #include "board_test.h"
 #include "lcd.h"
 #include "sdram.h"
 #include "sdram_cold_pool.h"
 #include "ui_screen_launcher.h"
+#include "xhgc_meminfo.h"
+#include "xhgc_memory_layout.h"
 
 
 /* Storage: QSPI NOR + littlefs */
@@ -284,9 +289,20 @@ int main(void)
   MX_FMC_Init();
   SDRAM_Init();
   sdram_layout_check();
+  if (!xhgc_mem_layout_validate()) {
+    Error_Handler();
+  }
+  xhgc_meminfo_init();
   SDRAM_AppArenaReset();
   cold_pool_init();
   MX_USART1_UART_Init();
+  xhgc_mem_layout_dump();
+  xhgc_meminfo_dump();
+#if XHGC_MEMINFO_SELFTEST_ENABLE
+  if (!app_arena_meminfo_selftest()) {
+    Error_Handler();
+  }
+#endif
   MX_SDMMC1_SD_Init();
   MX_FATFS_Init();
   MX_CRC_Init();

@@ -143,6 +143,27 @@ Lua cart 图片资源使用 `APP_ARENA_REST` 中的资源区作为 scene 资源 
 
 ------------------------------------------------------------------------
 
+## 10. Meminfo 统计
+
+`Core/Memory/xhgc_meminfo.h` 提供 SDRAM zone 和 memory tag 的运行期统计骨架。
+
+-   `xhgc_meminfo_init()` 必须在 `xhgc_mem_layout_validate()` 通过后调用。
+-   初始化时从 `g_xhgc_mem_zones` 读取每个 zone 的 `total`。
+-   三块 framebuffer zone 初始化为 fixed reserved，tag 为 `FRAMEBUFFER`，总占用 `0x00465000`。
+-   fixed framebuffer 不允许通过 `xhgc_meminfo_release()` 释放。
+-   `xhgc_meminfo_alloc_record()` / `xhgc_meminfo_free_record()` 只记录已发生的分配和释放。
+-   `xhgc_meminfo_fail_record()` 只记录失败次数。
+-   meminfo 不分配内存，不替换 `malloc/free`，不接管 LVGL、DMA、Lua、newlib 或 FreeRTOS heap。
+-   APP_ARENA_REST 第一阶段 meminfo 统计以总 zone 为单位，`app_arena_alloc()` 成功、失败和 reset 会同步该 zone 的 used、peak 和 fail。
+-   RESOURCE_ARENA、LUA_HEAP、COLD_POOL 等 APP_ARENA_REST 内部子区级统计留到后续阶段，不在本阶段重排地址或改变子区模型。
+-   Debug 构建可通过 CMake 选项 `XHGC_MEMINFO_SELFTEST_ENABLE=ON` 打开 APP_ARENA_REST meminfo 自测；默认关闭。
+
+启动串口日志会先输出 `[XHGC SDRAM LAYOUT]`，再输出 `[XHGC MEMINFO]`。
+自测启用时，日志会额外输出 `[XHGC MEMINFO SELFTEST] baseline`、`after_alloc`、`after_reset` 和 PASS/FAIL。
+
+------------------------------------------------------------------------
+
 ## 版本记录
 
+-   v1.0 添加 meminfo 统计骨架说明
 -   v1.0 初始发布版本

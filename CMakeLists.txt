@@ -16,6 +16,7 @@ project(${CMAKE_PROJECT_NAME} C ASM)
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 
 option(CARTDESK_ENABLE_BOARD_TESTS "Run board-level test diagnostics at startup" OFF)
+option(XHGC_MEMINFO_SELFTEST_ENABLE "Run APP_ARENA_REST meminfo selftest in Debug builds" OFF)
 find_package(Python3 QUIET COMPONENTS Interpreter)
 include(ExternalProject)
 
@@ -33,6 +34,7 @@ set(LVGL_DIR ${CORE_DIR}/APPS/LVGL)
 set(LVGL_PORT_DIR ${LVGL_DIR}/port)
 set(TASK_DIR ${CORE_DIR}/APPS/TASK)
 set(CART_DIR ${CORE_DIR}/Cart)
+set(MEMORY_DIR ${CORE_DIR}/Memory)
 set(BOARD_GPIO_DIR ${DRIVER_DIR}/GPIO)
 set(SCREEN_DIR ${CORE_DIR}/Screen)
 set(SCREEN_PAGE_DIR ${SCREEN_DIR}/Page)
@@ -125,6 +127,10 @@ set(COMMON_DEFINES
 
 if(CARTDESK_ENABLE_BOARD_TESTS)
     list(APPEND COMMON_DEFINES CARTDESK_ENABLE_BOARD_TESTS=1)
+endif()
+
+if(XHGC_MEMINFO_SELFTEST_ENABLE AND CMAKE_BUILD_TYPE STREQUAL "Debug")
+    list(APPEND COMMON_DEFINES XHGC_MEMINFO_SELFTEST_ENABLE=1)
 endif()
 
 add_library(cartdesk_common INTERFACE)
@@ -295,7 +301,20 @@ target_include_directories(drv_gpio PUBLIC ${BOARD_GPIO_DIR})
 target_link_libraries(drv_gpio PUBLIC cartdesk_common)
 
 # ==============================================================================
-# 目标 7: lua_port —— Lua 与硬件的绑定层（C 模块 + VM 封装）
+# 目标 7: mem_layout —— SDRAM 固定分区描述 / 校验 / dump
+# ==============================================================================
+add_library(mem_layout STATIC
+        ${MEMORY_DIR}/xhgc_memory_layout.c
+        ${MEMORY_DIR}/xhgc_memory_layout.h
+        ${MEMORY_DIR}/xhgc_meminfo.c
+        ${MEMORY_DIR}/xhgc_meminfo.h
+)
+
+target_include_directories(mem_layout PUBLIC ${MEMORY_DIR})
+target_link_libraries(mem_layout PUBLIC cartdesk_common)
+
+# ==============================================================================
+# 目标 8: lua_port —— Lua 与硬件的绑定层（C 模块 + VM 封装）
 # ==============================================================================
 add_library(lua_port STATIC
         ${CORE_INC_DIR}/lua_vm.h
@@ -327,10 +346,10 @@ target_include_directories(lua_port PUBLIC
         ${DRIVER_DIR}/SDRAM
         ${FATFS_INCLUDES}
 )
-target_link_libraries(lua_port PUBLIC cartdesk_common lua lvgl cart_core drv_gpio)
+target_link_libraries(lua_port PUBLIC cartdesk_common lua lvgl cart_core drv_gpio mem_layout)
 
 # ==============================================================================
-# 目标 8: cart_core —— cart.bin 格式读取
+# 目标 9: cart_core —— cart.bin 格式读取
 # ==============================================================================
 add_library(cart_core STATIC
         ${CART_DIR}/cart_bin.c
@@ -366,7 +385,7 @@ if(CARTDESK_BUILD_HOST_TESTS)
 endif()
 
 # ==============================================================================
-# 目标 9: app_screen —— 应用层 UI 界面（启动器 / 缓存 / 预览）
+# 目标 10: app_screen —— 应用层 UI 界面（启动器 / 缓存 / 预览）
 # ==============================================================================
 add_library(app_screen STATIC
         ${SCREEN_PAGE_DIR}/launcher_action_hints.c
@@ -389,7 +408,7 @@ target_include_directories(app_screen PUBLIC
 target_link_libraries(app_screen PUBLIC cartdesk_common lvgl drv_storage cart_core)
 
 # ==============================================================================
-# 目标 10: app_task —— RTOS / 裸机任务（LED / LVGL / LUA 任务）
+# 目标 11: app_task —— RTOS / 裸机任务（LED / LVGL / LUA 任务）
 # ==============================================================================
 add_library(app_task STATIC
         ${TASK_DIR}/cartdesk_task.h
@@ -402,7 +421,7 @@ target_include_directories(app_task PUBLIC ${TASK_DIR})
 target_link_libraries(app_task PUBLIC cartdesk_common lvgl lua_port)
 
 # ==============================================================================
-# 目标 11: board_test —— 板级 bring-up / smoke test 入口（默认不在 main 中执行）
+# 目标 12: board_test —— 板级 bring-up / smoke test 入口（默认不在 main 中执行）
 # ==============================================================================
 add_library(board_test STATIC
         ${DEBUG_DIR}/board_test.c
@@ -439,6 +458,7 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
         drv_storage
         drv_misc
         drv_gpio
+        mem_layout
         lua_port
         app_screen
         app_task
