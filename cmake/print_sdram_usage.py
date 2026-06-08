@@ -157,7 +157,7 @@ def main() -> int:
     print("")
     print("Runtime SDRAM windows:")
     print(f"  FB reserved       {fmt_size(fb_size):>10}  Layer1_FB0 + Layer1_FB1 + Layer2_FB0")
-    print(f"  LVGL_HEAP window  {fmt_size(regions['SDRAM_LVGL_HEAP'][1]):>10}  0x{regions['SDRAM_LVGL_HEAP'][0]:08X}-0x{regions['SDRAM_LVGL_HEAP'][0] + regions['SDRAM_LVGL_HEAP'][1] - 1:08X}")
+    print(f"  SDRAM_LVGL_HEAP reserved/future-use {fmt_size(regions['SDRAM_LVGL_HEAP'][1]):>10}  0x{regions['SDRAM_LVGL_HEAP'][0]:08X}-0x{regions['SDRAM_LVGL_HEAP'][0] + regions['SDRAM_LVGL_HEAP'][1] - 1:08X}")
     print(f"  DMA_POOL window   {fmt_size(regions['SDRAM_DMA_POOL'][1]):>10}  0x{regions['SDRAM_DMA_POOL'][0]:08X}-0x{regions['SDRAM_DMA_POOL'][0] + regions['SDRAM_DMA_POOL'][1] - 1:08X}")
     print(f"  LAUNCHER_CACHE    {fmt_size(regions['SDRAM_LAUNCHER'][1]):>10}  static used {fmt_size(usage['SDRAM_LAUNCHER'])}")
     print(f"  LUA_HEAP          {fmt_size(LUA_HEAP_SIZE):>10}  0x{lua_heap_base:08X}-0x{lua_heap_end:08X}")

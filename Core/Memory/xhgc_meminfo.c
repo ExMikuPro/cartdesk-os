@@ -320,10 +320,13 @@ void xhgc_meminfo_dump(void)
         const XHGC_MemZoneStats *stats = &snapshot.zone_stats[i];
         const bool fixed = zone != NULL &&
                            (zone->flags & XHGC_MEM_ZONE_FLAG_FIXED) != 0u;
+        const bool reserved_future = zone != NULL &&
+                                     zone->id == XHGC_MEM_ZONE_SDRAM_LVGL_HEAP;
 
-        printf("  %-16s %sused=0x%08lX total=0x%08lX peak=0x%08lX fail=%lu\r\n",
+        printf("  %-16s %s%sused=0x%08lX total=0x%08lX peak=0x%08lX fail=%lu\r\n",
                zone != NULL ? zone->name : "<invalid>",
                fixed ? "fixed " : "",
+               reserved_future ? "RESERVED/FUTURE_USE " : "",
                (unsigned long)stats->used,
                (unsigned long)stats->total,
                (unsigned long)stats->peak,

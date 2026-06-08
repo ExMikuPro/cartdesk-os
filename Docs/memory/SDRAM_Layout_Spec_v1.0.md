@@ -88,10 +88,13 @@ SDRAM 采用"固定锚点 + 顺序紧贴"的布局策略，分为以下逻辑区
 
 ## 5. LVGL_HEAP 规范
 
--   必须仅用于 lv_mem。
--   禁止存放大图像。
--   禁止 DMA 访问。
--   建议固定容量 8--24 MiB。
+-   当前固定容量为 16 MiB，地址范围 `0xD0465000` -- `0xD1464FFF`。
+-   实机验证发现将 LVGL builtin/TLSF heap 放入本区会引入显示撕裂/不稳定。
+-   当前策略：LVGL runtime heap 使用片内 RAM，`SDRAM_LVGL_HEAP` 保留为 reserved/future-use，不作为默认 lv_mem 主池。
+-   meminfo 中本区应保持 `total=0x01000000`，`used=0`，并在 dump 文本中标注 `RESERVED/FUTURE_USE`。
+-   LVGL 输出 framebuffer 不属于 LVGL runtime heap，Layer1_FB0/Layer1_FB1 双缓冲仍使用独立 FB 区。
+-   大图像禁止进入 LVGL 片内 heap；Lua cart 图片和解码后像素资源应继续使用 APP_ARENA_REST/LAUNCHER_CACHE 等专用区。
+-   禁止作为 DMA buffer 使用，DMA buffer 必须来自 DMA_POOL。
 
 ------------------------------------------------------------------------
 
@@ -154,6 +157,7 @@ Lua cart 图片资源使用 `APP_ARENA_REST` 中的资源区作为 scene 资源 
 -   `xhgc_meminfo_alloc_record()` / `xhgc_meminfo_free_record()` 只记录已发生的分配和释放。
 -   `xhgc_meminfo_fail_record()` 只记录失败次数。
 -   meminfo 不分配内存，不替换 `malloc/free`，不接管 LVGL、DMA、Lua、newlib 或 FreeRTOS heap。
+-   LVGL runtime heap 当前位于片内 RAM，不计入任何 SDRAM zone；`SDRAM_LVGL_HEAP` 作为 reserved/future-use 区域显示，`used` 保持 0。
 -   APP_ARENA_REST 第一阶段 meminfo 统计以总 zone 为单位，`app_arena_alloc()` 成功、失败和 reset 会同步该 zone 的 used、peak 和 fail。
 -   RESOURCE_ARENA、LUA_HEAP、COLD_POOL 等 APP_ARENA_REST 内部子区级统计留到后续阶段，不在本阶段重排地址或改变子区模型。
 -   Debug 构建可通过 CMake 选项 `XHGC_MEMINFO_SELFTEST_ENABLE=ON` 打开 APP_ARENA_REST meminfo 自测；默认关闭。
@@ -165,5 +169,6 @@ Lua cart 图片资源使用 `APP_ARENA_REST` 中的资源区作为 scene 资源 
 
 ## 版本记录
 
+-   v1.0 回退 LVGL runtime heap 到片内 RAM，SDRAM_LVGL_HEAP 保留为 reserved/future-use
 -   v1.0 添加 meminfo 统计骨架说明
 -   v1.0 初始发布版本
