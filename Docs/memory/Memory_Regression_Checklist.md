@@ -15,6 +15,7 @@
 | APP_ARENA_REST | 线性分配/reset；meminfo used reset 回基线，peak/fail 保留 | `Debug-MemInfo-SelfTest` | scene reset 后 used 回基线 | 代码 PASS，实机未验证 |
 | RESOURCE_ARENA owner | 默认 owner 为 `resource_manager`，防双 owner；cart cache 默认 disabled | `resource_arena_owner_selftest()`；preset 宏审查 | 加载/卸载 cart 后 handle 失效 | PASS |
 | DMA_POOL | zone table 驱动的 bump/reset allocator，64-byte 以上对齐，越界 NULL | `Debug-DmaPool-SelfTest` | 临时 DMA buffer 压测 | PASS |
+| LCD Memory Overlay | 默认关闭；仅在 `XHGC_MEM_OVERLAY_ENABLE=ON` 时编译；`Debug-Memory-Overlay` 启动可见；只读 meminfo snapshot | `cmake --preset Debug`；`cmake --preset Debug-Memory-Overlay` | LCD 显示/隐藏、1Hz 更新、fail_count 不被清零 | 代码 PASS，实机未验证 |
 | residual allocator policy | 业务源码禁用直接 newlib allocator；FreeRTOS/littlefs/RNG 边界清晰 | `cmake/check_allocator_usage.cmake`；Debug 构建 | 文件系统/RNG/RTOS 长跑观察 | PASS |
 | CLion / CMake Presets | Debug/Release 默认 OFF，自测与实验 preset 独立 | `cmake --list-presets`；preset configure/build | CLion 从 `CMakePresets.json` 导入 | PASS |
 
@@ -25,6 +26,8 @@ flowchart TD
     Layout[SDRAM Layout] --> MemInfo[MemInfo]
     MemInfo --> AppArena[APP_ARENA_REST]
     MemInfo --> DmaPool[DMA_POOL]
+    MemInfo --> Overlay[LCD Memory Overlay]
+    Overlay --> LVGLLabel[LVGL Label]
     LVGL[LVGL runtime heap] --> RAM[Internal RAM]
     Lua[Lua VM] --> LuaAlloc[lua_vm_alloc]
     AppArena --> Resource[RESOURCE_ARENA]
@@ -70,6 +73,7 @@ flowchart TD
 | resource handle 失效 | `res_scene_reset()` bump generation 并 reset arena | 旧 handle 不再被接受 | 未验证 |
 | DMA_POOL selftest | `SDRAM_DmaPoolSelftest()` 覆盖 alloc/contains/oversize/reset | 串口输出 PASS | 未验证 |
 | allocator check | Debug 构建挂载 allocator / Lua allocator 检查脚本 | 不适用 | PASS |
+| LCD Memory Overlay | `XHGC_MEM_OVERLAY_ENABLE=ON` 后在 LVGL task 中 init/update；默认构建不编译 overlay | 可通过 API 显示/隐藏；当前未接入按键 | 代码 PASS，实机未验证 |
 
 ## 长时间稳定性验收
 
@@ -81,6 +85,7 @@ flowchart TD
 | scene reset 100 次 | 旧 handle 失效，资源区 used 回基线，peak/fail 保留 | 未验证 |
 | DMA_POOL 压测 | reset 后 used 回 0 或基线，peak/fail 保留 | 未验证 |
 | LVGL heap 观察 | peak 可解释，不进入 `0xD0465000` 到 `0xD1465000` | 未验证 |
+| LCD Memory Overlay 长跑 | hidden/visible 切换不频繁创建对象；1Hz 更新；不改变 meminfo peak/fail | 未验证 |
 
 ## 故障判定
 
@@ -108,6 +113,7 @@ flowchart TD
 | F. DMA_POOL | 从 zone table 读取 base/size，bump/reset，align 至少 64，越界 NULL，cache helper 32-byte 覆盖 | PASS |
 | G. residual allocator | Debug 检查脚本、newlib fallback、FreeRTOS heap_4、littlefs cold pool、RNG scratch 策略均有证据 | PASS |
 | H. CLion / CMake Presets | 请求中的 Debug/Release/selftest/experimental preset 均存在并带中文说明 | PASS |
+| I. LCD Memory Overlay | `XHGC_MEM_OVERLAY_ENABLE` / `XHGC_MEM_OVERLAY_BOOT_VISIBLE` 默认 OFF；`Debug-Memory-Overlay` 启动显示；只读 snapshot、静态文本、1Hz 更新；未接入按键 | 代码 PASS，实机未验证 |
 
 ## 文档与实现差异
 
@@ -126,6 +132,8 @@ flowchart TD
 - `Docs/architecture.md`
 - `CMakePresets.json`
 - `CMakeLists.txt`
+- `Core/Debug/xhgc_mem_overlay.h`
+- `Core/Debug/xhgc_mem_overlay.c`
 - `cmake/check_lua_allocator_usage.cmake`
 - `cmake/check_allocator_usage.cmake`
 - `Core/Memory/xhgc_memory_layout.h`

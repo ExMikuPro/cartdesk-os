@@ -48,6 +48,9 @@
 #include "ui_screen_launcher.h"
 #include "xhgc_meminfo.h"
 #include "xhgc_memory_layout.h"
+#if XHGC_MEM_OVERLAY_ENABLE
+#include "xhgc_mem_overlay.h"
+#endif
 
 
 /* Storage: QSPI NOR + littlefs */
@@ -218,12 +221,18 @@ static void StartLvglTask(void *argument) {
   LCD_DisplayON();
 
   Launcher_Init();
+#if XHGC_MEM_OVERLAY_ENABLE
+  xhgc_mem_overlay_init();
+#endif
   // DesignLauncher_Create(lv_display_get_default());
 
   for (;;) {
     lvgl_task_handler();
     Task_LUA();
     Launcher_Task();
+#if XHGC_MEM_OVERLAY_ENABLE
+    xhgc_mem_overlay_update();
+#endif
     osDelay(5);
   }
 }

@@ -8,6 +8,7 @@
 flowchart TD
     Presets["CMakePresets.json"]
     Debug["Debug 默认开发"]
+    Overlay["Debug LCD 内存 Overlay"]
     MemInfo["Debug MemInfo 自测"]
     DmaPool["Debug DMA_POOL 自测"]
     AllMem["Debug 全部内存自测"]
@@ -15,9 +16,12 @@ flowchart TD
     Release["Release 正式构建"]
     MemOpt["XHGC_MEMINFO_SELFTEST_ENABLE"]
     DmaOpt["XHGC_DMA_POOL_SELFTEST_ENABLE"]
+    OverlayOpt["XHGC_MEM_OVERLAY_ENABLE"]
+    OverlayVisibleOpt["XHGC_MEM_OVERLAY_BOOT_VISIBLE"]
     CacheOpt["XHGC_ENABLE_EXPERIMENTAL_CART_RESOURCE_CACHE"]
 
     Presets --> Debug
+    Presets --> Overlay
     Presets --> MemInfo
     Presets --> DmaPool
     Presets --> AllMem
@@ -28,6 +32,8 @@ flowchart TD
     AllMem --> MemOpt
     AllMem --> DmaOpt
     CartCache --> CacheOpt
+    Overlay --> OverlayOpt
+    Overlay --> OverlayVisibleOpt
 ```
 
 图中所有实线关系都已由 `CMakePresets.json` 和 `CMakeLists.txt` 确认。
@@ -37,11 +43,14 @@ flowchart TD
 | 配置名称 | CMake 选项 | 用途 | 是否默认推荐 | 是否可用于实机稳定验证 |
 |---|---|---|---:|---:|
 | `Debug` | `CMAKE_BUILD_TYPE=Debug`；内存 selftest 和实验缓存均为 `OFF` | 默认开发构建 | 是 | 是 |
+| `Debug-Memory-Overlay` | `XHGC_MEM_OVERLAY_ENABLE=ON`；`XHGC_MEM_OVERLAY_BOOT_VISIBLE=ON` | LCD 上观察 meminfo snapshot | 否 | 否 |
 | `Debug-MemInfo-SelfTest` | `XHGC_MEMINFO_SELFTEST_ENABLE=ON` | 验证 APP_ARENA_REST / meminfo 统计 | 否 | 否 |
 | `Debug-DmaPool-SelfTest` | `XHGC_DMA_POOL_SELFTEST_ENABLE=ON` | 验证 DMA_POOL 分配、对齐、contains、reset 和 meminfo | 否 | 否 |
 | `Debug-All-Memory-SelfTest` | `XHGC_MEMINFO_SELFTEST_ENABLE=ON`；`XHGC_DMA_POOL_SELFTEST_ENABLE=ON` | 集中验证内存相关 Debug-only 自测 | 否 | 否 |
 | `Debug-Experimental-CartCache` | `XHGC_ENABLE_EXPERIMENTAL_CART_RESOURCE_CACHE=ON` | 研究实验性 `lua_cart_resource_cache` 路径 | 否 | 否 |
 | `Release` | `CMAKE_BUILD_TYPE=Release`；内存 selftest 和实验缓存均为 `OFF` | 正式发布构建 | 按发布场景使用 | 是 |
+
+`XHGC_MEM_OVERLAY_ENABLE` 和 `XHGC_MEM_OVERLAY_BOOT_VISIBLE` 默认 `OFF`。需要在 Debug 构建中观察 LCD 内存 overlay 时，优先使用 `Debug-Memory-Overlay` preset；不应在正式发布构建中启用。
 
 ## 配置说明
 
@@ -50,6 +59,12 @@ flowchart TD
 默认调试构建，不启用内存自测或实验缓存。日常开发、普通调试、实机稳定验证都优先使用这个配置。
 
 不应在需要验证 APP_ARENA_REST / DMA_POOL 统计自测时使用，因为它会保持 selftest 关闭，默认 ELF 不包含 Debug-only 自测入口。
+
+### Debug-Memory-Overlay
+
+启用 `XHGC_MEM_OVERLAY_ENABLE=ON` 和 `XHGC_MEM_OVERLAY_BOOT_VISIBLE=ON`，用于在 LCD / LVGL 上低频观察 meminfo snapshot。该配置不启用内存 selftest，也不启用实验缓存。
+
+只应在实机 Debug 观察内存状态时使用；不应用作日常刷机、稳定性基线或发布构建。
 
 ### Debug-MemInfo-SelfTest
 
@@ -88,6 +103,13 @@ flowchart TD
 ```sh
 cmake --preset Debug
 cmake --build --preset Debug -j8
+```
+
+Debug + LCD Memory Overlay：
+
+```sh
+cmake --preset Debug-Memory-Overlay
+cmake --build --preset Debug-Memory-Overlay -j8
 ```
 
 MemInfo 自测：
@@ -145,7 +167,9 @@ cmake --build build/Debug --target copy_luavm_to_packer
 ## 注意事项
 
 - 默认 `Debug` 不启用 selftest。
+- 默认 `Debug` 和 `Release` 不启用 LCD Memory Overlay。
 - selftest 配置会改变启动期诊断行为，不应用于日常刷机。
+- `Debug-Memory-Overlay` 只用于实机 Debug 观察，不应用于正式发布版本。
 - `Debug-Experimental-CartCache` 默认关闭，仅用于研究实验缓存路径。
 - `Release` 不启用 Debug-only 自测。
 - 每个 preset 使用独立 `build/${presetName}` 目录，避免不同 CMake cache 互相污染。
@@ -160,6 +184,7 @@ cmake --build build/Debug --target copy_luavm_to_packer
 - `CMakePresets.json`
 - `CMakeLists.txt`
 - `Core/Src/main.c`
+- `Core/Debug/xhgc_mem_overlay.c`
 - `Core/LuaPort/app_arena.c`
 - `Core/Driver/SDRAM/sdram.c`
 - `Core/LuaPort/lua_cart_resource_cache.c`

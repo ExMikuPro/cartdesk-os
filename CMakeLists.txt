@@ -18,6 +18,8 @@ message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 option(CARTDESK_ENABLE_BOARD_TESTS "Run board-level test diagnostics at startup" OFF)
 option(XHGC_MEMINFO_SELFTEST_ENABLE "Run APP_ARENA_REST meminfo selftest in Debug builds" OFF)
 option(XHGC_DMA_POOL_SELFTEST_ENABLE "Run DMA_POOL allocator meminfo selftest in Debug builds" OFF)
+option(XHGC_MEM_OVERLAY_ENABLE "Enable LCD memory debug overlay" OFF)
+option(XHGC_MEM_OVERLAY_BOOT_VISIBLE "Show LCD memory debug overlay at startup" OFF)
 option(XHGC_ENABLE_EXPERIMENTAL_CART_RESOURCE_CACHE "Enable legacy experimental cart resource cache owner for RESOURCE_ARENA" OFF)
 find_package(Python3 QUIET COMPONENTS Interpreter)
 include(ExternalProject)
@@ -137,6 +139,13 @@ endif()
 
 if(XHGC_DMA_POOL_SELFTEST_ENABLE AND CMAKE_BUILD_TYPE STREQUAL "Debug")
     list(APPEND COMMON_DEFINES XHGC_DMA_POOL_SELFTEST_ENABLE=1)
+endif()
+
+if(XHGC_MEM_OVERLAY_ENABLE)
+    list(APPEND COMMON_DEFINES XHGC_MEM_OVERLAY_ENABLE=1)
+    if(XHGC_MEM_OVERLAY_BOOT_VISIBLE)
+        list(APPEND COMMON_DEFINES XHGC_MEM_OVERLAY_BOOT_VISIBLE=1)
+    endif()
 endif()
 
 add_library(cartdesk_common INTERFACE)
@@ -479,6 +488,18 @@ target_include_directories(board_test PUBLIC
 )
 target_link_libraries(board_test PUBLIC cartdesk_common lvgl drv_display drv_storage)
 
+set(DEBUG_OVERLAY_LIBS)
+if(XHGC_MEM_OVERLAY_ENABLE)
+    add_library(mem_overlay STATIC
+            ${DEBUG_DIR}/xhgc_mem_overlay.c
+            ${DEBUG_DIR}/xhgc_mem_overlay.h
+    )
+
+    target_include_directories(mem_overlay PUBLIC ${DEBUG_DIR})
+    target_link_libraries(mem_overlay PUBLIC cartdesk_common lvgl mem_layout)
+    list(APPEND DEBUG_OVERLAY_LIBS mem_overlay)
+endif()
+
 # ==============================================================================
 # 主可执行目标：链接所有子目标
 # ==============================================================================
@@ -506,6 +527,7 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
         app_screen
         app_task
         board_test
+        ${DEBUG_OVERLAY_LIBS}
         freertos_kernel
         lvgl
         lua

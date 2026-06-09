@@ -19,6 +19,22 @@
                 "CMAKE_BUILD_TYPE": "Debug",
                 "XHGC_MEMINFO_SELFTEST_ENABLE": "OFF",
                 "XHGC_DMA_POOL_SELFTEST_ENABLE": "OFF",
+                "XHGC_MEM_OVERLAY_ENABLE": "OFF",
+                "XHGC_MEM_OVERLAY_BOOT_VISIBLE": "OFF",
+                "XHGC_ENABLE_EXPERIMENTAL_CART_RESOURCE_CACHE": "OFF"
+            }
+        },
+        {
+            "name": "Debug-Memory-Overlay",
+            "displayName": "Debug LCD 内存 Overlay",
+            "description": "启用 LCD Memory Overlay，用于实机低频观察 meminfo snapshot。默认固件和发布构建不应使用此配置。",
+            "inherits": "default",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "XHGC_MEMINFO_SELFTEST_ENABLE": "OFF",
+                "XHGC_DMA_POOL_SELFTEST_ENABLE": "OFF",
+                "XHGC_MEM_OVERLAY_ENABLE": "ON",
+                "XHGC_MEM_OVERLAY_BOOT_VISIBLE": "ON",
                 "XHGC_ENABLE_EXPERIMENTAL_CART_RESOURCE_CACHE": "OFF"
             }
         },
@@ -31,6 +47,8 @@
                 "CMAKE_BUILD_TYPE": "Debug",
                 "XHGC_MEMINFO_SELFTEST_ENABLE": "ON",
                 "XHGC_DMA_POOL_SELFTEST_ENABLE": "OFF",
+                "XHGC_MEM_OVERLAY_ENABLE": "OFF",
+                "XHGC_MEM_OVERLAY_BOOT_VISIBLE": "OFF",
                 "XHGC_ENABLE_EXPERIMENTAL_CART_RESOURCE_CACHE": "OFF"
             }
         },
@@ -43,6 +61,8 @@
                 "CMAKE_BUILD_TYPE": "Debug",
                 "XHGC_MEMINFO_SELFTEST_ENABLE": "OFF",
                 "XHGC_DMA_POOL_SELFTEST_ENABLE": "ON",
+                "XHGC_MEM_OVERLAY_ENABLE": "OFF",
+                "XHGC_MEM_OVERLAY_BOOT_VISIBLE": "OFF",
                 "XHGC_ENABLE_EXPERIMENTAL_CART_RESOURCE_CACHE": "OFF"
             }
         },
@@ -55,6 +75,8 @@
                 "CMAKE_BUILD_TYPE": "Debug",
                 "XHGC_MEMINFO_SELFTEST_ENABLE": "ON",
                 "XHGC_DMA_POOL_SELFTEST_ENABLE": "ON",
+                "XHGC_MEM_OVERLAY_ENABLE": "OFF",
+                "XHGC_MEM_OVERLAY_BOOT_VISIBLE": "OFF",
                 "XHGC_ENABLE_EXPERIMENTAL_CART_RESOURCE_CACHE": "OFF"
             }
         },
@@ -67,6 +89,8 @@
                 "CMAKE_BUILD_TYPE": "Debug",
                 "XHGC_MEMINFO_SELFTEST_ENABLE": "OFF",
                 "XHGC_DMA_POOL_SELFTEST_ENABLE": "OFF",
+                "XHGC_MEM_OVERLAY_ENABLE": "OFF",
+                "XHGC_MEM_OVERLAY_BOOT_VISIBLE": "OFF",
                 "XHGC_ENABLE_EXPERIMENTAL_CART_RESOURCE_CACHE": "ON"
             }
         },
@@ -79,6 +103,8 @@
                 "CMAKE_BUILD_TYPE": "Release",
                 "XHGC_MEMINFO_SELFTEST_ENABLE": "OFF",
                 "XHGC_DMA_POOL_SELFTEST_ENABLE": "OFF",
+                "XHGC_MEM_OVERLAY_ENABLE": "OFF",
+                "XHGC_MEM_OVERLAY_BOOT_VISIBLE": "OFF",
                 "XHGC_ENABLE_EXPERIMENTAL_CART_RESOURCE_CACHE": "OFF"
             }
         }
@@ -87,6 +113,13 @@
         {
             "name": "Debug",
             "configurePreset": "Debug",
+            "targets": [
+                "cartdesk-os"
+            ]
+        },
+        {
+            "name": "Debug-Memory-Overlay",
+            "configurePreset": "Debug-Memory-Overlay",
             "targets": [
                 "cartdesk-os"
             ]
