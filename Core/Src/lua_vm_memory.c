@@ -3,7 +3,9 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "lua.h"
 #include "sdram.h"
+#include "xhgc_meminfo.h"
 
 #define LUA_VM_ALLOC_ALIGN 32u
 #define LUA_VM_BLOCK_FREE  1u
@@ -30,6 +32,40 @@ _Static_assert((sizeof(lua_vm_block_t) % LUA_VM_ALLOC_ALIGN) == 0u,
 static LuaVmAllocator g_lua_allocator;
 
 static void lua_vm_merge_next(lua_vm_block_t *block);
+
+static uint32_t lua_vm_meminfo_size(size_t size)
+{
+    return size > (size_t)UINT32_MAX ? UINT32_MAX : (uint32_t)size;
+}
+
+static void lua_vm_meminfo_alloc(size_t size)
+{
+    if (size == 0u) {
+        return;
+    }
+
+    (void)xhgc_meminfo_alloc_record(XHGC_MEM_ZONE_APP_ARENA_REST,
+                                    lua_vm_meminfo_size(size),
+                                    XHGC_MEM_TAG_LUA);
+}
+
+static void lua_vm_meminfo_free(size_t size)
+{
+    if (size == 0u) {
+        return;
+    }
+
+    (void)xhgc_meminfo_free_record(XHGC_MEM_ZONE_APP_ARENA_REST,
+                                   lua_vm_meminfo_size(size),
+                                   XHGC_MEM_TAG_LUA);
+}
+
+static void lua_vm_meminfo_fail(size_t size)
+{
+    (void)xhgc_meminfo_fail_record(XHGC_MEM_ZONE_APP_ARENA_REST,
+                                   lua_vm_meminfo_size(size),
+                                   XHGC_MEM_TAG_LUA);
+}
 
 static size_t lua_vm_align_up(size_t size)
 {
@@ -101,6 +137,7 @@ static void *lua_vm_allocate(LuaVmAllocator *allocator, size_t size)
     const size_t aligned_size = lua_vm_align_up(size);
     if (aligned_size == 0u) {
         ++allocator->stats.alloc_fail_count;
+        lua_vm_meminfo_fail(size);
         return NULL;
     }
 
@@ -113,12 +150,14 @@ static void *lua_vm_allocate(LuaVmAllocator *allocator, size_t size)
             if (allocator->stats.used > allocator->stats.peak) {
                 allocator->stats.peak = allocator->stats.used;
             }
+            lua_vm_meminfo_alloc(block->size);
             return lua_vm_block_payload(block);
         }
         block = block->next;
     }
 
     ++allocator->stats.alloc_fail_count;
+    lua_vm_meminfo_fail(size);
     return NULL;
 }
 
@@ -136,6 +175,7 @@ static void lua_vm_release(LuaVmAllocator *allocator, void *ptr)
     }
 
     allocator->stats.used -= block->size;
+    lua_vm_meminfo_free(block->size);
     block->free = LUA_VM_BLOCK_FREE;
     lua_vm_merge_next(block);
     if (block->prev != NULL && block->prev->free == LUA_VM_BLOCK_FREE) {
@@ -163,12 +203,23 @@ int lua_vm_memory_init(void)
     g_lua_allocator.stats.capacity = g_lua_allocator.capacity;
     g_lua_allocator.stats.alloc_fail_count = 0u;
     g_lua_allocator.initialized = true;
+    (void)xhgc_meminfo_zone_reset_tag(XHGC_MEM_ZONE_APP_ARENA_REST,
+                                      XHGC_MEM_TAG_LUA);
     return 0;
 }
 
 LuaVmAllocator *lua_vm_memory_allocator(void)
 {
     return &g_lua_allocator;
+}
+
+lua_State *lua_vm_newstate(void)
+{
+    if (lua_vm_memory_init() != 0) {
+        return NULL;
+    }
+
+    return lua_newstate(lua_vm_alloc, lua_vm_memory_allocator());
 }
 
 void *lua_vm_alloc(void *ud, void *ptr, size_t old_size, size_t new_size)
@@ -192,19 +243,23 @@ void *lua_vm_alloc(void *ud, void *ptr, size_t old_size, size_t new_size)
     if (!lua_vm_block_valid(allocator, block) ||
         block->free == LUA_VM_BLOCK_FREE) {
         ++allocator->stats.alloc_fail_count;
+        lua_vm_meminfo_fail(new_size);
         return NULL;
     }
 
     const size_t aligned_size = lua_vm_align_up(new_size);
     if (aligned_size == 0u) {
         ++allocator->stats.alloc_fail_count;
+        lua_vm_meminfo_fail(new_size);
         return NULL;
     }
 
     if (aligned_size <= block->size) {
         const size_t old_block_size = block->size;
         lua_vm_split_block(block, aligned_size);
-        allocator->stats.used -= old_block_size - block->size;
+        const size_t released_size = old_block_size - block->size;
+        allocator->stats.used -= released_size;
+        lua_vm_meminfo_free(released_size);
         return ptr;
     }
 
@@ -214,10 +269,12 @@ void *lua_vm_alloc(void *ud, void *ptr, size_t old_size, size_t new_size)
         old_block_size + sizeof(lua_vm_block_t) + block->next->size >= aligned_size) {
         lua_vm_merge_next(block);
         lua_vm_split_block(block, aligned_size);
-        allocator->stats.used += block->size - old_block_size;
+        const size_t added_size = block->size - old_block_size;
+        allocator->stats.used += added_size;
         if (allocator->stats.used > allocator->stats.peak) {
             allocator->stats.peak = allocator->stats.used;
         }
+        lua_vm_meminfo_alloc(added_size);
         return ptr;
     }
 

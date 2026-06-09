@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "lua.h"
@@ -28,9 +29,27 @@ static int dump_writer(lua_State *L, const void *data, size_t size, void *ud)
     return fwrite(data, 1, size, writer->file) == size ? 0 : 1;
 }
 
+static void *luavm_alloc(void *ud, void *ptr, size_t old_size, size_t new_size)
+{
+    (void)ud;
+    (void)old_size;
+
+    if (new_size == 0u) {
+        free(ptr);
+        return NULL;
+    }
+
+    return realloc(ptr, new_size);
+}
+
+static lua_State *luavm_newstate(void)
+{
+    return lua_newstate(luavm_alloc, NULL);
+}
+
 static int compile_lua(const char *input_path, const char *output_path)
 {
-    lua_State *L = luaL_newstate();
+    lua_State *L = luavm_newstate();
     if (L == NULL) {
         fprintf(stderr, "luavm: failed to create Lua state\n");
         return 1;
@@ -124,7 +143,7 @@ static int check_lua(const char *script_path)
         NULL
     };
 
-    lua_State *L = luaL_newstate();
+    lua_State *L = luavm_newstate();
     if (L == NULL) {
         fprintf(stderr, "luavm: failed to create Lua state\n");
         return 1;

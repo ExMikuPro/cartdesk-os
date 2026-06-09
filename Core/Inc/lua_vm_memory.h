@@ -8,6 +8,8 @@
 extern "C" {
 #endif
 
+typedef struct lua_State lua_State;
+
 typedef struct {
     size_t used;
     size_t peak;
@@ -25,6 +27,7 @@ typedef struct {
 
 int lua_vm_memory_init(void);
 LuaVmAllocator *lua_vm_memory_allocator(void);
+lua_State *lua_vm_newstate(void);
 void *lua_vm_alloc(void *ud, void *ptr, size_t old_size, size_t new_size);
 void lua_vm_memory_get_stats(LuaVmMemoryStats *out_stats);
 void lua_vm_memory_print_stats(void);

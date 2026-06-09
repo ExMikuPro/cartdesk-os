@@ -162,9 +162,18 @@ Lua cart 图片资源使用 `APP_ARENA_REST` 中的资源区作为 scene 资源 
 -   meminfo 不分配内存，不替换 `malloc/free`，不接管 LVGL、DMA、Lua、newlib 或 FreeRTOS heap。
 -   LVGL runtime heap 当前位于片内 RAM，不计入任何 SDRAM zone；`SDRAM_LVGL_HEAP` 作为 reserved/future-use 区域显示，`used` 保持 0。
 -   APP_ARENA_REST 第一阶段 meminfo 统计以总 zone 为单位，`app_arena_alloc()` 成功、失败和 reset 会同步该 zone 的 used、peak 和 fail；Lua UI image view buffer 申请成功会增加 APP_ARENA_REST used/peak，申请失败会增加 fail_count。
+-   Lua VM heap 位于 APP_ARENA_REST 内的 `LUA_HEAP` 子区；当前 meminfo 仍按 APP_ARENA_REST 总 zone 统计，并以 `XHGC_MEM_TAG_LUA` 记录 `lua_vm_alloc()` 的成功、释放和失败。
 -   大图像 view buffer 不应增加 `LVGL` tag；当前通过资源区接口分配，tag 计入 `RESOURCE`。
 -   RESOURCE_ARENA、LUA_HEAP、COLD_POOL 等 APP_ARENA_REST 内部子区级统计留到后续阶段，不在本阶段重排地址或改变子区模型。
 -   Debug 构建可通过 CMake 选项 `XHGC_MEMINFO_SELFTEST_ENABLE=ON` 打开 APP_ARENA_REST meminfo 自测；默认关闭。
+
+### 10.1 Lua VM allocator 约束
+
+-   固件业务代码必须通过 `lua_vm_newstate()` 创建主 `lua_State`。
+-   `lua_vm_newstate()` 内部使用 `lua_newstate(lua_vm_alloc, lua_vm_memory_allocator())`，不得回退到 `luaL_newstate()` 或 newlib heap。
+-   `luaL_newstate()` 和 Lua 默认 `l_alloc` 只允许作为 `Core/LuaPort/src` 中 Lua 官方源码实现存在，不作为固件主路径使用。
+-   业务源码不得直接调用 `luaL_newstate()`；Debug 构建会运行 `cmake/check_lua_allocator_usage.cmake` 检查固件业务源码中的误用。
+-   `lua_vm_alloc()` OOM 时返回 `NULL`，并通过 meminfo 记录 `APP_ARENA_REST` + `XHGC_MEM_TAG_LUA` 的失败次数；Lua VM 创建失败时由运行时输出明确日志。
 
 启动串口日志会先输出 `[XHGC SDRAM LAYOUT]`，再输出 `[XHGC MEMINFO]`。
 自测启用时，日志会额外输出 `[XHGC MEMINFO SELFTEST] baseline`、`after_alloc`、`after_reset` 和 PASS/FAIL。

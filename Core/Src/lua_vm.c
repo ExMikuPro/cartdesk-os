@@ -1176,14 +1176,9 @@ static int lua_rt_init_state(void)
 {
     if (g_L) return 0;
 
-    if (lua_vm_memory_init() != 0) {
-        lua_rt_log("Lua SDRAM heap init failed\n");
-        return -1;
-    }
-
-    g_L = lua_newstate(lua_vm_alloc, lua_vm_memory_allocator());
+    g_L = lua_vm_newstate();
     if (!g_L) {
-        lua_rt_log("lua_newstate failed\n");
+        lua_rt_log("lua_vm_newstate failed (allocator: lua_vm_alloc)\n");
         lua_vm_memory_print_stats();
         return -2;
     }

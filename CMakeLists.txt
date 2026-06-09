@@ -348,6 +348,17 @@ target_include_directories(lua_port PUBLIC
 )
 target_link_libraries(lua_port PUBLIC cartdesk_common lua lvgl cart_core drv_gpio mem_layout)
 
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    add_custom_target(check_lua_allocator_usage ALL
+            COMMAND ${CMAKE_COMMAND}
+                    -DPROJECT_ROOT=${PROJECT_ROOT}
+                    -P ${PROJECT_ROOT}/cmake/check_lua_allocator_usage.cmake
+            COMMENT "Checking Lua VM allocator entry usage"
+            VERBATIM
+    )
+    add_dependencies(lua_port check_lua_allocator_usage)
+endif()
+
 # ==============================================================================
 # 目标 9: cart_core —— cart.bin 格式读取
 # ==============================================================================
