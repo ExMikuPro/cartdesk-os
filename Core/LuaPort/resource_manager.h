@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #include "cart_index.h"
@@ -48,6 +49,7 @@ typedef struct {
 void res_manager_init(void);
 bool res_manager_mount_cart(const char *cart_path);
 res_handle_t res_acquire_image(const char *path, res_lifetime_t life);
+void *res_alloc_image_view_buffer(size_t size, size_t align);
 void res_release(res_handle_t h);
 const image_resource_t *res_get_image(res_handle_t h);
 void res_scene_reset(void);

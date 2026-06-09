@@ -176,6 +176,20 @@ res_handle_t res_acquire_image(const char *path, res_lifetime_t life)
   return (res_handle_t){ (uint16_t)index, rec->generation };
 }
 
+void *res_alloc_image_view_buffer(size_t size, size_t align)
+{
+  void *pixels;
+
+  s_last_error = NULL;
+  if (!s_initialized) res_manager_init();
+
+  pixels = app_arena_alloc(&s_scene_arena, size, align);
+  if (!pixels) {
+    s_last_error = "not enough app arena memory for image view";
+  }
+  return pixels;
+}
+
 bool res_handle_valid(res_handle_t h)
 {
   if (h.index >= s_record_count) return false;

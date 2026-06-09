@@ -15,6 +15,8 @@
 #define LUA_UI_IMAGE_DEBUG_DUMP 1
 #endif
 
+#define UI_IMAGE_VIEW_ALIGN 32u
+
 static void clean_dcache_range(const void* ptr, uint32_t size) {
 #if defined(__DCACHE_PRESENT) && (__DCACHE_PRESENT == 1U)
   if (!ptr || size == 0u) return;
@@ -32,8 +34,10 @@ typedef struct {
   lv_image_dsc_t dsc;
   uint8_t* source_data;
   uint8_t* view_data;
+  uint8_t* view_scratch_data;
   uint32_t source_size;
   uint32_t view_size;
+  uint32_t view_scratch_capacity;
   res_handle_t image_res;
   uint16_t source_w;
   uint16_t source_h;
@@ -188,6 +192,45 @@ static bool region_in_source(int32_t sx,
   return true;
 }
 
+static bool checked_u32_mul(uint32_t a, uint32_t b, uint32_t* out) {
+  uint64_t value = (uint64_t)a * (uint64_t)b;
+  if (value > UINT32_MAX) return false;
+  *out = (uint32_t)value;
+  return true;
+}
+
+static uint8_t* image_view_scratch_alloc(lua_State* L,
+                                         ui_image_ud_t* ud,
+                                         uint32_t width,
+                                         uint32_t height,
+                                         uint32_t bytes) {
+  uint8_t* pixels;
+
+  if (ud->view_scratch_data && ud->view_scratch_capacity >= bytes) {
+    return ud->view_scratch_data;
+  }
+
+  pixels = (uint8_t*)res_alloc_image_view_buffer(bytes, UI_IMAGE_VIEW_ALIGN);
+  if (!pixels) {
+    const char* err = res_last_error();
+    printf("[ui.image] view buffer alloc failed width=%lu height=%lu bytes=%lu error=%s\n",
+           (unsigned long)width,
+           (unsigned long)height,
+           (unsigned long)bytes,
+           err ? err : "unknown");
+    (void)luaL_error(L,
+                     "out of app arena memory for image view buffer (%lux%lu, %lu bytes)",
+                     (unsigned long)width,
+                     (unsigned long)height,
+                     (unsigned long)bytes);
+    return NULL;
+  }
+
+  ud->view_scratch_data = pixels;
+  ud->view_scratch_capacity = bytes;
+  return pixels;
+}
+
 static bool parse_image_region(lua_State* L,
                                int config_idx,
                                uint16_t source_w,
@@ -234,20 +277,23 @@ static int rebuild_view(lua_State* L, ui_image_ud_t* ud) {
   source_stride = (uint32_t)ud->source_w * bpp;
   stride = lv_draw_buf_width_to_stride((uint32_t)ud->sw, cf);
   row_bytes = (uint32_t)ud->sw * bpp;
-  size = stride * (uint32_t)ud->sh;
+  if (!checked_u32_mul(stride, (uint32_t)ud->sh, &size)) {
+    return luaL_error(L, "image view buffer is too large");
+  }
   needs_copy = ud->flip_x || ud->flip_y ||
                ud->sx != 0 || ud->sy != 0 ||
                ud->sw != ud->source_w || ud->sh != ud->source_h ||
                stride != source_stride;
 
-  if (ud->view_data_owned && ud->view_data) {
-    lv_free(ud->view_data);
-  }
   ud->view_data = NULL;
   ud->view_data_owned = false;
 
   if (needs_copy) {
-    ud->view_data = (uint8_t*)lv_malloc(size);
+    ud->view_data = image_view_scratch_alloc(L,
+                                             ud,
+                                             (uint32_t)ud->sw,
+                                             (uint32_t)ud->sh,
+                                             size);
     if (!ud->view_data) return luaL_error(L, "out of memory");
     memset(ud->view_data, 0, size);
     ud->view_data_owned = true;
@@ -514,10 +560,9 @@ void lua_ui_image_delete(lua_State* L, int idx) {
     lv_obj_delete(ud->img);
     ud->img = NULL;
   }
-  if (ud->view_data_owned && ud->view_data) {
-    lv_free(ud->view_data);
-  }
   ud->view_data = NULL;
+  ud->view_scratch_data = NULL;
+  ud->view_scratch_capacity = 0u;
   ud->view_data_owned = false;
   if (ud->has_image_res) {
     res_release(ud->image_res);
