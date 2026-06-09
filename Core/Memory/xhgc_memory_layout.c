@@ -114,6 +114,11 @@ static void xhgc_mem_print_flags(uint32_t flags)
     }
 }
 
+/**
+ * @brief  按内存 zone ID 获取 SDRAM 分区描述
+ * @param  id: 内存 zone ID
+ * @return 非NULL=对应分区描述, NULL=ID非法
+ */
 const XHGC_MemZoneDesc* xhgc_mem_get_zone(XHGC_MemZoneId id)
 {
     if ((int)id < 0 || id >= XHGC_MEM_ZONE_COUNT) {
@@ -123,6 +128,11 @@ const XHGC_MemZoneDesc* xhgc_mem_get_zone(XHGC_MemZoneId id)
     return &g_xhgc_mem_zones[id];
 }
 
+/**
+ * @brief  查找包含指定地址的 SDRAM 分区
+ * @param  addr: 待查询地址
+ * @return 非NULL=包含该地址的分区描述, NULL=地址不在已登记分区内
+ */
 const XHGC_MemZoneDesc* xhgc_mem_find_zone_by_addr(uintptr_t addr)
 {
     for (uint32_t i = 0u; i < (uint32_t)XHGC_MEM_ZONE_COUNT; ++i) {
@@ -135,6 +145,14 @@ const XHGC_MemZoneDesc* xhgc_mem_find_zone_by_addr(uintptr_t addr)
     return NULL;
 }
 
+/**
+ * @brief  判断地址范围是否完整落在指定 SDRAM 分区内
+ * @param  id: 目标内存 zone ID
+ * @param  addr: 起始地址
+ * @param  size: 范围字节数
+ * @retval true=范围完整位于分区内
+ * @retval false=ID非法、长度为0、地址溢出或范围越界
+ */
 bool xhgc_mem_addr_in_zone(XHGC_MemZoneId id, uintptr_t addr, uint32_t size)
 {
     const XHGC_MemZoneDesc *zone;
@@ -157,6 +175,15 @@ bool xhgc_mem_addr_in_zone(XHGC_MemZoneId id, uintptr_t addr, uint32_t size)
     return addr >= zone->base && end <= zone->end;
 }
 
+/**
+ * @brief  判断地址范围是否属于允许 DMA 访问的固定 SDRAM 区域
+ * @param  ptr: 起始地址
+ * @param  size: 范围字节数
+ * @retval true=范围位于固定 DMA 目标分区内
+ * @retval false=参数非法或范围不属于固定 DMA 目标分区
+ * @note   - 本函数只检查已列入白名单的固定分区，不包含 DMA_POOL 本身
+ * @note   - 调用方仍需按具体 DMA 外设要求处理 cache clean / invalidate
+ */
 bool xhgc_mem_is_fixed_dma_target(const void *ptr, size_t size)
 {
     static const XHGC_MemZoneId fixed_dma_zones[] = {
@@ -181,6 +208,12 @@ bool xhgc_mem_is_fixed_dma_target(const void *ptr, size_t size)
     return false;
 }
 
+/**
+ * @brief  校验 SDRAM 分区表与编译期布局常量是否一致
+ * @retval true=布局连续、边界和对齐均符合预期
+ * @retval false=基址、大小、连续性、越界或对齐检查失败
+ * @note   本函数只读检查全局分区表，不修改初始化顺序或内存内容
+ */
 bool xhgc_mem_layout_validate(void)
 {
     uintptr_t expected_base = XHGC_SDRAM_BASE;
@@ -254,6 +287,11 @@ bool xhgc_mem_layout_validate(void)
     return true;
 }
 
+/**
+ * @brief  打印当前 SDRAM 分区表
+ * @retval None
+ * @note   本函数只输出分区基址、大小、结束地址和标志，不修改全局状态
+ */
 void xhgc_mem_layout_dump(void)
 {
     printf("[XHGC SDRAM LAYOUT]\r\n");

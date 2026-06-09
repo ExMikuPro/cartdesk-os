@@ -94,6 +94,15 @@ static bool lua_vm_block_valid(const LuaVmAllocator *allocator,
            block->magic == LUA_VM_BLOCK_MAGIC;
 }
 
+/**
+ * @brief  将空闲/可用块按目标payload大小拆分出尾部空闲块
+ * @param  block: 待拆分的块头
+ * @param  size: 目标payload字节数，已按Lua堆对齐
+ * @retval None
+ * @note   - 剩余空间不足以容纳块头和最小对齐payload时不会拆分
+ *         - 拆分会重建双向链表，并尝试合并新尾块之后的相邻空闲块
+ *         - 本函数不更新allocator used/peak或meminfo统计
+ */
 static void lua_vm_split_block(lua_vm_block_t *block, size_t size)
 {
     const size_t remainder = block->size - size;
@@ -118,6 +127,14 @@ static void lua_vm_split_block(lua_vm_block_t *block, size_t size)
     lua_vm_merge_next(tail);
 }
 
+/**
+ * @brief  将当前块与其后继空闲块合并
+ * @param  block: 当前块头
+ * @retval None
+ * @note   - 仅当next存在且标记为空闲时合并
+ *         - 合并会更新双向链表指针，不清零被吞并块头
+ *         - 本函数不修改allocator used/peak或meminfo统计
+ */
 static void lua_vm_merge_next(lua_vm_block_t *block)
 {
     lua_vm_block_t *next = block->next;
@@ -132,6 +149,15 @@ static void lua_vm_merge_next(lua_vm_block_t *block)
     }
 }
 
+/**
+ * @brief  在Lua VM堆链表中查找并分配一块payload
+ * @param  allocator: Lua VM allocator实例
+ * @param  size: Lua请求的字节数
+ * @return 非NULL=分配成功的payload指针, NULL=对齐溢出或无可用块
+ * @note   - 请求会向上对齐到LUA_VM_ALLOC_ALIGN
+ *         - 成功路径会拆分块、标记占用、更新used/peak和meminfo
+ *         - 失败路径会增加alloc_fail_count并记录LUA标签fail_count
+ */
 static void *lua_vm_allocate(LuaVmAllocator *allocator, size_t size)
 {
     const size_t aligned_size = lua_vm_align_up(size);
@@ -161,6 +187,15 @@ static void *lua_vm_allocate(LuaVmAllocator *allocator, size_t size)
     return NULL;
 }
 
+/**
+ * @brief  释放Lua VM堆payload并尝试合并相邻空闲块
+ * @param  allocator: Lua VM allocator实例
+ * @param  ptr: 待释放payload指针
+ * @retval None
+ * @note   - NULL、非法块或已释放块会被忽略
+ *         - 成功释放会减少used并回退meminfo LUA占用
+ *         - 会先合并后继空闲块，再在前驱为空闲时向前合并
+ */
 static void lua_vm_release(LuaVmAllocator *allocator, void *ptr)
 {
     if (ptr == NULL) {
@@ -184,6 +219,13 @@ static void lua_vm_release(LuaVmAllocator *allocator, void *ptr)
     }
 }
 
+/**
+ * @brief  初始化Lua VM专用堆分配器
+ * @retval 0=初始化成功
+ * @note   - 首次调用会绑定LUA_HEAP_BASE/LUA_HEAP_SIZE作为allocator区域
+ *         - 会重建首个空闲块、清零Lua堆统计并标记allocator已初始化
+ *         - 会重置APP_ARENA_REST中LUA标签的meminfo动态用量
+ */
 int lua_vm_memory_init(void)
 {
     if (g_lua_allocator.base == NULL) {
@@ -208,11 +250,22 @@ int lua_vm_memory_init(void)
     return 0;
 }
 
+/**
+ * @brief  获取Lua VM全局allocator实例
+ * @return 非NULL=LuaVmAllocator全局实例指针
+ * @note   - 返回对象由本模块持有，调用方不得释放或替换
+ */
 LuaVmAllocator *lua_vm_memory_allocator(void)
 {
     return &g_lua_allocator;
 }
 
+/**
+ * @brief  使用Lua VM专用allocator创建Lua状态机
+ * @return 非NULL=创建成功的lua_State指针, NULL=allocator初始化或lua_newstate失败
+ * @note   - 会先调用lua_vm_memory_init重置Lua堆
+ *         - Lua主分配路径为lua_vm_alloc
+ */
 lua_State *lua_vm_newstate(void)
 {
     if (lua_vm_memory_init() != 0) {
@@ -222,6 +275,17 @@ lua_State *lua_vm_newstate(void)
     return lua_newstate(lua_vm_alloc, lua_vm_memory_allocator());
 }
 
+/**
+ * @brief  Lua VM allocator回调
+ * @param  ud: LuaVmAllocator实例指针
+ * @param  ptr: 旧payload指针，NULL表示新分配
+ * @param  old_size: Lua传入的旧大小，当前实现不使用
+ * @param  new_size: 新大小，0表示释放
+ * @return 非NULL=分配或重分配成功, NULL=释放完成或分配失败
+ * @note   - 新分配、释放和重分配都会同步维护Lua堆统计
+ *         - 成功/失败路径会同步更新meminfo中的LUA标签统计
+ *         - 本函数只操作LUA_HEAP分区，不改变RESOURCE_ARENA owner
+ */
 void *lua_vm_alloc(void *ud, void *ptr, size_t old_size, size_t new_size)
 {
     LuaVmAllocator *allocator = ud;
@@ -287,6 +351,11 @@ void *lua_vm_alloc(void *ud, void *ptr, size_t old_size, size_t new_size)
     return new_ptr;
 }
 
+/**
+ * @brief  获取Lua VM堆统计快照
+ * @param  out_stats: 输出统计结构体指针，NULL时不执行任何操作
+ * @retval None
+ */
 void lua_vm_memory_get_stats(LuaVmMemoryStats *out_stats)
 {
     if (out_stats != NULL) {
@@ -294,6 +363,12 @@ void lua_vm_memory_get_stats(LuaVmMemoryStats *out_stats)
     }
 }
 
+/**
+ * @brief  打印Lua VM堆统计信息
+ * @retval None
+ * @note   - 输出base、capacity、used、peak和alloc_fail_count
+ *         - 本函数不修改allocator状态
+ */
 void lua_vm_memory_print_stats(void)
 {
     printf("Lua heap region: SDRAM_APP_ARENA\r\n");

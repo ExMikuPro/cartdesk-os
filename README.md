@@ -14,7 +14,7 @@
 
 - LVGL 9.5 图形栈，包含显示、tick、输入设备移植层。
 - LTDC 双缓冲显示链路，配合 VBlank/page flip 降低撕裂。
-- 64 MiB 外部 SDRAM 固定分区，用于 framebuffer、LVGL heap、DMA pool、launcher cache 和应用资源区。
+- 64 MiB 外部 SDRAM 固定分区，用于 framebuffer、保留的 SDRAM_LVGL_HEAP、DMA pool、launcher cache 和应用资源区；LVGL runtime heap 当前位于片内 RAM。
 - SD 卡 `cart.bin` 读取，launcher 可显示卡带标题和 200x200 ARGB8888 预览图。
 - Launcher 原生右下角操作提示栏，用字母和中文显示当前选中项操作。
 - Lua VM 运行时，支持生命周期函数和 GPIO/PWM/UI 等宿主 API。

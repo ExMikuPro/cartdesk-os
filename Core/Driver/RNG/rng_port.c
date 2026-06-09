@@ -77,8 +77,13 @@ static void ClearRNGError(void);
 
 /**
  * @brief  检查RNG错误标志
- * @param  err_info: 错误信息输出
- * @retval RNG_Status状态码
+ * @param  err_info: 错误信息输出，可为NULL
+ * @retval RNG_OK=未检测到错误
+ * @retval RNG_E_NOT_READY=HAL RNG实例为空
+ * @retval RNG_E_SEED_ERROR=检测到种子错误标志
+ * @retval RNG_E_CLOCK_ERROR=检测到时钟错误标志
+ * @note   - 会读取hrng.Instance->SR判断硬件错误状态
+ *         - 错误路径会写入err_info并更新错误统计
  */
 static RNG_Status CheckRNGError(RNG_ErrorInfo *err_info)
 {
@@ -112,6 +117,9 @@ static RNG_Status CheckRNGError(RNG_ErrorInfo *err_info)
 
 /**
  * @brief  清除RNG错误标志
+ * @retval None
+ * @note   - 仅在hrng.Instance非NULL时操作RNG状态寄存器
+ *         - 会尝试清除SEIS和CEIS错误标志
  */
 static void ClearRNGError(void)
 {
@@ -131,7 +139,13 @@ static void ClearRNGError(void)
 /* ===== 公共函数实现 ===== */
 
 /**
- * @brief  初始化RNG模块
+ * @brief  初始化RNG模块并检查硬件就绪状态
+ * @param  err_info: 错误信息输出，可为NULL
+ * @retval RNG_OK=初始化成功
+ * @retval RNG_E_NOT_READY=HAL RNG实例未初始化
+ * @retval 其它RNG_Status=硬件错误检查失败
+ * @note   - 会清除RNG错误标志并重置统计信息
+ *         - 依赖CubeMX已初始化hrng句柄
  */
 RNG_Status RNG_Init(RNG_ErrorInfo *err_info)
 {
@@ -162,7 +176,10 @@ RNG_Status RNG_Init(RNG_ErrorInfo *err_info)
 }
 
 /**
- * @brief  反初始化RNG模块
+ * @brief  禁用RNG硬件生成器
+ * @retval RNG_OK=处理完成
+ * @note   - hrng实例存在时会执行__HAL_RNG_DISABLE
+ *         - 本函数不清空统计信息
  */
 RNG_Status RNG_DeInit(void)
 {
@@ -176,7 +193,13 @@ RNG_Status RNG_DeInit(void)
 }
 
 /**
- * @brief  检查RNG是否就绪
+ * @brief  检查RNG硬件是否可生成随机数
+ * @param  err_info: 错误信息输出，可为NULL
+ * @retval RNG_OK=RNG可用
+ * @retval RNG_E_NOT_READY=HAL RNG实例为空
+ * @retval RNG_E_SEED_ERROR=检测到种子错误
+ * @retval RNG_E_CLOCK_ERROR=检测到时钟错误
+ * @note   - 若RNG未使能，会重新使能RNG外设
  */
 RNG_Status RNG_IsReady(RNG_ErrorInfo *err_info)
 {
@@ -200,7 +223,11 @@ RNG_Status RNG_IsReady(RNG_ErrorInfo *err_info)
 }
 
 /**
- * @brief  软复位RNG外设
+ * @brief  软复位RNG外设并重新使能
+ * @retval RNG_OK=复位完成
+ * @retval RNG_E_NOT_READY=HAL RNG实例为空
+ * @note   - 会禁用RNG、清除错误标志、短延时后重新使能
+ *         - 用于生成失败或错误标志后的恢复路径
  */
 RNG_Status RNG_SoftReset(void)
 {
@@ -226,7 +253,16 @@ RNG_Status RNG_SoftReset(void)
 }
 
 /**
- * @brief  生成单个32位随机数
+ * @brief  生成单个32位硬件随机数
+ * @param  out: 输出随机数指针
+ * @param  err_info: 错误信息输出，可为NULL
+ * @retval RNG_OK=生成成功
+ * @retval RNG_E_PARAM=输出指针为空
+ * @retval RNG_E_RETRY_FAILED=重试后仍生成失败
+ * @retval 其它RNG_Status=错误检查失败
+ * @note   - 会调用HAL_RNG_GenerateRandomNumber并按RNG_MAX_RETRY重试
+ *         - 失败重试路径会执行RNG_SoftReset
+ *         - 成功/失败路径会按配置更新RNG统计信息
  */
 RNG_Status RNG_GetU32(uint32_t *out, RNG_ErrorInfo *err_info)
 {
@@ -287,6 +323,12 @@ RNG_Status RNG_GetU32(uint32_t *out, RNG_ErrorInfo *err_info)
 
 /**
  * @brief  生成单个16位随机数
+ * @param  out: 输出随机数指针
+ * @param  err_info: 错误信息输出，可为NULL
+ * @retval RNG_OK=生成成功
+ * @retval RNG_E_PARAM=输出指针为空
+ * @retval 其它RNG_Status=底层RNG_GetU32失败
+ * @note   - 取32位随机数的低16位作为结果
  */
 RNG_Status RNG_GetU16(uint16_t *out, RNG_ErrorInfo *err_info)
 {
@@ -307,6 +349,12 @@ RNG_Status RNG_GetU16(uint16_t *out, RNG_ErrorInfo *err_info)
 
 /**
  * @brief  生成单个8位随机数
+ * @param  out: 输出随机数指针
+ * @param  err_info: 错误信息输出，可为NULL
+ * @retval RNG_OK=生成成功
+ * @retval RNG_E_PARAM=输出指针为空
+ * @retval 其它RNG_Status=底层RNG_GetU32失败
+ * @note   - 取32位随机数的低8位作为结果
  */
 RNG_Status RNG_GetU8(uint8_t *out, RNG_ErrorInfo *err_info)
 {
@@ -327,6 +375,13 @@ RNG_Status RNG_GetU8(uint8_t *out, RNG_ErrorInfo *err_info)
 
 /**
  * @brief  填充任意长度随机字节
+ * @param  buf: 输出缓冲区指针
+ * @param  len: 需要填充的字节数
+ * @param  err_info: 错误信息输出，可为NULL
+ * @retval RNG_OK=填充成功或len为0
+ * @retval RNG_E_PARAM=buf为空且len大于0
+ * @retval 其它RNG_Status=底层RNG_GetU32失败
+ * @note   - 按32位随机数分块写入，尾部不足4字节时只复制所需字节
  */
 RNG_Status RNG_Fill(void *buf, size_t len, RNG_ErrorInfo *err_info)
 {
@@ -368,8 +423,16 @@ RNG_Status RNG_Fill(void *buf, size_t len, RNG_ErrorInfo *err_info)
 }
 
 /**
- * @brief  生成指定范围内的随机数 [min, max]
- * @note   使用无偏差算法,确保均匀分布
+ * @brief  生成[min, max]闭区间内的随机数
+ * @param  min: 最小值，包含
+ * @param  max: 最大值，包含
+ * @param  out: 输出随机数指针
+ * @param  err_info: 错误信息输出，可为NULL
+ * @retval RNG_OK=生成成功
+ * @retval RNG_E_PARAM=输出指针为空或min大于max
+ * @retval 其它RNG_Status=底层RNG_GetU32失败
+ * @note   - min等于max时直接返回min
+ *         - 非2的幂范围使用拒绝采样降低取模偏差
  */
 RNG_Status RNG_GetRange(uint32_t min, uint32_t max, uint32_t *out, RNG_ErrorInfo *err_info)
 {
@@ -422,7 +485,13 @@ RNG_Status RNG_GetRange(uint32_t min, uint32_t max, uint32_t *out, RNG_ErrorInfo
 }
 
 /**
- * @brief  生成随机浮点数 [0.0, 1.0)
+ * @brief  生成[0.0, 1.0)范围内的随机浮点数
+ * @param  out: 输出浮点数指针
+ * @param  err_info: 错误信息输出，可为NULL
+ * @retval RNG_OK=生成成功
+ * @retval RNG_E_PARAM=输出指针为空
+ * @retval 其它RNG_Status=底层RNG_GetU32失败
+ * @note   - 使用32位随机数的高23位映射到float小数区间
  */
 RNG_Status RNG_GetFloat(float *out, RNG_ErrorInfo *err_info)
 {
@@ -444,6 +513,12 @@ RNG_Status RNG_GetFloat(float *out, RNG_ErrorInfo *err_info)
 
 /**
  * @brief  生成随机布尔值
+ * @param  out: 输出布尔值指针
+ * @param  err_info: 错误信息输出，可为NULL
+ * @retval RNG_OK=生成成功
+ * @retval RNG_E_PARAM=输出指针为空
+ * @retval 其它RNG_Status=底层RNG_GetU32失败
+ * @note   - 使用32位随机数最低位映射为true/false
  */
 RNG_Status RNG_GetBool(bool *out, RNG_ErrorInfo *err_info)
 {
@@ -463,7 +538,18 @@ RNG_Status RNG_GetBool(bool *out, RNG_ErrorInfo *err_info)
 }
 
 /**
- * @brief  使用调用方 scratch buffer 打乱数组(Fisher-Yates洗牌算法)
+ * @brief  使用调用方scratch buffer打乱数组
+ * @param  array: 待打乱数组指针
+ * @param  elem_size: 单个元素字节数
+ * @param  elem_count: 元素数量
+ * @param  scratch: 调用方提供的交换缓冲区
+ * @param  scratch_size: scratch缓冲区字节数
+ * @param  err_info: 错误信息输出，可为NULL
+ * @retval RNG_OK=打乱完成或元素数量小于等于1
+ * @retval RNG_E_PARAM=参数非法或scratch空间不足
+ * @retval 其它RNG_Status=随机索引生成失败
+ * @note   - 使用Fisher-Yates算法
+ *         - 会原地修改array内容
  */
 RNG_Status RNG_ShuffleWithScratch(void *array,
                                   size_t elem_size,
@@ -524,7 +610,16 @@ RNG_Status RNG_ShuffleWithScratch(void *array,
 }
 
 /**
- * @brief  打乱数组(Fisher-Yates洗牌算法)
+ * @brief  使用栈上scratch buffer打乱数组
+ * @param  array: 待打乱数组指针
+ * @param  elem_size: 单个元素字节数
+ * @param  elem_count: 元素数量
+ * @param  err_info: 错误信息输出，可为NULL
+ * @retval RNG_OK=打乱完成或元素数量小于等于1
+ * @retval RNG_E_PARAM=元素大小超过内部scratch容量或参数非法
+ * @retval 其它RNG_Status=随机索引生成失败
+ * @note   - 内部scratch容量为RNG_SHUFFLE_STACK_SCRATCH_SIZE
+ *         - 大元素数组请使用RNG_ShuffleWithScratch
  */
 RNG_Status RNG_Shuffle(void *array, size_t elem_size, size_t elem_count, RNG_ErrorInfo *err_info)
 {
@@ -544,7 +639,9 @@ RNG_Status RNG_Shuffle(void *array, size_t elem_size, size_t elem_count, RNG_Err
 }
 
 /**
- * @brief  获取错误描述字符串
+ * @brief  获取RNG状态码对应的英文描述字符串
+ * @param  status: RNG状态码
+ * @return 非NULL=状态描述字符串
  */
 const char* RNG_GetErrorString(RNG_Status status)
 {
@@ -566,7 +663,9 @@ const char* RNG_GetErrorString(RNG_Status status)
 #if RNG_ENABLE_STATS
 
 /**
- * @brief  获取统计信息
+ * @brief  获取RNG统计信息快照
+ * @param  stats: 输出统计结构体指针，NULL时不执行任何操作
+ * @retval None
  */
 void RNG_GetStats(RNG_Stats *stats)
 {
@@ -576,7 +675,8 @@ void RNG_GetStats(RNG_Stats *stats)
 }
 
 /**
- * @brief  重置统计信息
+ * @brief  清零RNG统计信息
+ * @retval None
  */
 void RNG_ResetStats(void)
 {
@@ -584,7 +684,10 @@ void RNG_ResetStats(void)
 }
 
 /**
- * @brief  打印统计信息
+ * @brief  打印RNG统计信息
+ * @retval None
+ * @note   - RNG_DEBUG_ON启用时输出统计明细
+ *         - RNG_DEBUG_ON关闭时仅通过RNG_INFO路径输出提示
  */
 void RNG_PrintStats(void)
 {

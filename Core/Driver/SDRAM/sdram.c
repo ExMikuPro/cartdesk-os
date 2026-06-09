@@ -50,6 +50,16 @@ static bool sdram_align_is_power_of_two(size_t align)
     return align != 0u && (align & (align - 1u)) == 0u;
 }
 
+/**
+ * @brief  修正线性分配请求的对齐值
+ * @param  requested_align: 调用方请求的对齐字节数
+ * @param  min_align: 允许的最小对齐字节数
+ * @param  out_align: 输出修正后的对齐字节数
+ * @retval true=修正成功, false=输出指针非法或对齐值上修时溢出
+ * @note   - 小于min_align的请求会提升到min_align
+ *         - 非2的幂对齐值会向上修正到不小于请求值的2的幂
+ *         - 本函数只处理数值，不推进任何pool offset
+ */
 static bool sdram_align_normalize(size_t requested_align, size_t min_align, size_t *out_align)
 {
     size_t align;
@@ -78,6 +88,12 @@ static bool sdram_align_normalize(size_t requested_align, size_t min_align, size
     return true;
 }
 
+/**
+ * @brief  获取并校验DMA_POOL对应的固定内存zone描述
+ * @retval 非NULL=DMA_POOL zone合法, NULL=zone缺失、非DMA区或边界定义不一致
+ * @note   - 本函数只读全局内存布局表，不初始化SDRAM
+ *         - 调用方依赖返回值决定是否允许DMA_POOL分配或contains判断
+ */
 static const XHGC_MemZoneDesc *sdram_dma_pool_zone(void)
 {
     const XHGC_MemZoneDesc *zone = xhgc_mem_get_zone(XHGC_MEM_ZONE_DMA_POOL);
@@ -92,6 +108,13 @@ static const XHGC_MemZoneDesc *sdram_dma_pool_zone(void)
     return zone;
 }
 
+/**
+ * @brief  记录一次DMA_POOL分配失败
+ * @param  size: 失败的申请字节数
+ * @retval None
+ * @note   - 本函数只更新meminfo fail_count，不修改pool offset或peak
+ *         - 超过32位的申请大小会按UINT32_MAX上报统计
+ */
 static void sdram_dma_pool_record_fail(size_t size)
 {
     (void)xhgc_meminfo_fail_record(XHGC_MEM_ZONE_DMA_POOL,
@@ -99,6 +122,16 @@ static void sdram_dma_pool_record_fail(size_t size)
                                    XHGC_MEM_TAG_DMA);
 }
 
+/**
+ * @brief  从DMA_POOL线性分配一段cache line安全的DMA内存
+ * @param  size: 申请字节数
+ * @param  align: 调用方请求的对齐字节数
+ * @return 非NULL=分配成功的对齐地址, NULL=参数非法、布局非法、溢出或空间不足
+ * @note   - 本函数会推进s_dma_pool_offset并刷新s_dma_pool_peak
+ *         - DMA_POOL不支持单块free，只能通过SDRAM_DmaPoolReset整体复位
+ *         - meminfo按实际消耗字节数记录，包含对齐填充带来的pool占用
+ *         - 失败路径只记录fail_count，不改变offset/peak
+ */
 static void *sdram_dma_pool_alloc_internal(size_t size, size_t align)
 {
     const XHGC_MemZoneDesc *zone;
@@ -153,6 +186,18 @@ static void *sdram_dma_pool_alloc_internal(size_t size, size_t align)
     return (void *)aligned;
 }
 
+/**
+ * @brief  在指定SDRAM线性区域内推进offset并返回对齐内存
+ * @param  base: 线性区域起始地址
+ * @param  capacity: 线性区域总容量
+ * @param  offset: 输入/输出当前分配偏移
+ * @param  size: 申请字节数
+ * @param  align: 调用方请求的对齐字节数
+ * @return 非NULL=分配成功的对齐地址, NULL=参数非法、对齐非法或容量不足
+ * @note   - 本函数只推进调用方传入的offset，不维护peak/fail统计
+ *         - 不支持单块释放；调用方需通过所属arena/pool reset回收
+ *         - 调用方必须保证base+offset未发生地址回绕
+ */
 static void *sdram_linear_alloc(uintptr_t base, size_t capacity, size_t *offset, size_t size, size_t align)
 {
     uintptr_t current;
@@ -183,6 +228,11 @@ static void *sdram_linear_alloc(uintptr_t base, size_t capacity, size_t *offset,
     return (void *)aligned;
 }
 
+/**
+ * @brief  校验 SDRAM 编译期布局常量的边界和连续性
+ * @retval None
+ * @note   检查失败会调用 Error_Handler；本函数不修改 SDRAM 初始化顺序
+ */
 void sdram_layout_check(void)
 {
     if (SDRAM_BASE_ADDR != SDRAM_LAYER1_FB0_BASE ||
@@ -232,9 +282,9 @@ void sdram_layout_check(void)
 }
 
 /**
- * @brief       SDRAM��ʼ��
- * @param       ��
- * @retval      ��
+ * @brief  按 JEDEC 时序初始化外部 SDRAM
+ * @retval None
+ * @note   本函数依次发送 CLK_ENABLE、PALL、AUTOREFRESH、LOAD_MODE 并配置刷新率
  */
 void SDRAM_Init(void)
 {
@@ -274,10 +324,10 @@ void SDRAM_Init(void)
 
 
 /**
- * @brief  Write buffer to SDRAM
- * @param  pBuffer: Pointer to data buffer
- * @param  WriteAddr: Write address offset
- * @param  n: Number of bytes to write
+ * @brief  将缓冲区逐字节写入 SDRAM
+ * @param  pBuffer: 源数据缓冲区
+ * @param  WriteAddr: 相对 FMC_SDRAM_ADDR 的写入偏移
+ * @param  n: 写入字节数
  * @retval None
  */
 void FMC_SDRAM_Write_Buffer(uint8_t *pBuffer, uint32_t WriteAddr, uint32_t n)
@@ -291,10 +341,10 @@ void FMC_SDRAM_Write_Buffer(uint8_t *pBuffer, uint32_t WriteAddr, uint32_t n)
 }
 
 /**
- * @brief  Read buffer from SDRAM
- * @param  pBuffer: Pointer to data buffer
- * @param  ReadAddr: Read address offset
- * @param  n: Number of bytes to read
+ * @brief  从 SDRAM 逐字节读取到缓冲区
+ * @param  pBuffer: 目标数据缓冲区
+ * @param  ReadAddr: 相对 FMC_SDRAM_ADDR 的读取偏移
+ * @param  n: 读取字节数
  * @retval None
  */
 void FMC_SDRAM_Read_Buffer(uint8_t *pBuffer, uint32_t ReadAddr, uint32_t n)
@@ -307,9 +357,9 @@ void FMC_SDRAM_Read_Buffer(uint8_t *pBuffer, uint32_t ReadAddr, uint32_t n)
 }
 
 /**
- * @brief  SDRAM memory test
- * @param  None
+ * @brief  对 SDRAM 执行基础容量写读测试
  * @retval None
+ * @note   本函数会向 SDRAM 采样地址写入测试值并通过 printf 输出容量信息
  */
 void FMC_SDRAM_Test(void)
 {
@@ -347,9 +397,9 @@ static void SDRAM_Checkfailed(void)
 }
 
 /**
- * @brief  SDRAM write speed test
- * @param  None
+ * @brief  执行 SDRAM 写入速度测试
  * @retval None
+ * @note   本函数会覆盖 FMC_SDRAM_ADDR 起始区域并在校验失败时停入错误处理
  */
 void SDRAM_WriteSpeed_Test(void)
 {
@@ -391,9 +441,9 @@ void SDRAM_WriteSpeed_Test(void)
 }
 
 /**
- * @brief  SDRAM read speed test
- * @param  None
+ * @brief  执行 SDRAM 读取速度测试
  * @retval None
+ * @note   本函数从 FMC_SDRAM_ADDR 起始区域连续读取并输出耗时统计
  */
 void SDRAM_ReadSpeed_Test(void)
 {
@@ -423,11 +473,28 @@ void SDRAM_ReadSpeed_Test(void)
            read_time, (EXT_SDRAM_SIZE / 1024 / 1024 * 1000) / read_time);
 }
 
+/**
+ * @brief  从 DMA_POOL 线性分配一块对齐内存
+ * @param  size: 申请字节数
+ * @param  align: 请求对齐字节数，小于 SDRAM_DMA_ALIGN 时会提升到 SDRAM_DMA_ALIGN
+ * @return 非NULL=分配成功, NULL=参数非法、对齐失败、地址溢出或空间不足
+ * @note   - 本函数使用 bump/reset 模型，不支持单块释放
+ * @note   - 成功/失败路径会同步更新 meminfo 中 DMA tag 统计
+ * @note   - 返回地址一定位于 DMA_POOL zone 内
+ */
 void *SDRAM_DmaPoolAlloc(size_t size, size_t align)
 {
     return sdram_dma_pool_alloc_internal(size, align);
 }
 
+/**
+ * @brief  从 DMA_POOL 分配并清零一块数组内存
+ * @param  count: 元素数量
+ * @param  size: 单个元素字节数
+ * @param  align: 请求对齐字节数，小于 SDRAM_DMA_ALIGN 时会提升到 SDRAM_DMA_ALIGN
+ * @return 非NULL=分配并清零成功, NULL=乘法溢出、参数非法或空间不足
+ * @note   本函数沿用 DMA_POOL bump/reset 模型，失败路径会记录 meminfo fail_count
+ */
 void *SDRAM_DmaPoolCalloc(size_t count, size_t size, size_t align)
 {
     size_t total_size;
@@ -446,6 +513,11 @@ void *SDRAM_DmaPoolCalloc(size_t count, size_t size, size_t align)
     return ptr;
 }
 
+/**
+ * @brief  初始化 DMA_POOL 线性分配器
+ * @retval None
+ * @note   本函数会清零当前用量和峰值，并复位 meminfo 中 DMA_POOL/DMA tag 的非 reserved 用量
+ */
 void SDRAM_DmaPoolInit(void)
 {
     s_dma_pool_offset = 0u;
@@ -453,22 +525,39 @@ void SDRAM_DmaPoolInit(void)
     (void)xhgc_meminfo_zone_reset_tag(XHGC_MEM_ZONE_DMA_POOL, XHGC_MEM_TAG_DMA);
 }
 
+/**
+ * @brief  复位 DMA_POOL 当前分配位置
+ * @retval None
+ * @note   本函数清零当前 offset 并复位 meminfo 用量，但保留本地 peak 统计
+ */
 void SDRAM_DmaPoolReset(void)
 {
     s_dma_pool_offset = 0u;
     (void)xhgc_meminfo_zone_reset_tag(XHGC_MEM_ZONE_DMA_POOL, XHGC_MEM_TAG_DMA);
 }
 
+/**
+ * @brief  获取 DMA_POOL 当前已消耗字节数
+ * @retval 当前已用字节数，超过 uint32_t 上限时返回 UINT32_MAX
+ */
 uint32_t SDRAM_DmaPoolUsed(void)
 {
     return s_dma_pool_offset > UINT32_MAX ? UINT32_MAX : (uint32_t)s_dma_pool_offset;
 }
 
+/**
+ * @brief  获取 DMA_POOL 历史峰值字节数
+ * @retval 峰值字节数，超过 uint32_t 上限时返回 UINT32_MAX
+ */
 uint32_t SDRAM_DmaPoolPeak(void)
 {
     return s_dma_pool_peak > UINT32_MAX ? UINT32_MAX : (uint32_t)s_dma_pool_peak;
 }
 
+/**
+ * @brief  获取 DMA_POOL 当前剩余字节数
+ * @retval 剩余字节数，zone非法或已耗尽时返回0
+ */
 uint32_t SDRAM_DmaPoolFree(void)
 {
     const XHGC_MemZoneDesc *zone = sdram_dma_pool_zone();
@@ -480,6 +569,13 @@ uint32_t SDRAM_DmaPoolFree(void)
     return (uint32_t)(zone->size - s_dma_pool_offset);
 }
 
+/**
+ * @brief  判断地址范围是否完整位于 DMA_POOL 内
+ * @param  ptr: 起始地址
+ * @param  size: 范围字节数
+ * @retval true=范围完整位于 DMA_POOL 内
+ * @retval false=zone非法、参数非法、地址溢出或范围越界
+ */
 bool SDRAM_DmaPoolContains(const void *ptr, size_t size)
 {
     const XHGC_MemZoneDesc *zone = sdram_dma_pool_zone();
@@ -507,6 +603,12 @@ static void sdram_dma_pool_selftest_expect(bool condition, bool *pass, const cha
     }
 }
 
+/**
+ * @brief  执行 DMA_POOL 分配器与 meminfo 联动自检
+ * @retval true=所有自检项通过
+ * @retval false=至少一个自检项失败
+ * @note   本函数会调用 SDRAM_DmaPoolInit/Reset，改变 DMA_POOL 当前分配状态
+ */
 bool SDRAM_DmaPoolSelftest(void)
 {
     const XHGC_MemZoneDesc *zone;
@@ -588,12 +690,24 @@ bool SDRAM_DmaPoolSelftest(void)
 }
 #endif
 
+/**
+ * @brief  从 RESOURCE_ARENA 线性分配一块对齐内存
+ * @param  size: 申请字节数
+ * @param  align: 请求对齐字节数，小于 SDRAM_DEFAULT_ALIGN 时会提升到 SDRAM_DEFAULT_ALIGN
+ * @return 非NULL=分配成功, NULL=参数非法、对齐非法或空间不足
+ * @note   本函数仅移动 RESOURCE_ARENA 本地 offset，不更新 meminfo，不改变 RESOURCE_ARENA owner
+ */
 void *SDRAM_AppArenaAlloc(size_t size, size_t align)
 {
     return sdram_linear_alloc(RESOURCE_ARENA_BASE, RESOURCE_ARENA_SIZE,
                               &s_resource_arena_offset, size, align);
 }
 
+/**
+ * @brief  复位 RESOURCE_ARENA 线性分配位置
+ * @retval None
+ * @note   布局边界检查失败会调用 Error_Handler；本函数不改变 RESOURCE_ARENA owner
+ */
 void SDRAM_AppArenaReset(void)
 {
     if (RESOURCE_ARENA_BASE <= LUA_HEAP_END ||
@@ -605,11 +719,19 @@ void SDRAM_AppArenaReset(void)
     s_resource_arena_offset = 0;
 }
 
+/**
+ * @brief  获取 RESOURCE_ARENA 当前已用字节数
+ * @retval 当前已用字节数
+ */
 size_t SDRAM_AppArenaUsed(void)
 {
     return s_resource_arena_offset;
 }
 
+/**
+ * @brief  获取 RESOURCE_ARENA 当前剩余字节数
+ * @retval 当前剩余字节数
+ */
 size_t SDRAM_AppArenaFree(void)
 {
     return RESOURCE_ARENA_SIZE - s_resource_arena_offset;

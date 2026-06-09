@@ -17,6 +17,14 @@
 
 #define UI_IMAGE_VIEW_ALIGN 32u
 
+/**
+ * @brief  清理图片像素缓冲对应的DCache范围
+ * @param  ptr: 像素缓冲起始地址
+ * @param  size: 需要清理的字节数
+ * @retval None
+ * @note   - 维护范围会向外扩展到32字节cache line边界
+ *         - 用于CPU生成裁剪/翻转视图后交给LVGL/DMA读取
+ */
 static void clean_dcache_range(const void* ptr, uint32_t size) {
 #if defined(__DCACHE_PRESENT) && (__DCACHE_PRESENT == 1U)
   if (!ptr || size == 0u) return;
@@ -199,6 +207,18 @@ static bool checked_u32_mul(uint32_t a, uint32_t b, uint32_t* out) {
   return true;
 }
 
+/**
+ * @brief  为图片裁剪/翻转视图申请或复用scratch缓冲
+ * @param  L: Lua状态机
+ * @param  ud: ui.image userdata
+ * @param  width: 视图宽度，用于错误日志
+ * @param  height: 视图高度，用于错误日志
+ * @param  bytes: 需要的缓冲字节数
+ * @return 非NULL=可用scratch缓冲, NULL=分配失败且luaL_error未返回
+ * @note   - 优先复用userdata中容量足够的view_scratch_data
+ *         - 新缓冲来自resource_manager的图片视图arena，不使用lv_malloc
+ *         - 分配失败会记录日志并抛出Lua错误
+ */
 static uint8_t* image_view_scratch_alloc(lua_State* L,
                                          ui_image_ud_t* ud,
                                          uint32_t width,
@@ -231,6 +251,20 @@ static uint8_t* image_view_scratch_alloc(lua_State* L,
   return pixels;
 }
 
+/**
+ * @brief  解析Lua配置中的图片源区域
+ * @param  L: Lua状态机
+ * @param  config_idx: 配置table栈索引
+ * @param  source_w: 源图片宽度
+ * @param  source_h: 源图片高度
+ * @param  sx: 输出源区域x
+ * @param  sy: 输出源区域y
+ * @param  sw: 输出源区域宽度
+ * @param  sh: 输出源区域高度
+ * @retval true=区域合法, false=区域越界或尺寸非法
+ * @note   - 未提供region时默认使用整张源图片
+ *         - 只解析数值并校验边界，不修改userdata或LVGL对象
+ */
 static bool parse_image_region(lua_State* L,
                                int config_idx,
                                uint16_t source_w,
@@ -257,6 +291,16 @@ static bool parse_image_region(lua_State* L,
   return region_in_source(*sx, *sy, *sw, *sh, source_w, source_h);
 }
 
+/**
+ * @brief  重建ui.image的LVGL图片描述和可选裁剪/翻转视图缓冲
+ * @param  L: Lua状态机
+ * @param  ud: ui.image userdata
+ * @retval 0=重建成功, 其它=luaL_error抛出的错误返回值
+ * @note   - 原图直接显示时复用resource_manager像素缓冲，不额外分配
+ *         - 需要裁剪、翻转或stride调整时从RESOURCE_ARENA视图缓冲分配
+ *         - 成功后会清理view_data对应DCache并更新lv_image src
+ *         - 分配失败时通过Lua错误退出，调用方不应继续使用本次配置结果
+ */
 static int rebuild_view(lua_State* L, ui_image_ud_t* ud) {
   lv_color_format_t cf = LV_COLOR_FORMAT_UNKNOWN;
   uint8_t bpp = 0;
@@ -336,6 +380,16 @@ static int rebuild_view(lua_State* L, ui_image_ud_t* ud) {
   return 0;
 }
 
+/**
+ * @brief  应用ui.image样式配置并标记是否需要重建视图
+ * @param  L: Lua状态机
+ * @param  ud: ui.image userdata
+ * @param  style_idx: style table栈索引
+ * @param  rebuild: 输出是否需要调用rebuild_view
+ * @retval None
+ * @note   - alpha/tint直接写入LVGL样式
+ *         - flip_x/flip_y会修改userdata状态并要求重建像素视图
+ */
 static void apply_image_style(lua_State* L, ui_image_ud_t* ud, int style_idx, bool* rebuild) {
   int32_t alpha = 255;
   uint32_t tint = 0;
@@ -360,6 +414,16 @@ static void apply_image_style(lua_State* L, ui_image_ud_t* ud, int style_idx, bo
   }
 }
 
+/**
+ * @brief  应用Lua配置table到ui.image对象
+ * @param  L: Lua状态机
+ * @param  ud: ui.image userdata
+ * @param  config_idx: 配置table栈索引
+ * @retval 0=配置应用完成
+ * @note   - 会解析位置、尺寸、region、id、hidden和style字段
+ *         - region或flip变化会触发rebuild_view重新生成视图缓冲
+ *         - 最后会更新LVGL对象位置、尺寸、inner align并触发invalidate
+ */
 static int apply_image_config(lua_State* L, ui_image_ud_t* ud, int config_idx) {
   const char* id = NULL;
   int32_t x = lv_obj_get_x(ud->img);
@@ -447,6 +511,16 @@ static int apply_image_config(lua_State* L, ui_image_ud_t* ud, int config_idx) {
   return 0;
 }
 
+/**
+ * @brief  Lua侧ui.image构造函数
+ * @param  L: Lua状态机
+ * @retval 1=创建成功并返回ui.image userdata
+ * @retval 2=资源加载、格式校验、区域校验或LVGL对象创建失败，返回nil和错误字符串
+ * @note   - src缺失/非法或视图重建失败会通过luaL_error抛出Lua错误
+ *         - 会从resource_manager获取cart图片资源并持有引用
+ *         - 会创建LVGL image对象并把userdata挂到user_data
+ *         - 返回nil的失败路径会释放已获取的资源引用
+ */
 static int l_image_call(lua_State* L) {
   luaL_checktype(L, 2, LUA_TTABLE);
 
@@ -536,15 +610,38 @@ static int l_image_gc(lua_State* L) {
   return 0;
 }
 
+/**
+ * @brief  判断Lua栈位置是否为ui.image userdata
+ * @param  L: Lua状态机
+ * @param  idx: 待检查的Lua栈索引
+ * @retval true=该位置是ui.image userdata, false=不是ui.image userdata
+ */
 bool lua_ui_image_is(lua_State* L, int idx) {
   return test_image(L, idx) != NULL;
 }
 
+/**
+ * @brief  获取ui.image userdata绑定的drawable id
+ * @param  L: Lua状态机
+ * @param  idx: ui.image userdata栈索引
+ * @return 非NULL=drawable id字符串, NULL=该位置不是ui.image userdata
+ * @note   - 返回字符串归userdata内部存储所有，调用方不得释放
+ */
 const char* lua_ui_image_id(lua_State* L, int idx) {
   ui_image_ud_t* ud = test_image(L, idx);
   return ud ? ud->id : NULL;
 }
 
+/**
+ * @brief  对已有ui.image应用配置补丁
+ * @param  L: Lua状态机
+ * @param  drawable_idx: ui.image userdata栈索引
+ * @param  patch_idx: 补丁table栈索引
+ * @retval 0=应用成功, -1=补丁包含不允许修改的src字段
+ * @note   - 本函数会按apply_image_config修改LVGL image对象属性
+ *         - 配置非法时apply_image_config可能通过luaL_error抛出Lua错误
+ *         - src字段不允许通过patch修改，需重新创建image
+ */
 int lua_ui_image_patch(lua_State* L, int drawable_idx, int patch_idx) {
   ui_image_ud_t* ud = check_image(L, drawable_idx);
   luaL_checktype(L, patch_idx, LUA_TTABLE);
@@ -552,6 +649,15 @@ int lua_ui_image_patch(lua_State* L, int drawable_idx, int patch_idx) {
   return apply_image_config(L, ud, patch_idx);
 }
 
+/**
+ * @brief  删除ui.image对应的LVGL对象并释放资源引用
+ * @param  L: Lua状态机
+ * @param  idx: ui.image userdata栈索引
+ * @retval None
+ * @note   - 非ui.image userdata时直接返回
+ *         - 会调用lv_obj_delete删除LVGL image对象
+ *         - 若持有resource_manager图片资源，会调用res_release释放引用
+ */
 void lua_ui_image_delete(lua_State* L, int idx) {
   ui_image_ud_t* ud = test_image(L, idx);
   if (!ud) return;
@@ -579,6 +685,12 @@ static void create_image_metatable(lua_State* L) {
   lua_pop(L, 1);
 }
 
+/**
+ * @brief  注册ui.image Lua模块
+ * @param  L: Lua状态机
+ * @retval 1=模块table已压入Lua栈顶
+ * @note   - 会创建ui.image userdata metatable并设置__gc释放路径
+ */
 int luaopen_ui_image(lua_State* L) {
   create_image_metatable(L);
 

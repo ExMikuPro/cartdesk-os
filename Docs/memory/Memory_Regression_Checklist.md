@@ -152,9 +152,21 @@ flowchart TD
 - `Core/Src/freertos_heap.c`
 - `Middlewares/Third_Party/FreeRTOS/Source/portable/MemMang/heap_4.c`
 
+## Phase 11-E 注释与文档一致性检查
+
+- 检查日期：2026-06-09。
+- 检查范围：内存布局、meminfo、DCache、SDRAM DMA_POOL、APP_ARENA、RESOURCE_ARENA owner、resource_manager、Lua VM allocator、`ui.image`、RNG、littlefs port、CLion/CMake presets、架构文档与 README。
+- CodeGraph 复核：使用 `codegraph_status`、`codegraph_explore`、`codegraph_search`、`codegraph_callers`、`codegraph_callees` 和 `codegraph_impact` 复核注释涉及的调用关系与影响面。
+- 已修正：README 中 SDRAM 用途描述改为区分保留的 `SDRAM_LVGL_HEAP` 与当前位于片内 RAM 的 LVGL runtime heap。
+- 已修正：`ui.image` 构造与 patch 注释区分 `luaL_error` 错误路径和返回 `nil`/`-1` 的失败路径。
+- 已修正：`app_arena_alloc()` 注释明确 meminfo 按 arena 实际消耗字节数统计。
+- Markdown/Mermaid 复核：本轮未发现 Mermaid 代码块语法需要修改。
+- 仍需人工确认：LVGL heap peak、resource arena reset、DMA_POOL peak、cache maintenance、littlefs fallback counter 与 Lua allocator OOM 行为仍属于板端运行时观测项。
+- 结论：注释、README 与内存回归清单中发现的不一致已按实现最小修正；本阶段未修改业务逻辑、公开 API、构建配置或内存分配策略。
+
 ## Check Results
 
-- CodeGraph status：索引健康，覆盖 1891 个文件、40367 个节点、92755 条边。
+- CodeGraph status：索引健康，覆盖 1891 个文件、40367 个节点、92734 条边。
 - CodeGraph callers/callees：`lua_vm_newstate()` 只有 `lua_rt_init_state()` 调用；`lua_vm_newstate()` 调用 `lua_vm_memory_init()`、`lua_newstate()` 和 `lua_vm_memory_allocator()`。
 - CodeGraph callers/callees：`SDRAM_DmaPoolAlloc()` 调用 `sdram_dma_pool_alloc_internal()`；调用者为 `SDRAM_DmaPoolCalloc()` 和 `SDRAM_DmaPoolSelftest()`。
 - CodeGraph callers：`resource_arena_claim()` 调用者为 `resource_arena_owner_selftest()`、`res_manager_init()`、`lua_cart_resource_cache_preload()`。

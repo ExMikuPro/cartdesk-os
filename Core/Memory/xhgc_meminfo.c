@@ -75,6 +75,15 @@ static uint32_t xhgc_meminfo_current_total_fail_count(void)
     return total;
 }
 
+/**
+ * @brief  刷新指定zone/tag以及全局used峰值
+ * @param  zone: 已校验有效的内存zone
+ * @param  tag: 已校验有效的内存用途标签
+ * @retval None
+ * @note   - 调用方必须先完成zone/tag合法性检查
+ *         - 本函数只根据当前used更新peak，不修改used/reserved/fail计数
+ *         - 全局峰值按所有zone当前used重新汇总后比较刷新
+ */
 static void xhgc_meminfo_update_peaks(XHGC_MemZoneId zone, XHGC_MemTag tag)
 {
     XHGC_MemZoneStats *zone_stats = &g_xhgc_meminfo_zone_stats[zone];
@@ -95,6 +104,18 @@ static void xhgc_meminfo_update_peaks(XHGC_MemZoneId zone, XHGC_MemTag tag)
     }
 }
 
+/**
+ * @brief  按zone/tag增加当前占用并按需记录分配或保留计数
+ * @param  zone: 目标内存zone
+ * @param  size: 本次增加的字节数
+ * @param  tag: 内存用途标签
+ * @param  count_alloc: true=增加alloc_count
+ * @param  count_reserved: true=同步增加reserved基线
+ * @retval true=统计更新成功, false=未初始化、参数非法、size为0或容量不足
+ * @note   - 本函数只更新meminfo统计，不执行真实内存分配
+ *         - 更新成功后会刷新zone/tag和全局used峰值
+ *         - 调用方必须保证size与真实分配或保留口径一致
+ */
 static bool xhgc_meminfo_add_usage(XHGC_MemZoneId zone,
                                    uint32_t size,
                                    XHGC_MemTag tag,
@@ -140,6 +161,18 @@ static bool xhgc_meminfo_add_usage(XHGC_MemZoneId zone,
     return true;
 }
 
+/**
+ * @brief  按zone/tag减少当前占用并按需记录释放或保留释放计数
+ * @param  zone: 目标内存zone
+ * @param  size: 本次减少的字节数
+ * @param  tag: 内存用途标签
+ * @param  count_free: true=增加free_count
+ * @param  count_reserved: true=同步减少reserved基线
+ * @retval true=统计更新成功, false=未初始化、参数非法、size为0或统计不足
+ * @note   - 本函数只更新meminfo统计，不释放真实内存
+ *         - used/tag used/reserved不足时会拒绝，避免统计下溢
+ *         - peak和fail_count在释放路径上保持不变
+ */
 static bool xhgc_meminfo_sub_usage(XHGC_MemZoneId zone,
                                    uint32_t size,
                                    XHGC_MemTag tag,
@@ -182,6 +215,12 @@ static bool xhgc_meminfo_sub_usage(XHGC_MemZoneId zone,
     return true;
 }
 
+/**
+ * @brief  初始化 SDRAM meminfo 统计表
+ * @retval None
+ * @note   - 本函数会清零 zone/tag 统计并按内存布局表重建 total_sdram
+ * @note   - 初始化完成后会把三块固定 framebuffer 记为 reserved/used
+ */
 void xhgc_meminfo_init(void)
 {
     memset(g_xhgc_meminfo_zone_stats, 0, sizeof(g_xhgc_meminfo_zone_stats));
@@ -210,11 +249,29 @@ void xhgc_meminfo_init(void)
                                XHGC_MEM_TAG_FRAMEBUFFER);
 }
 
+/**
+ * @brief  记录指定 zone/tag 的保留内存用量
+ * @param  zone: 目标内存 zone ID
+ * @param  size: 保留字节数
+ * @param  tag: 用量归属标签
+ * @retval true=记录成功
+ * @retval false=meminfo未初始化、参数非法、大小为0或空间不足
+ * @note   成功时会同步增加 zone used/reserved、tag used，并更新峰值
+ */
 bool xhgc_meminfo_reserve(XHGC_MemZoneId zone, uint32_t size, XHGC_MemTag tag)
 {
     return xhgc_meminfo_add_usage(zone, size, tag, false, true);
 }
 
+/**
+ * @brief  释放指定 zone/tag 的保留内存统计
+ * @param  zone: 目标内存 zone ID
+ * @param  size: 释放字节数
+ * @param  tag: 用量归属标签
+ * @retval true=释放统计成功
+ * @retval false=固定 framebuffer zone、meminfo未初始化、参数非法或统计不足
+ * @note   成功时会减少 zone used/reserved 和 tag used，不回退峰值
+ */
 bool xhgc_meminfo_release(XHGC_MemZoneId zone, uint32_t size, XHGC_MemTag tag)
 {
     if (xhgc_meminfo_is_fixed_framebuffer_zone(zone)) {
@@ -224,11 +281,29 @@ bool xhgc_meminfo_release(XHGC_MemZoneId zone, uint32_t size, XHGC_MemTag tag)
     return xhgc_meminfo_sub_usage(zone, size, tag, false, true);
 }
 
+/**
+ * @brief  记录一次普通内存分配
+ * @param  zone: 目标内存 zone ID
+ * @param  size: 分配字节数
+ * @param  tag: 用量归属标签
+ * @retval true=记录成功
+ * @retval false=meminfo未初始化、参数非法、大小为0或空间不足
+ * @note   成功时会增加 zone/tag used 和 alloc_count，并更新峰值
+ */
 bool xhgc_meminfo_alloc_record(XHGC_MemZoneId zone, uint32_t size, XHGC_MemTag tag)
 {
     return xhgc_meminfo_add_usage(zone, size, tag, true, false);
 }
 
+/**
+ * @brief  记录一次普通内存释放
+ * @param  zone: 目标内存 zone ID
+ * @param  size: 释放字节数
+ * @param  tag: 用量归属标签
+ * @retval true=记录成功
+ * @retval false=固定 framebuffer zone、meminfo未初始化、参数非法或统计不足
+ * @note   成功时会减少 zone/tag used 并增加 free_count，不回退峰值
+ */
 bool xhgc_meminfo_free_record(XHGC_MemZoneId zone, uint32_t size, XHGC_MemTag tag)
 {
     if (xhgc_meminfo_is_fixed_framebuffer_zone(zone)) {
@@ -238,6 +313,15 @@ bool xhgc_meminfo_free_record(XHGC_MemZoneId zone, uint32_t size, XHGC_MemTag ta
     return xhgc_meminfo_sub_usage(zone, size, tag, true, false);
 }
 
+/**
+ * @brief  记录一次内存分配失败
+ * @param  zone: 目标内存 zone ID
+ * @param  size: 失败请求字节数，当前仅用于调用语义标识
+ * @param  tag: 用量归属标签
+ * @retval true=记录成功
+ * @retval false=meminfo未初始化或参数非法
+ * @note   成功时只增加 zone/tag fail_count，不修改 used/reserved/peak
+ */
 bool xhgc_meminfo_fail_record(XHGC_MemZoneId zone, uint32_t size, XHGC_MemTag tag)
 {
     XHGC_MemZoneStats *zone_stats;
@@ -258,6 +342,14 @@ bool xhgc_meminfo_fail_record(XHGC_MemZoneId zone, uint32_t size, XHGC_MemTag ta
     return true;
 }
 
+/**
+ * @brief  将指定 zone 中非 reserved 用量按 tag 复位
+ * @param  zone: 目标内存 zone ID
+ * @param  tag: 要扣减的用量归属标签
+ * @retval true=复位成功
+ * @retval false=固定 framebuffer zone、meminfo未初始化、参数非法或统计不一致
+ * @note   成功时 zone used 回到 reserved，tag used 扣减释放量，峰值和失败计数保持不变
+ */
 bool xhgc_meminfo_zone_reset_tag(XHGC_MemZoneId zone, XHGC_MemTag tag)
 {
     XHGC_MemZoneStats *zone_stats;
@@ -288,6 +380,12 @@ bool xhgc_meminfo_zone_reset_tag(XHGC_MemZoneId zone, XHGC_MemTag tag)
     return true;
 }
 
+/**
+ * @brief  复制当前 meminfo 统计快照
+ * @param  out: 快照输出结构体
+ * @retval None
+ * @note   out为NULL时直接返回；本函数不修改统计状态
+ */
 void xhgc_meminfo_get_snapshot(XHGC_MemInfoSnapshot *out)
 {
     if (out == NULL) {
@@ -307,6 +405,11 @@ void xhgc_meminfo_get_snapshot(XHGC_MemInfoSnapshot *out)
     out->total_fail_count = xhgc_meminfo_current_total_fail_count();
 }
 
+/**
+ * @brief  打印当前 meminfo 统计信息
+ * @retval None
+ * @note   本函数通过快照输出 zone/tag/total 统计，不修改统计状态
+ */
 void xhgc_meminfo_dump(void)
 {
     XHGC_MemInfoSnapshot snapshot;

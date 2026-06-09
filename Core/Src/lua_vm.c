@@ -66,6 +66,11 @@
 
 /* -------------------- 可覆盖的弱符号：脚本来源、日志、时间源 -------------------- */
 
+/**
+ * @brief  获取 Lua runtime 使用的毫秒时间戳
+ * @retval 当前毫秒 tick
+ * @note   默认弱实现返回 HAL_GetTick，平台可覆盖该符号
+ */
 __attribute__((weak))
 uint32_t lua_rt_time_ms(void)
 {
@@ -74,6 +79,12 @@ uint32_t lua_rt_time_ms(void)
     return HAL_GetTick();
 }
 
+/**
+ * @brief  输出 Lua runtime 日志
+ * @param  s: 待输出字符串，NULL时直接返回
+ * @retval None
+ * @note   默认弱实现写入 stdout 并 flush，平台可覆盖该符号
+ */
 __attribute__((weak))
 void lua_rt_log(const char *s)
 {
@@ -84,6 +95,12 @@ void lua_rt_log(const char *s)
     fflush(stdout);
 }
 
+/**
+ * @brief  获取默认内嵌启动脚本
+ * @param  out_len: 输出脚本长度，可为NULL
+ * @return 非NULL=静态 Lua 源码字符串
+ * @note   默认弱实现提供内嵌 boot.lua，平台可覆盖该符号
+ */
 __attribute__((weak))
 const char* lua_get_boot_script(size_t *out_len)
 {
@@ -112,12 +129,22 @@ const char* lua_get_boot_script(size_t *out_len)
     return kScript;
 }
 
+/**
+ * @brief  获取默认启动字节码文件路径
+ * @return 非NULL=启动字节码路径字符串，可能为空字符串
+ * @note   默认弱实现返回 LUA_RT_BOOT_BYTECODE_PATH，平台可覆盖该符号
+ */
 __attribute__((weak))
 const char* lua_get_boot_bytecode_path(void)
 {
     return LUA_RT_BOOT_BYTECODE_PATH;
 }
 
+/**
+ * @brief  获取默认启动 cart 文件路径
+ * @return 非NULL=启动 cart 路径字符串，可能为空字符串
+ * @note   默认弱实现返回 LUA_RT_BOOT_CART_PATH，平台可覆盖该符号
+ */
 __attribute__((weak))
 const char* lua_get_boot_cart_path(void)
 {
@@ -276,6 +303,13 @@ static const char *const k_lifecycle_names[LUA_LIFECYCLE_COUNT] = {
     "on_reload",
 };
 
+/**
+ * @brief  初始化脚本实例持有的Lua registry引用字段
+ * @param  instance: 待初始化的脚本实例
+ * @retval None
+ * @note   - 本函数只写实例结构体，不访问Lua栈
+ *         - 所有引用会置为LUA_NOREF，thread指针置空
+ */
 static void lua_rt_init_instance_refs(lua_script_instance_t *instance)
 {
     instance->env_ref = LUA_NOREF;
@@ -287,6 +321,14 @@ static void lua_rt_init_instance_refs(lua_script_instance_t *instance)
     }
 }
 
+/**
+ * @brief  释放脚本实例持有的Lua registry引用
+ * @param  instance: 待释放的脚本实例
+ * @retval None
+ * @note   - 依赖全局g_L有效，g_L为空时直接返回
+ *         - 会释放生命周期回调、env/self和协程引用，并清空thread指针
+ *         - 本函数不修改alive/initialized/finalized等生命周期标志
+ */
 static void lua_rt_unref_instance(lua_script_instance_t *instance)
 {
     if (!g_L || !instance) return;
@@ -326,6 +368,14 @@ static int lua_rt_ref_env_function(lua_script_instance_t *instance, const char *
     return luaL_ref(g_L, LUA_REGISTRYINDEX);
 }
 
+/**
+ * @brief  从实例环境表缓存Lua生命周期回调引用
+ * @param  instance: 目标脚本实例
+ * @retval None
+ * @note   - 会按k_lifecycle_names登记init/final/fixed_update/update等回调
+ *         - init缺失时会兼容旧版start回调，并标记legacy_callbacks
+ *         - 本函数会修改Lua栈并通过luaL_ref转移函数所有权到registry
+ */
 static void lua_rt_cache_callbacks(lua_script_instance_t *instance)
 {
     for (size_t i = 0; i < LUA_LIFECYCLE_COUNT; ++i) {
@@ -342,6 +392,16 @@ static void lua_rt_cache_callbacks(lua_script_instance_t *instance)
     }
 }
 
+/**
+ * @brief  基于栈顶已加载chunk创建一个脚本实例
+ * @param  source: 脚本来源类型
+ * @param  source_path: 来源路径或chunk名称，可为NULL
+ * @retval 0=创建成功, 负值=Lua状态非法、实例已满、_ENV缺失或chunk执行失败
+ * @note   - 调用前栈顶必须是lua_load/luaL_loadbuffer得到的函数
+ *         - 会创建独立_ENV、self表和协程，并缓存生命周期回调
+ *         - 失败路径会释放已登记的registry引用并恢复Lua栈
+ *         - 运行期新增实例且调度器空闲时会重新进入INIT阶段
+ */
 static int lua_rt_create_instance_from_loaded(lua_script_source_t source,
                                               const char *source_path)
 {
@@ -495,6 +555,15 @@ static FRESULT lua_rt_mount_sd(void)
     return SD_FATFS_Mount();
 }
 
+/**
+ * @brief  lua_load文件读取回调
+ * @param  L: Lua状态机，当前未使用
+ * @param  ud: lua_rt_file_reader_t读取上下文
+ * @param  size: 输出本次返回缓冲的字节数
+ * @return 非NULL=本次读取缓冲, NULL=EOF或读取失败
+ * @note   - 读取失败会记录reader->read_result供外层区分错误和EOF
+ *         - 返回的缓冲归reader所有，仅在下一次reader调用前有效
+ */
 static const char *lua_rt_file_reader(lua_State *L, void *ud, size_t *size)
 {
     (void)L;
@@ -512,6 +581,15 @@ static const char *lua_rt_file_reader(lua_State *L, void *ud, size_t *size)
     return (br > 0) ? reader->buf : NULL;
 }
 
+/**
+ * @brief  从FatFs文件加载Lua字节码chunk到Lua栈顶
+ * @param  L: Lua状态机
+ * @param  path: 文件路径，可为带盘符路径、绝对路径或相对SD路径
+ * @retval 0=加载成功且栈顶为chunk函数, 负值=路径非法、打开/读取/关闭或lua_load失败
+ * @note   - FR_NOT_ENABLED/FR_INVALID_DRIVE时会尝试挂载SD后重开文件
+ *         - 失败路径会弹出lua_load产生的错误对象并保持栈可控
+ *         - 成功后调用方负责执行chunk并管理栈顶函数
+ */
 static int lua_rt_load_file(lua_State *L, const char *path)
 {
     if (!path || path[0] == '\0') return -1;
@@ -575,6 +653,18 @@ static int lua_rt_load_file(lua_State *L, const char *path)
     return 0;
 }
 
+/**
+ * @brief  加载并创建一份 Lua 字节码脚本实例
+ * @param  bytecode: Lua 字节码缓冲区
+ * @param  len: 字节码长度
+ * @param  chunk_name: Lua chunk 名称，NULL时使用默认名称
+ * @retval 0=加载并创建实例成功
+ * @retval -1=Lua state 或参数非法
+ * @retval -2=已有生命周期协程正在运行
+ * @retval -3=字节码加载失败
+ * @retval -4=脚本实例创建失败
+ * @note   本函数要求 Lua VM 已初始化，不会启动 runtime frame loop
+ */
 int lua_run_bytecode(const void *bytecode, uint32_t len, const char *chunk_name)
 {
     if (!g_L || !bytecode || len == 0) return -1;
@@ -599,6 +689,13 @@ int lua_run_bytecode(const void *bytecode, uint32_t len, const char *chunk_name)
     return create_rc == 0 ? 0 : -4;
 }
 
+/**
+ * @brief  从 FatFs 文件加载并创建 Lua 脚本实例
+ * @param  path: Lua 字节码文件路径
+ * @retval 0=加载并创建实例成功
+ * @retval 非0=Lua state未初始化、已有生命周期协程运行、挂载/打开/读取/加载或实例创建失败
+ * @note   本函数只加载文件实例，不启动 runtime frame loop
+ */
 int lua_run_file(const char *path)
 {
     if (!g_L) return -1;
@@ -611,6 +708,17 @@ int lua_run_file(const char *path)
     return create_rc == 0 ? 0 : -6;
 }
 
+/**
+ * @brief  打开cart文件并准备FatFs读取上下文
+ * @param  reader: cart读取上下文
+ * @param  path: cart路径，可为SD相对路径或带盘符路径
+ * @param  fatfs_path: 输出转换后的FatFs路径缓冲
+ * @param  fatfs_path_size: fatfs_path缓冲区字节数
+ * @retval 0=打开成功, 负值=参数非法、挂载失败或cart打开失败
+ * @note   - 会先尝试挂载SD卡
+ *         - 遇到XHGC_CART_E_IO时会刷新FatFs挂载状态并重试一次
+ *         - 成功后reader持有打开的cart_file，调用方负责关闭
+ */
 static int lua_rt_open_cart(lua_rt_cart_reader_t *reader,
                             const char *path,
                             char *fatfs_path,
@@ -652,6 +760,17 @@ static int lua_rt_open_cart(lua_rt_cart_reader_t *reader,
     return 0;
 }
 
+/**
+ * @brief  选择cart入口字节码来源并生成Lua chunk名称
+ * @param  reader: 已打开的cart读取上下文
+ * @param  fatfs_path: FatFs cart路径，用于生成chunk名称
+ * @param  chunk_name: 输出Lua chunk名称缓冲
+ * @param  chunk_name_size: chunk_name缓冲区字节数
+ * @retval 0=入口选择成功, 负值=入口slot/header/manifest/file查找失败
+ * @note   - 优先使用XHGC_CART_SLOT_ENTRY
+ *         - slot不存在时回退到header.entry或manifest中的entry文件
+ *         - 成功时会写入reader->source、total_size和对应slot/file元信息
+ */
 static int lua_rt_select_cart_entry(lua_rt_cart_reader_t *reader,
                                     const char *fatfs_path,
                                     char *chunk_name,
@@ -690,6 +809,16 @@ static int lua_rt_select_cart_entry(lua_rt_cart_reader_t *reader,
     return 0;
 }
 
+/**
+ * @brief  lua_load的cart字节码流式读取回调
+ * @param  L: Lua状态机，当前未使用
+ * @param  ud: lua_rt_cart_reader_t读取上下文
+ * @param  size: 输出本次返回缓冲的字节数
+ * @return 非NULL=本次读取缓冲, NULL=EOF或读取失败
+ * @note   - 支持从ENTRY slot或cart文件资源两种来源读取
+ *         - 读取失败会写入reader->read_result供外层错误处理
+ *         - 返回缓冲归reader所有，仅在下一次reader调用前有效
+ */
 static const char *lua_rt_cart_reader(lua_State *L, void *ud, size_t *size)
 {
     (void)L;
@@ -732,6 +861,15 @@ static const char *lua_rt_cart_reader(lua_State *L, void *ud, size_t *size)
     return reader->buf;
 }
 
+/**
+ * @brief  从cart入口加载Lua字节码chunk到Lua栈顶
+ * @param  L: Lua状态机
+ * @param  cart_path: cart文件路径
+ * @retval 0=加载成功且栈顶为chunk函数, 负值=路径非法、打开/选择/读取或lua_load失败
+ * @note   - 会打开cart、选择入口、通过lua_rt_cart_reader流式喂给lua_load
+ *         - 无论lua_load成功与否都会关闭cart FatFs文件
+ *         - 失败路径会弹出lua_load错误对象，避免Lua栈残留错误值
+ */
 static int lua_rt_load_cart_entry(lua_State *L, const char *cart_path)
 {
     if (!cart_path || cart_path[0] == '\0') return -1;
@@ -774,6 +912,13 @@ static int lua_rt_load_cart_entry(lua_State *L, const char *cart_path)
     return 0;
 }
 
+/**
+ * @brief  从 cart 入口加载并创建 Lua 脚本实例
+ * @param  cart_path: cart 文件路径
+ * @retval 0=加载并创建实例成功
+ * @retval 非0=Lua state未初始化、已有生命周期协程运行、cart打开/读取/加载或实例创建失败
+ * @note   成功加载脚本前会尝试挂载 cart 资源索引；资源索引失败只记录日志，不阻止脚本实例创建
+ */
 int lua_run_cart_entry(const char *cart_path)
 {
     if (!g_L) return -1;
@@ -802,12 +947,22 @@ static bool lua_rt_time_reached(uint32_t now, uint32_t target)
     return (int32_t)(now - target) >= 0;
 }
 
+/**
+ * @brief  让当前 Lua 生命周期协程延迟恢复
+ * @param  delay_ms: 延迟毫秒数
+ * @retval None
+ * @note   本函数设置全局 entry wake 时间和 sleeping 标志，由 lua_update_task 轮询恢复
+ */
 void lua_rt_delay_ms(uint32_t delay_ms)
 {
     g_entry_wake_ms = lua_rt_time_ms() + delay_ms;
     g_entry_sleeping = true;
 }
 
+/**
+ * @brief  获取当前入口脚本对应的 cart 路径
+ * @return 非NULL=当前 cart 路径, NULL=当前无 cart 入口实例
+ */
 const char *lua_current_cart_path(void)
 {
     if (!g_entry_instance || g_entry_instance->source != LUA_SCRIPT_SOURCE_CART) {
@@ -840,6 +995,16 @@ static void lua_rt_finish_lifecycle(bool success)
     }
 }
 
+/**
+ * @brief  恢复当前生命周期协程并处理yield/完成/错误
+ * @param  nargs: 传递给协程入口函数的参数数量
+ * @retval 1=协程yield等待后续tick恢复
+ * @retval 0=生命周期回调执行完成
+ * @retval -1=协程执行错误并已清理当前entry状态
+ * @note   - yield路径会丢弃协程返回值但保留entry状态
+ *         - 成功/失败路径会更新init生命周期完成状态并调用lua_rt_clear_entry
+ *         - 错误路径会生成traceback并写入runtime日志
+ */
 static int lua_rt_resume_entry(int nargs)
 {
     int nresults = 0;
@@ -869,6 +1034,15 @@ static int lua_rt_resume_entry(int nargs)
     return -1;
 }
 
+/**
+ * @brief  轮询当前生命周期协程是否可以恢复
+ * @param  now: 当前毫秒tick
+ * @retval 1=仍在sleep/yield等待
+ * @retval 0=无当前协程或本次恢复完成
+ * @retval -1=恢复时发生Lua错误
+ * @note   - sleep未到期时不会恢复协程
+ *         - 恢复前后会保存并恢复主Lua栈高度
+ */
 static int lua_rt_poll_entry(uint32_t now)
 {
     if (!g_entry_thread) return 0;
@@ -905,6 +1079,18 @@ static void lua_rt_push_input_action(lua_State *L, const LuaInputAction *action)
     lua_setfield(L, -2, "dy");
 }
 
+/**
+ * @brief  启动指定脚本实例的生命周期回调协程
+ * @param  instance: 脚本实例
+ * @param  lifecycle: 要调度的生命周期类型
+ * @param  dt: update/fixed_update/late_update使用的时间步长
+ * @retval 1=回调yield等待后续tick恢复
+ * @retval 0=回调不存在或执行完成
+ * @retval -1=状态非法、协程缺失或回调执行错误
+ * @note   - 非init生命周期要求实例已initialized
+ *         - 会按生命周期压入self、dt、input或message参数
+ *         - 会复用实例thread并设置全局entry状态，调度期间不允许并发entry
+ */
 static int lua_rt_begin_lifecycle(lua_script_instance_t *instance,
                                   lua_lifecycle_t lifecycle,
                                   float dt)
@@ -975,6 +1161,14 @@ static int lua_rt_begin_lifecycle(lua_script_instance_t *instance,
     return rc;
 }
 
+/**
+ * @brief  直接同步调用脚本实例生命周期回调
+ * @param  instance: 脚本实例
+ * @param  lifecycle: 要调用的生命周期类型
+ * @retval 0=回调不存在或调用成功, -1=状态非法或Lua调用失败
+ * @note   - 当前用于final/on_reload等不走调度协程的生命周期
+ *         - 调用前后会恢复主Lua栈高度
+ */
 static int lua_rt_call_direct(lua_script_instance_t *instance,
                               lua_lifecycle_t lifecycle)
 {
@@ -990,6 +1184,14 @@ static int lua_rt_call_direct(lua_script_instance_t *instance,
     return rc;
 }
 
+/**
+ * @brief  删除脚本实例self.children持有的UI子节点
+ * @param  instance: 脚本实例
+ * @retval None
+ * @note   - 依赖全局Lua state和实例self_ref有效
+ *         - 会调用lua_ui_delete_children并将self.children置为nil
+ *         - 调用前后会恢复主Lua栈高度
+ */
 static void lua_rt_delete_instance_children(lua_script_instance_t *instance)
 {
     if (!g_L || !instance || instance->self_ref == LUA_NOREF) return;
@@ -1028,6 +1230,15 @@ static bool lua_rt_pop_message(lua_message_event_t *event)
     return true;
 }
 
+/**
+ * @brief  向 Lua runtime 输入队列投递一条输入事件
+ * @param  action_id: 输入动作ID，不能为空字符串
+ * @param  action: 输入动作数据
+ * @retval 0=投递成功
+ * @retval -1=参数非法
+ * @retval -2=输入队列已满
+ * @note   事件会在后续 lua_update_task 的 input 阶段分发给 on_input
+ */
 int lua_post_input(const char *action_id, const LuaInputAction *action)
 {
     if (!action_id || !action || action_id[0] == '\0') return -1;
@@ -1044,6 +1255,15 @@ int lua_post_input(const char *action_id, const LuaInputAction *action)
     return 0;
 }
 
+/**
+ * @brief  向 Lua runtime 消息队列投递一条消息
+ * @param  message_id: 消息ID，不能为空字符串
+ * @param  sender: 发送者字符串，NULL时记录为空字符串
+ * @retval 0=投递成功
+ * @retval -1=参数非法
+ * @retval -2=消息队列已满
+ * @note   事件会在后续 lua_update_task 的 message 阶段分发给 on_message
+ */
 int lua_post_message(const char *message_id, const char *sender)
 {
     if (!message_id || message_id[0] == '\0') return -1;
@@ -1067,6 +1287,14 @@ static void lua_rt_scheduler_next_phase(lua_scheduler_phase_t phase)
     g_scheduler_instance = 0;
 }
 
+/**
+ * @brief  推进Lua runtime生命周期调度状态机
+ * @retval None
+ * @note   - 调度顺序为init、input、fixed_update、update、late_update、message
+ *         - 生命周期回调yield时立即返回，后续tick继续恢复
+ *         - 会消费输入/消息队列并遍历所有已初始化且alive的实例
+ *         - 本函数只在没有当前entry协程时推进新生命周期
+ */
 static void lua_rt_drive_scheduler(void)
 {
     while (g_L && !g_entry_thread) {
@@ -1172,6 +1400,14 @@ static void lua_rt_drive_scheduler(void)
 
 /* -------------------- 对外：初始化、重载、销毁与 tick -------------------- */
 
+/**
+ * @brief  初始化Lua runtime全局状态
+ * @retval 0=初始化成功或已经初始化
+ * @retval -2=Lua state创建失败
+ * @note   - 会创建Lua state、打开库、绑定LuaPort模块并初始化resource_manager
+ *         - 会清空脚本实例表、输入/消息队列和调度状态
+ *         - 会打印Lua VM内存统计
+ */
 static int lua_rt_init_state(void)
 {
     if (g_L) return 0;
@@ -1198,6 +1434,12 @@ static int lua_rt_init_state(void)
     return 0;
 }
 
+/**
+ * @brief  加载并创建内嵌boot.lua脚本实例
+ * @retval 0=实例创建成功, 负值=内嵌脚本为空、加载失败或实例创建失败
+ * @note   - 脚本文本来自可覆盖的lua_get_boot_script
+ *         - 本函数只创建实例，不启动runtime调度
+ */
 static int lua_rt_run_embedded_boot(void)
 {
     size_t len = 0;
@@ -1221,6 +1463,12 @@ static int lua_rt_run_embedded_boot(void)
                                                "boot.lua");
 }
 
+/**
+ * @brief  启动Lua runtime调度循环状态
+ * @retval 0=启动状态设置完成
+ * @note   - 会记录当前tick、清空fixed accumulator并置runtime_started
+ *         - 会进入INIT调度阶段并立即驱动一次调度
+ */
 static int lua_rt_start_runtime(void)
 {
     g_last_ms = lua_rt_time_ms();
@@ -1231,6 +1479,13 @@ static int lua_rt_start_runtime(void)
     return 0;
 }
 
+/**
+ * @brief  初始化 Lua runtime 并从文件启动入口脚本
+ * @param  path: Lua 字节码文件路径
+ * @retval 0=初始化、加载并启动成功
+ * @retval 非0=Lua state初始化、文件加载、实例创建或 runtime 启动失败
+ * @note   本函数会初始化 Lua VM、绑定模块、初始化 resource_manager，并启动 init 调度
+ */
 int lua_init_from_file(const char *path)
 {
     int rc = lua_rt_init_state();
@@ -1241,6 +1496,13 @@ int lua_init_from_file(const char *path)
     return lua_rt_start_runtime();
 }
 
+/**
+ * @brief  初始化 Lua runtime 并从 cart 入口启动脚本
+ * @param  cart_path: cart 文件路径
+ * @retval 0=初始化、加载并启动成功
+ * @retval 非0=Lua state初始化、cart加载、实例创建或 runtime 启动失败
+ * @note   本函数会初始化 Lua VM、绑定模块、初始化 resource_manager，并启动 init 调度
+ */
 int lua_init_from_cart(const char *cart_path)
 {
     int rc = lua_rt_init_state();
@@ -1251,6 +1513,12 @@ int lua_init_from_cart(const char *cart_path)
     return lua_rt_start_runtime();
 }
 
+/**
+ * @brief  按默认优先级初始化并启动 Lua runtime
+ * @retval 0=初始化并启动成功
+ * @retval 非0=Lua state初始化或所有启动源加载失败
+ * @note   启动源优先级为 boot cart、boot bytecode 文件、内嵌 boot.lua
+ */
 int lua_init(void)
 {
     int rc = lua_rt_init_state();
@@ -1273,6 +1541,13 @@ int lua_init(void)
     return lua_rt_start_runtime();
 }
 
+/**
+ * @brief  释放脚本实例缓存的生命周期回调引用
+ * @param  instance: 脚本实例
+ * @retval None
+ * @note   - 仅释放callback_refs数组，不释放env/self/thread引用
+ *         - 调用方需保证全局g_L有效
+ */
 static void lua_rt_unref_callbacks(lua_script_instance_t *instance)
 {
     for (size_t i = 0; i < LUA_LIFECYCLE_COUNT; ++i) {
@@ -1283,6 +1558,13 @@ static void lua_rt_unref_callbacks(lua_script_instance_t *instance)
     }
 }
 
+/**
+ * @brief  清除脚本环境表中的生命周期回调字段
+ * @param  instance: 脚本实例
+ * @retval None
+ * @note   - 会把init/final/update等生命周期字段以及兼容start字段置为nil
+ *         - 调用方需保证instance->env_ref有效并在调用后维护Lua栈平衡
+ */
 static void lua_rt_clear_env_callbacks(lua_script_instance_t *instance)
 {
     lua_rawgeti(g_L, LUA_REGISTRYINDEX, instance->env_ref);
@@ -1297,6 +1579,17 @@ static void lua_rt_clear_env_callbacks(lua_script_instance_t *instance)
     lua_pop(g_L, 1);
 }
 
+/**
+ * @brief  用栈顶已加载chunk重载脚本实例
+ * @param  instance: 待重载脚本实例
+ * @retval 0=重载并调用on_reload成功
+ * @retval -1=新chunk缺少_ENV upvalue
+ * @retval -2=重新执行chunk失败
+ * @retval 其它负值=on_reload调用失败
+ * @note   - 调用前栈顶必须是新加载的chunk函数
+ *         - 会释放旧生命周期回调引用、清空环境中的旧回调字段并复用原_ENV
+ *         - 成功执行chunk后会重新缓存生命周期回调并直接调用on_reload
+ */
 static int lua_rt_reload_instance_from_loaded(lua_script_instance_t *instance)
 {
     const int stack_base = lua_gettop(g_L) - 1;
@@ -1323,6 +1616,14 @@ static int lua_rt_reload_instance_from_loaded(lua_script_instance_t *instance)
     return lua_rt_call_direct(instance, LUA_LIFECYCLE_RELOAD);
 }
 
+/**
+ * @brief  重新加载当前 Lua 脚本实例
+ * @retval 0=所有可重载实例处理完成
+ * @retval -1=Lua state不可用、生命周期协程运行中或调度器非空闲
+ * @retval -2=存在不支持 reload 的字节码实例
+ * @retval -3=至少一个实例重新加载或 on_reload 调用失败
+ * @note   本函数会重新执行实例来源脚本并调用 on_reload，不改变 cart/bin 文件格式
+ */
 int lua_reload(void)
 {
     if (!g_L || g_entry_thread || g_scheduler_phase != LUA_SCHED_IDLE) return -1;
@@ -1358,6 +1659,12 @@ int lua_reload(void)
     return result;
 }
 
+/**
+ * @brief  关闭 Lua runtime 并释放场景资源
+ * @retval 0=关闭完成或 runtime 原本未初始化
+ * @note   - 对已初始化且未 finalized 的实例会调用 final，然后删除其 UI 子节点
+ * @note   - 本函数会 res_scene_reset、lua_close，并清空输入/消息队列和 runtime 状态
+ */
 int lua_shutdown(void)
 {
     if (!g_L) return 0;
@@ -1391,6 +1698,13 @@ int lua_shutdown(void)
     return 0;
 }
 
+/**
+ * @brief  驱动 Lua runtime 单次帧调度
+ * @retval None
+ * @note   - runtime 未启动时直接返回
+ * @note   - 帧阶段顺序为 on_input、fixed_update、update、late_update、on_message
+ * @note   - 生命周期协程 sleep 或 yield 时，本函数会在后续 tick 中继续轮询恢复
+ */
 void lua_update_task(void)
 {
     if (!g_L || !g_runtime_started) return;

@@ -209,6 +209,13 @@ static struct lfs_config g_cfg = {
     .lookahead_buffer = NULL,
 };
 
+/**
+ * @brief  初始化littlefs使用的cold pool缓存缓冲区
+ * @retval 0=缓冲区已就绪, -1=cold pool分配失败
+ * @note   - 已分配过read/prog/lookahead缓冲时直接复用
+ *         - 新缓冲通过cold_calloc申请并清零，32字节对齐
+ *         - 成功后会写入g_cfg的read/prog/lookahead buffer字段
+ */
 static int lfs_cold_buffers_init(void)
 {
     if (g_read_buf != NULL && g_prog_buf != NULL && g_lookahead != NULL) {
@@ -233,7 +240,12 @@ static int lfs_cold_buffers_init(void)
 /* ==================== 外部接口实现 ==================== */
 
 /**
- * @brief  绑定Flash驱动
+ * @brief  绑定Flash驱动到littlefs移植层
+ * @param  flash: 已初始化的Flash驱动句柄
+ * @retval 0=绑定成功, -1=参数非法或cold pool缓存分配失败
+ * @note   - 会从SDRAM cold pool分配read/prog/lookahead缓存
+ *         - 调用前需要先完成SDRAM cold pool初始化
+ *         - 成功后会把Flash句柄写入littlefs配置context
  */
 int LFS_PortBind(FLASH_Handle *flash)
 {
@@ -247,7 +259,11 @@ int LFS_PortBind(FLASH_Handle *flash)
 }
 
 /**
- * @brief  挂载或格式化文件系统
+ * @brief  挂载littlefs文件系统，失败时格式化后重试挂载
+ * @retval 0=挂载成功, 其它=littlefs错误码
+ * @note   - 调用前必须先通过LFS_PortBind绑定Flash句柄
+ *         - 首次挂载失败会调用lfs_format，可能擦写littlefs分区
+ *         - 本函数不改变Flash驱动句柄本身
  */
 int LFS_MountOrFormat(void)
 {
@@ -270,7 +286,9 @@ int LFS_MountOrFormat(void)
 }
 
 /**
- * @brief  卸载文件系统
+ * @brief  卸载littlefs文件系统
+ * @retval 0=卸载成功, 其它=littlefs错误码
+ * @note   - 直接转发lfs_unmount
  */
 int LFS_Unmount(void)
 {
@@ -278,7 +296,11 @@ int LFS_Unmount(void)
 }
 
 /**
- * @brief  使能/禁用Memory-Mapped读取
+ * @brief  使能或禁用Flash Memory-Mapped读取路径
+ * @param  enable: 非0=使能Memory-Mapped读取, 0=禁用Memory-Mapped读取
+ * @retval 0=切换成功, -1=未绑定Flash或Flash驱动切换失败
+ * @note   - 使能后lfs_bd_read会直接从映射地址读取
+ *         - 写入/擦除路径仍通过Flash驱动执行
  */
 int LFS_EnableMappedRead(int enable)
 {
@@ -292,7 +314,9 @@ int LFS_EnableMappedRead(int enable)
 }
 
 /**
- * @brief  获取配置信息
+ * @brief  获取littlefs移植层配置对象
+ * @return 非NULL=lfs_config全局配置指针
+ * @note   - 返回对象由本模块持有，调用方不得释放
  */
 const struct lfs_config* LFS_Config(void)
 {

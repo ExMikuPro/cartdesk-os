@@ -28,6 +28,13 @@ static res_handle_t invalid_handle(void)
   return h;
 }
 
+/**
+ * @brief  推进资源记录generation以失效旧handle
+ * @param  rec: 资源记录指针，NULL时直接返回
+ * @retval None
+ * @note   - generation回绕到0时会跳到1，避免生成invalid handle的generation值
+ *         - 本函数只修改单条资源记录，不释放资源内存
+ */
 static void bump_generation(res_record_t *rec)
 {
   if (!rec) return;
@@ -35,6 +42,15 @@ static void bump_generation(res_record_t *rec)
   if (rec->generation == 0u) rec->generation = 1u;
 }
 
+/**
+ * @brief  清理资源像素缓冲对应的DCache范围
+ * @param  ptr: 像素缓冲起始地址
+ * @param  size: 需要清理的字节数
+ * @retval None
+ * @note   - 维护范围会向外扩展到32字节cache line边界
+ *         - 用于cart数据读入RESOURCE_ARENA后交给LVGL/DMA读取
+ *         - 平台未声明DCache时为空操作
+ */
 static void clean_dcache_range(const void *ptr, uint32_t size)
 {
 #if defined(__DCACHE_PRESENT) && (__DCACHE_PRESENT == 1U)
@@ -48,6 +64,13 @@ static void clean_dcache_range(const void *ptr, uint32_t size)
 #endif
 }
 
+/**
+ * @brief  初始化资源管理器并申请RESOURCE_ARENA所有权
+ * @retval None
+ * @note   - 成功时会把RESOURCE_ARENA绑定为场景arena并清空资源记录表
+ *         - 失败时会清空本地状态、重置cart index并记录last_error
+ *         - 本函数会修改全局资源管理器状态和RESOURCE_ARENA owner
+ */
 void res_manager_init(void)
 {
   if (!resource_arena_claim(RESOURCE_ARENA_OWNER_RESOURCE_MANAGER)) {
@@ -68,6 +91,14 @@ void res_manager_init(void)
   cart_index_reset();
 }
 
+/**
+ * @brief  挂载cart资源索引并建立资源记录表
+ * @param  cart_path: cart文件路径
+ * @retval true=挂载并索引成功, false=初始化失败、索引加载失败或资源数量超限
+ * @note   - 未初始化时会先调用res_manager_init
+ *         - 会重置场景arena、清空旧记录并重新加载cart index
+ *         - 本函数不读取资源像素数据，只记录cart资源元信息
+ */
 bool res_manager_mount_cart(const char *cart_path)
 {
   if (!s_initialized) res_manager_init();
@@ -107,6 +138,16 @@ static int find_record(const cart_res_meta_t *meta)
   return -1;
 }
 
+/**
+ * @brief  从当前cart资源索引获取或加载一张BGRA8888图片
+ * @param  path: cart内资源路径
+ * @param  life: 资源生命周期标记
+ * @return 有效handle=获取成功, invalid handle=失败
+ * @note   - 未初始化时会先调用res_manager_init
+ *         - 首次加载会从RESOURCE_ARENA分配像素缓冲并读取cart数据
+ *         - 读取成功后会清理像素缓冲对应DCache，供DMA/LVGL读取
+ *         - 已加载资源会增加refcount并复用原像素缓冲
+ */
 res_handle_t res_acquire_image(const char *path, res_lifetime_t life)
 {
   const cart_res_meta_t *meta;
@@ -189,6 +230,14 @@ res_handle_t res_acquire_image(const char *path, res_lifetime_t life)
   return (res_handle_t){ (uint16_t)index, rec->generation };
 }
 
+/**
+ * @brief  从资源场景arena分配图片视图临时缓冲
+ * @param  size: 申请字节数
+ * @param  align: 对齐字节数，按app_arena_alloc规则校验
+ * @return 非NULL=分配成功返回缓冲指针, NULL=初始化失败或空间不足
+ * @note   - 未初始化时会先调用res_manager_init
+ *         - 缓冲归RESOURCE_ARENA场景arena统一管理，不支持单块释放
+ */
 void *res_alloc_image_view_buffer(size_t size, size_t align)
 {
   void *pixels;
@@ -204,6 +253,11 @@ void *res_alloc_image_view_buffer(size_t size, size_t align)
   return pixels;
 }
 
+/**
+ * @brief  校验资源句柄是否仍指向可用记录
+ * @param  h: 待校验资源句柄
+ * @retval true=句柄对应READY或READY_UNUSED记录, false=索引越界、generation不匹配或状态不可用
+ */
 bool res_handle_valid(res_handle_t h)
 {
   if (h.index >= s_record_count) return false;
@@ -212,12 +266,26 @@ bool res_handle_valid(res_handle_t h)
          s_records[h.index].state == RES_READY_UNUSED;
 }
 
+/**
+ * @brief  通过资源句柄获取图片资源描述
+ * @param  h: 图片资源句柄
+ * @return 非NULL=有效图片资源描述指针, NULL=句柄无效
+ * @note   - 返回指针归resource_manager内部记录表所有，调用方不得释放
+ */
 const image_resource_t *res_get_image(res_handle_t h)
 {
   if (!res_handle_valid(h)) return NULL;
   return &s_records[h.index].image;
 }
 
+/**
+ * @brief  释放一次图片资源引用
+ * @param  h: 图片资源句柄
+ * @retval None
+ * @note   - 句柄无效时直接返回
+ *         - refcount递减到0后资源状态变为READY_UNUSED
+ *         - 本函数不立即回收RESOURCE_ARENA像素内存
+ */
 void res_release(res_handle_t h)
 {
   res_record_t *rec;
@@ -227,6 +295,13 @@ void res_release(res_handle_t h)
   if (rec->refcount == 0u) rec->state = RES_READY_UNUSED;
 }
 
+/**
+ * @brief  重置场景资源并释放RESOURCE_ARENA所有权
+ * @retval None
+ * @note   - 会reset场景arena、清空资源记录表和cart index
+ *         - 会把resource_manager初始化状态置为false
+ *         - 会调用resource_arena_release释放RESOURCE_ARENA owner
+ */
 void res_scene_reset(void)
 {
   if (!s_initialized) return;
@@ -249,6 +324,10 @@ void res_scene_reset(void)
   (void)resource_arena_release(RESOURCE_ARENA_OWNER_RESOURCE_MANAGER);
 }
 
+/**
+ * @brief  获取资源管理器最后一次错误描述
+ * @return 非NULL=错误描述字符串, NULL=当前无错误
+ */
 const char *res_last_error(void)
 {
   return s_last_error;
