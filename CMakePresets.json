@@ -6,33 +6,125 @@
             "hidden": true,
             "generator": "Ninja",
             "binaryDir": "${sourceDir}/build/${presetName}",
-		    "toolchainFile": "${sourceDir}/cmake/gcc-arm-none-eabi.cmake",
+            "toolchainFile": "${sourceDir}/cmake/gcc-arm-none-eabi.cmake",
             "cacheVariables": {
             }
         },
         {
             "name": "Debug",
+            "displayName": "Debug 默认开发构建",
+            "description": "默认调试构建，不启用内存自测或实验缓存，用于日常开发和实机验证。",
             "inherits": "default",
             "cacheVariables": {
-                "CMAKE_BUILD_TYPE": "Debug"
+                "CMAKE_BUILD_TYPE": "Debug",
+                "XHGC_MEMINFO_SELFTEST_ENABLE": "OFF",
+                "XHGC_DMA_POOL_SELFTEST_ENABLE": "OFF",
+                "XHGC_ENABLE_EXPERIMENTAL_CART_RESOURCE_CACHE": "OFF"
+            }
+        },
+        {
+            "name": "Debug-MemInfo-SelfTest",
+            "displayName": "Debug 内存统计自测",
+            "description": "启用 meminfo/app_arena 自测，用于验证 APP_ARENA_REST used/peak/reset/fail 统计是否正确。默认固件不应使用此配置。",
+            "inherits": "default",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "XHGC_MEMINFO_SELFTEST_ENABLE": "ON",
+                "XHGC_DMA_POOL_SELFTEST_ENABLE": "OFF",
+                "XHGC_ENABLE_EXPERIMENTAL_CART_RESOURCE_CACHE": "OFF"
+            }
+        },
+        {
+            "name": "Debug-DmaPool-SelfTest",
+            "displayName": "Debug DMA_POOL 自测",
+            "description": "启用 DMA_POOL Debug-only 自测，用于验证临时 DMA buffer 分配、64 字节以上对齐、越界失败记录和 reset 统计。默认固件不应使用此配置。",
+            "inherits": "default",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "XHGC_MEMINFO_SELFTEST_ENABLE": "OFF",
+                "XHGC_DMA_POOL_SELFTEST_ENABLE": "ON",
+                "XHGC_ENABLE_EXPERIMENTAL_CART_RESOURCE_CACHE": "OFF"
+            }
+        },
+        {
+            "name": "Debug-All-Memory-SelfTest",
+            "displayName": "Debug 全部内存自测",
+            "description": "同时启用内存相关 Debug-only 自测入口，用于集中验证 meminfo、APP_ARENA_REST、DMA_POOL 等统计行为。只用于本地验证，不用于日常刷机。",
+            "inherits": "default",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "XHGC_MEMINFO_SELFTEST_ENABLE": "ON",
+                "XHGC_DMA_POOL_SELFTEST_ENABLE": "ON",
+                "XHGC_ENABLE_EXPERIMENTAL_CART_RESOURCE_CACHE": "OFF"
+            }
+        },
+        {
+            "name": "Debug-Experimental-CartCache",
+            "displayName": "Debug 实验 Cart 资源缓存",
+            "description": "启用实验性 lua_cart_resource_cache。该配置只用于研究新缓存路径，默认资源管理器仍是 RESOURCE_ARENA 的正式 owner，不应用于稳定版本。",
+            "inherits": "default",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "XHGC_MEMINFO_SELFTEST_ENABLE": "OFF",
+                "XHGC_DMA_POOL_SELFTEST_ENABLE": "OFF",
+                "XHGC_ENABLE_EXPERIMENTAL_CART_RESOURCE_CACHE": "ON"
             }
         },
         {
             "name": "Release",
+            "displayName": "Release 正式构建",
+            "description": "正式发布构建，关闭 Debug-only 自测和实验性资源缓存。",
             "inherits": "default",
             "cacheVariables": {
-                "CMAKE_BUILD_TYPE": "Release"
+                "CMAKE_BUILD_TYPE": "Release",
+                "XHGC_MEMINFO_SELFTEST_ENABLE": "OFF",
+                "XHGC_DMA_POOL_SELFTEST_ENABLE": "OFF",
+                "XHGC_ENABLE_EXPERIMENTAL_CART_RESOURCE_CACHE": "OFF"
             }
         }
     ],
     "buildPresets": [
         {
             "name": "Debug",
-            "configurePreset": "Debug"
+            "configurePreset": "Debug",
+            "targets": [
+                "cartdesk-os"
+            ]
+        },
+        {
+            "name": "Debug-MemInfo-SelfTest",
+            "configurePreset": "Debug-MemInfo-SelfTest",
+            "targets": [
+                "cartdesk-os"
+            ]
+        },
+        {
+            "name": "Debug-DmaPool-SelfTest",
+            "configurePreset": "Debug-DmaPool-SelfTest",
+            "targets": [
+                "cartdesk-os"
+            ]
+        },
+        {
+            "name": "Debug-All-Memory-SelfTest",
+            "configurePreset": "Debug-All-Memory-SelfTest",
+            "targets": [
+                "cartdesk-os"
+            ]
+        },
+        {
+            "name": "Debug-Experimental-CartCache",
+            "configurePreset": "Debug-Experimental-CartCache",
+            "targets": [
+                "cartdesk-os"
+            ]
         },
         {
             "name": "Release",
-            "configurePreset": "Release"
+            "configurePreset": "Release",
+            "targets": [
+                "cartdesk-os"
+            ]
         }
     ]
 }

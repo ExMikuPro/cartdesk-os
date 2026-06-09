@@ -50,14 +50,14 @@
 
 ```sh
 cmake --preset Debug
-cmake --build --preset Debug
+cmake --build --preset Debug -j8
 ```
 
 Release 构建：
 
 ```sh
 cmake --preset Release
-cmake --build --preset Release
+cmake --build --preset Release -j8
 ```
 
 主要产物位于：
@@ -68,6 +68,8 @@ build/Debug/cartdesk-os.map
 ```
 
 构建结束后，如果本机能找到 Python 3，CMake 会自动解析 map 文件并打印 SDRAM 各分区的静态使用情况。
+
+CLion / CMake preset、自测构建和实验构建说明见 [Docs/CLion_Build_Presets.md](Docs/CLion_Build_Presets.md)。
 
 ### Host LuaVM 工具
 
@@ -168,6 +170,7 @@ tests/              host 侧解析测试和 Lua smoke test
 ## 重要文档
 
 - [Docs/memory/SDRAM_Layout_Spec_v1.0.md](Docs/memory/SDRAM_Layout_Spec_v1.0.md)：SDRAM 固定分区。
+- [Docs/CLion_Build_Presets.md](Docs/CLion_Build_Presets.md)：CLion / CMake preset、内存自测和实验构建入口。
 - [Docs/display/DMA2D_适配逻辑.md](Docs/display/DMA2D_适配逻辑.md)：DMA2D 与显示链路说明。
 - [Docs/display/launcher_action_hints.md](Docs/display/launcher_action_hints.md)：Launcher 操作提示栏说明和手动测试步骤。
 - [Docs/cart/xhgc-cartbin-format-spec-v2.2.md](Docs/cart/xhgc-cartbin-format-spec-v2.2.md)：卡带镜像格式。
