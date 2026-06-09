@@ -62,6 +62,14 @@ extern "C"
 {
 #endif
 
+#if !defined(LFS_NO_MALLOC) && !defined(LFS_MALLOC)
+extern uint32_t lfs_malloc_fallback_count;
+#endif
+
+#if !defined(LFS_NO_MALLOC) && !defined(LFS_FREE)
+extern uint32_t lfs_free_fallback_count;
+#endif
+
 
 // Macros, may be replaced by system specific wrappers. Arguments to these
 // macros must not have side-effects as the macros can be removed for a smaller
@@ -246,6 +254,7 @@ static inline void *lfs_malloc(size_t size) {
 #if defined(LFS_MALLOC)
     return LFS_MALLOC(size);
 #elif !defined(LFS_NO_MALLOC)
+    lfs_malloc_fallback_count++;
     return malloc(size);
 #else
     (void)size;
@@ -258,6 +267,7 @@ static inline void lfs_free(void *p) {
 #if defined(LFS_FREE)
     LFS_FREE(p);
 #elif !defined(LFS_NO_MALLOC)
+    lfs_free_fallback_count++;
     free(p);
 #else
     (void)p;

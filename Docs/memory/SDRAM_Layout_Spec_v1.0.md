@@ -243,6 +243,15 @@ Lua cart 图片资源使用 `APP_ARENA_REST` 中的资源区作为 scene 资源 
 -   业务源码不得直接调用 `luaL_newstate()`；Debug 构建会运行 `cmake/check_lua_allocator_usage.cmake` 检查固件业务源码中的误用。
 -   `lua_vm_alloc()` OOM 时返回 `NULL`，并通过 meminfo 记录 `APP_ARENA_REST` + `XHGC_MEM_TAG_LUA` 的失败次数；Lua VM 创建失败时由运行时输出明确日志。
 
+### 10.2 残余 allocator 管控
+
+-   详细 policy 见 `Docs/memory/Allocator_Policy.md`。
+-   固件业务源码不得直接调用 `malloc/free/calloc/realloc`；newlib `_sbrk` 保留为 C 库 fallback 后端。
+-   Debug 构建会运行 `cmake/check_allocator_usage.cmake`，扫描业务源码中的直接 newlib allocator 调用并输出文件路径和行号。
+-   FreeRTOS `heap_4` 保留，仅用于 RTOS 对象、任务、队列、timer 和同步原语，不用于游戏资源、图片、Lua、LVGL 大对象或 DMA buffer。
+-   littlefs 正常路径通过 `Core/Driver/FLASH/lfs_port.c` 提供 cold pool read/prog/lookahead buffer；`lfs_malloc` / `lfs_free` fallback 保留并通过 `lfs_malloc_fallback_count` / `lfs_free_fallback_count` 计数。
+-   `RNG_Shuffle()` 不再使用 newlib malloc；小元素使用 64 bytes 栈 scratch，大元素必须通过 `RNG_ShuffleWithScratch()` 由调用方显式提供 scratch buffer。
+
 启动串口日志会先输出 `[XHGC SDRAM LAYOUT]`，再输出 `[XHGC MEMINFO]`。
 自测启用时，日志会额外输出 `[XHGC MEMINFO SELFTEST] baseline`、`after_alloc`、`after_reset` 和 PASS/FAIL。
 
@@ -251,6 +260,7 @@ Lua cart 图片资源使用 `APP_ARENA_REST` 中的资源区作为 scene 资源 
 ## 版本记录
 
 -   v1.0 回退 LVGL runtime heap 到片内 RAM，SDRAM_LVGL_HEAP 保留为 reserved/future-use
+-   v1.0 添加 Phase 9 allocator policy 入口、newlib 检查、littlefs fallback 计数和 RNG scratch 规则
 -   v1.0 补充 DMA_POOL 临时 DMA buffer 规则、cache helper 和 meminfo 接入
 -   v1.0 添加 meminfo 统计骨架说明
 -   v1.0 初始发布版本

@@ -8,13 +8,13 @@
 
 #include "rng_port.h"
 
-#include <stdlib.h>
-
 #include "rng.h"                /* CubeMX生成: extern RNG_HandleTypeDef hrng; */
 #include "stm32h7xx_hal.h"
 #include <string.h>
 
 /* ===== 私有宏定义 ===== */
+#define RNG_SHUFFLE_STACK_SCRATCH_SIZE 64u
+
 #define SET_ERROR(info, err_code, hal_status, step_str) \
     do { \
         if ((info) != NULL) { \
@@ -230,7 +230,7 @@ RNG_Status RNG_SoftReset(void)
  */
 RNG_Status RNG_GetU32(uint32_t *out, RNG_ErrorInfo *err_info)
 {
-    HAL_StatusTypeDef hal_status;
+    HAL_StatusTypeDef hal_status = HAL_ERROR;
     uint32_t retry;
 
     /* 参数校验 */
@@ -463,12 +463,17 @@ RNG_Status RNG_GetBool(bool *out, RNG_ErrorInfo *err_info)
 }
 
 /**
- * @brief  打乱数组(Fisher-Yates洗牌算法)
+ * @brief  使用调用方 scratch buffer 打乱数组(Fisher-Yates洗牌算法)
  */
-RNG_Status RNG_Shuffle(void *array, size_t elem_size, size_t elem_count, RNG_ErrorInfo *err_info)
+RNG_Status RNG_ShuffleWithScratch(void *array,
+                                  size_t elem_size,
+                                  size_t elem_count,
+                                  void *scratch,
+                                  size_t scratch_size,
+                                  RNG_ErrorInfo *err_info)
 {
     uint8_t *arr;
-    uint8_t *temp;
+    uint8_t *temp = (uint8_t *)scratch;
     uint32_t i, j;
     RNG_Status status;
 
@@ -487,21 +492,23 @@ RNG_Status RNG_Shuffle(void *array, size_t elem_size, size_t elem_count, RNG_Err
         return RNG_OK;  /* 0或1个元素无需打乱 */
     }
 
-    arr = (uint8_t *)array;
-
-    /* 分配临时交换缓冲区 */
-    temp = (uint8_t *)malloc(elem_size);
-    if (temp == NULL) {
-        SET_ERROR(err_info, RNG_E_PARAM, HAL_ERROR, "Failed to allocate temp buffer");
+    if (elem_count > UINT32_MAX) {
+        SET_ERROR(err_info, RNG_E_PARAM, HAL_ERROR, "Element count exceeds RNG range limit");
         return RNG_E_PARAM;
     }
 
+    if (scratch == NULL || scratch_size < elem_size) {
+        SET_ERROR(err_info, RNG_E_PARAM, HAL_ERROR, "Scratch buffer is too small");
+        return RNG_E_PARAM;
+    }
+
+    arr = (uint8_t *)array;
+
     /* Fisher-Yates洗牌 */
-    for (i = elem_count - 1; i > 0; i--) {
+    for (i = (uint32_t)elem_count - 1u; i > 0u; i--) {
         /* 生成 [0, i] 范围内的随机索引 */
         status = RNG_GetRange(0, i, &j, err_info);
         if (status != RNG_OK) {
-            free(temp);
             return status;
         }
 
@@ -513,9 +520,27 @@ RNG_Status RNG_Shuffle(void *array, size_t elem_size, size_t elem_count, RNG_Err
         }
     }
 
-    free(temp);
-
     return RNG_OK;
+}
+
+/**
+ * @brief  打乱数组(Fisher-Yates洗牌算法)
+ */
+RNG_Status RNG_Shuffle(void *array, size_t elem_size, size_t elem_count, RNG_ErrorInfo *err_info)
+{
+    uint8_t scratch[RNG_SHUFFLE_STACK_SCRATCH_SIZE];
+
+    if (elem_count > 1u && elem_size > RNG_SHUFFLE_STACK_SCRATCH_SIZE) {
+        SET_ERROR(err_info, RNG_E_PARAM, HAL_ERROR, "Element size requires caller scratch buffer");
+        return RNG_E_PARAM;
+    }
+
+    return RNG_ShuffleWithScratch(array,
+                                  elem_size,
+                                  elem_count,
+                                  scratch,
+                                  sizeof(scratch),
+                                  err_info);
 }
 
 /**

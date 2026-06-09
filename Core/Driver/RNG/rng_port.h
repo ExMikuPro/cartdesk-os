@@ -177,8 +177,26 @@ RNG_Status RNG_GetBool(bool *out, RNG_ErrorInfo *err_info);
  * @param  elem_count: 元素个数
  * @param  err_info: 错误信息输出(可为NULL)
  * @retval RNG_Status状态码
+ * @note   仅支持不超过64字节的小元素; 大元素请使用RNG_ShuffleWithScratch
  */
 RNG_Status RNG_Shuffle(void *array, size_t elem_size, size_t elem_count, RNG_ErrorInfo *err_info);
+
+/**
+ * @brief  使用调用方scratch buffer打乱数组(Fisher-Yates洗牌算法)
+ * @param  array: 数组指针
+ * @param  elem_size: 单个元素大小(字节)
+ * @param  elem_count: 元素个数
+ * @param  scratch: 调用方提供的临时交换缓冲区
+ * @param  scratch_size: scratch缓冲区大小
+ * @param  err_info: 错误信息输出(可为NULL)
+ * @retval RNG_Status状态码
+ */
+RNG_Status RNG_ShuffleWithScratch(void *array,
+                                  size_t elem_size,
+                                  size_t elem_count,
+                                  void *scratch,
+                                  size_t scratch_size,
+                                  RNG_ErrorInfo *err_info);
 
 /* ===== 工具函数 ===== */
 

@@ -374,6 +374,19 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     add_dependencies(lua_port check_lua_allocator_usage)
 endif()
 
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    add_custom_target(check_allocator_usage ALL
+            COMMAND ${CMAKE_COMMAND}
+                    -DPROJECT_ROOT=${PROJECT_ROOT}
+                    -P ${PROJECT_ROOT}/cmake/check_allocator_usage.cmake
+            COMMENT "Checking firmware allocator usage policy"
+            VERBATIM
+    )
+    add_dependencies(drv_storage check_allocator_usage)
+    add_dependencies(drv_misc check_allocator_usage)
+    add_dependencies(lua_port check_allocator_usage)
+endif()
+
 if(XHGC_ENABLE_EXPERIMENTAL_CART_RESOURCE_CACHE)
     target_compile_definitions(lua_port PRIVATE XHGC_ENABLE_EXPERIMENTAL_CART_RESOURCE_CACHE=1)
 endif()

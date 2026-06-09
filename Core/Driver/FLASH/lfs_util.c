@@ -10,6 +10,14 @@
 // Only compile if user does not provide custom config
 #ifndef LFS_CONFIG
 
+#if !defined(LFS_NO_MALLOC) && !defined(LFS_MALLOC)
+uint32_t lfs_malloc_fallback_count = 0u;
+#endif
+
+#if !defined(LFS_NO_MALLOC) && !defined(LFS_FREE)
+uint32_t lfs_free_fallback_count = 0u;
+#endif
+
 
 // If user provides their own CRC impl we don't need this
 #ifndef LFS_CRC
