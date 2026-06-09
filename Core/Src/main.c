@@ -293,6 +293,7 @@ int main(void)
     Error_Handler();
   }
   xhgc_meminfo_init();
+  SDRAM_DmaPoolInit();
   SDRAM_AppArenaReset();
   cold_pool_init();
   MX_USART1_UART_Init();
@@ -300,6 +301,11 @@ int main(void)
   xhgc_meminfo_dump();
 #if XHGC_MEMINFO_SELFTEST_ENABLE
   if (!app_arena_meminfo_selftest()) {
+    Error_Handler();
+  }
+#endif
+#if XHGC_DMA_POOL_SELFTEST_ENABLE
+  if (!SDRAM_DmaPoolSelftest()) {
     Error_Handler();
   }
 #endif

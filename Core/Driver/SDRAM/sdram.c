@@ -1,13 +1,19 @@
 #include "sdram.h"
 
+#include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 
 #include "main.h"
+#include "xhgc_meminfo.h"
+#include "xhgc_memory_layout.h"
 
 uint32_t timer;
 uint32_t write_timer = 0, read_time = 0;
 
 static size_t s_dma_pool_offset = 0;
+static size_t s_dma_pool_peak = 0;
 static size_t s_resource_arena_offset = 0;
 
 static int sdram_range_tightly_follows(uintptr_t prev_end, uintptr_t next_base)
@@ -18,6 +24,133 @@ static int sdram_range_tightly_follows(uintptr_t prev_end, uintptr_t next_base)
 static int sdram_range_aligned(uintptr_t base, uintptr_t end, size_t align)
 {
     return ((base % align) == 0u) && (((end + 1UL) % align) == 0u);
+}
+
+static bool sdram_size_add_overflows(size_t a, size_t b)
+{
+    return a > (SIZE_MAX - b);
+}
+
+static bool sdram_size_mul_overflows(size_t a, size_t b, size_t *out)
+{
+    if (out == NULL) {
+        return true;
+    }
+
+    if (a != 0u && b > (SIZE_MAX / a)) {
+        return true;
+    }
+
+    *out = a * b;
+    return false;
+}
+
+static bool sdram_align_is_power_of_two(size_t align)
+{
+    return align != 0u && (align & (align - 1u)) == 0u;
+}
+
+static bool sdram_align_normalize(size_t requested_align, size_t min_align, size_t *out_align)
+{
+    size_t align;
+
+    if (out_align == NULL) {
+        return false;
+    }
+
+    align = requested_align;
+    if (align < min_align) {
+        align = min_align;
+    }
+
+    if (!sdram_align_is_power_of_two(align)) {
+        size_t fixed = min_align;
+        while (fixed < align) {
+            if (fixed > (SIZE_MAX >> 1u)) {
+                return false;
+            }
+            fixed <<= 1u;
+        }
+        align = fixed;
+    }
+
+    *out_align = align;
+    return true;
+}
+
+static const XHGC_MemZoneDesc *sdram_dma_pool_zone(void)
+{
+    const XHGC_MemZoneDesc *zone = xhgc_mem_get_zone(XHGC_MEM_ZONE_DMA_POOL);
+
+    if (zone == NULL ||
+        (zone->flags & XHGC_MEM_ZONE_FLAG_DMA) == 0u ||
+        zone->base >= zone->end ||
+        zone->size != (uint32_t)(zone->end - zone->base)) {
+        return NULL;
+    }
+
+    return zone;
+}
+
+static void sdram_dma_pool_record_fail(size_t size)
+{
+    (void)xhgc_meminfo_fail_record(XHGC_MEM_ZONE_DMA_POOL,
+                                   size > UINT32_MAX ? UINT32_MAX : (uint32_t)size,
+                                   XHGC_MEM_TAG_DMA);
+}
+
+static void *sdram_dma_pool_alloc_internal(size_t size, size_t align)
+{
+    const XHGC_MemZoneDesc *zone;
+    uintptr_t current;
+    uintptr_t aligned;
+    size_t new_offset;
+    size_t consumed;
+
+    if (size == 0u || !sdram_align_normalize(align, SDRAM_DMA_ALIGN, &align)) {
+        sdram_dma_pool_record_fail(size);
+        return NULL;
+    }
+
+    zone = sdram_dma_pool_zone();
+    if (zone == NULL || s_dma_pool_offset > zone->size) {
+        sdram_dma_pool_record_fail(size);
+        return NULL;
+    }
+
+    if (sdram_size_add_overflows(zone->base, s_dma_pool_offset)) {
+        sdram_dma_pool_record_fail(size);
+        return NULL;
+    }
+
+    current = zone->base + s_dma_pool_offset;
+    aligned = sdram_align_up_uintptr(current, align);
+    if (aligned < current || aligned < zone->base) {
+        sdram_dma_pool_record_fail(size);
+        return NULL;
+    }
+
+    new_offset = (size_t)(aligned - zone->base);
+    if (new_offset > zone->size || size > (zone->size - new_offset)) {
+        sdram_dma_pool_record_fail(size);
+        return NULL;
+    }
+
+    consumed = (new_offset + size) - s_dma_pool_offset;
+    if (consumed > UINT32_MAX) {
+        sdram_dma_pool_record_fail(size);
+        return NULL;
+    }
+
+    s_dma_pool_offset = new_offset + size;
+    if (s_dma_pool_offset > s_dma_pool_peak) {
+        s_dma_pool_peak = s_dma_pool_offset;
+    }
+
+    (void)xhgc_meminfo_alloc_record(XHGC_MEM_ZONE_DMA_POOL,
+                                    (uint32_t)consumed,
+                                    XHGC_MEM_TAG_DMA);
+    return (void *)aligned;
 }
 
 static void *sdram_linear_alloc(uintptr_t base, size_t capacity, size_t *offset, size_t size, size_t align)
@@ -292,27 +425,168 @@ void SDRAM_ReadSpeed_Test(void)
 
 void *SDRAM_DmaPoolAlloc(size_t size, size_t align)
 {
-    if (align < SDRAM_DMA_ALIGN) {
-        align = SDRAM_DMA_ALIGN;
+    return sdram_dma_pool_alloc_internal(size, align);
+}
+
+void *SDRAM_DmaPoolCalloc(size_t count, size_t size, size_t align)
+{
+    size_t total_size;
+    void *ptr;
+
+    if (sdram_size_mul_overflows(count, size, &total_size)) {
+        sdram_dma_pool_record_fail(size);
+        return NULL;
     }
 
-    return sdram_linear_alloc(SDRAM_DMA_POOL_ADDR, SDRAM_DMA_POOL_SIZE, &s_dma_pool_offset, size, align);
+    ptr = SDRAM_DmaPoolAlloc(total_size, align);
+    if (ptr != NULL) {
+        memset(ptr, 0, total_size);
+    }
+
+    return ptr;
+}
+
+void SDRAM_DmaPoolInit(void)
+{
+    s_dma_pool_offset = 0u;
+    s_dma_pool_peak = 0u;
+    (void)xhgc_meminfo_zone_reset_tag(XHGC_MEM_ZONE_DMA_POOL, XHGC_MEM_TAG_DMA);
 }
 
 void SDRAM_DmaPoolReset(void)
 {
-    s_dma_pool_offset = 0;
+    s_dma_pool_offset = 0u;
+    (void)xhgc_meminfo_zone_reset_tag(XHGC_MEM_ZONE_DMA_POOL, XHGC_MEM_TAG_DMA);
 }
 
-size_t SDRAM_DmaPoolUsed(void)
+uint32_t SDRAM_DmaPoolUsed(void)
 {
-    return s_dma_pool_offset;
+    return s_dma_pool_offset > UINT32_MAX ? UINT32_MAX : (uint32_t)s_dma_pool_offset;
 }
 
-size_t SDRAM_DmaPoolFree(void)
+uint32_t SDRAM_DmaPoolPeak(void)
 {
-    return SDRAM_DMA_POOL_SIZE - s_dma_pool_offset;
+    return s_dma_pool_peak > UINT32_MAX ? UINT32_MAX : (uint32_t)s_dma_pool_peak;
 }
+
+uint32_t SDRAM_DmaPoolFree(void)
+{
+    const XHGC_MemZoneDesc *zone = sdram_dma_pool_zone();
+
+    if (zone == NULL || s_dma_pool_offset >= zone->size) {
+        return 0u;
+    }
+
+    return (uint32_t)(zone->size - s_dma_pool_offset);
+}
+
+bool SDRAM_DmaPoolContains(const void *ptr, size_t size)
+{
+    const XHGC_MemZoneDesc *zone = sdram_dma_pool_zone();
+    uintptr_t start = (uintptr_t)ptr;
+    uintptr_t end;
+
+    if (zone == NULL || ptr == NULL || size == 0u || size > (SIZE_MAX - start)) {
+        return false;
+    }
+
+    end = start + size;
+    return start >= zone->base && end <= zone->end;
+}
+
+#if XHGC_DMA_POOL_SELFTEST_ENABLE
+static void sdram_dma_pool_selftest_expect(bool condition, bool *pass, const char *label)
+{
+    if (condition) {
+        printf("[XHGC DMA_POOL SELFTEST] PASS %s\r\n", label);
+    } else {
+        printf("[XHGC DMA_POOL SELFTEST] FAIL %s\r\n", label);
+        if (pass != NULL) {
+            *pass = false;
+        }
+    }
+}
+
+bool SDRAM_DmaPoolSelftest(void)
+{
+    const XHGC_MemZoneDesc *zone;
+    XHGC_MemInfoSnapshot baseline;
+    XHGC_MemInfoSnapshot after_4k;
+    XHGC_MemInfoSnapshot after_128k;
+    XHGC_MemInfoSnapshot before_fail;
+    XHGC_MemInfoSnapshot after_fail;
+    XHGC_MemInfoSnapshot after_reset;
+    void *p4k;
+    void *p128k;
+    void *pfail;
+    uint32_t local_peak_before_reset;
+    bool pass = true;
+
+    printf("[XHGC DMA_POOL SELFTEST] begin\r\n");
+    SDRAM_DmaPoolInit();
+    printf("[XHGC DMA_POOL SELFTEST] baseline\r\n");
+    xhgc_meminfo_dump();
+    xhgc_meminfo_get_snapshot(&baseline);
+
+    p4k = SDRAM_DmaPoolAlloc(4096u, 64u);
+    xhgc_meminfo_get_snapshot(&after_4k);
+    sdram_dma_pool_selftest_expect(p4k != NULL, &pass, "alloc 4096");
+    sdram_dma_pool_selftest_expect(SDRAM_DmaPoolContains(p4k, 4096u), &pass, "alloc 4096 contains");
+    sdram_dma_pool_selftest_expect((((uintptr_t)p4k) & 63u) == 0u, &pass, "alloc 4096 align64");
+    sdram_dma_pool_selftest_expect(after_4k.zone_stats[XHGC_MEM_ZONE_DMA_POOL].used >
+                                   baseline.zone_stats[XHGC_MEM_ZONE_DMA_POOL].used,
+                                   &pass, "meminfo used after 4096");
+
+    p128k = SDRAM_DmaPoolAlloc(128u * 1024u, 256u);
+    xhgc_meminfo_get_snapshot(&after_128k);
+    sdram_dma_pool_selftest_expect(p128k != NULL, &pass, "alloc 128KiB");
+    sdram_dma_pool_selftest_expect(SDRAM_DmaPoolContains(p128k, 128u * 1024u), &pass, "alloc 128KiB contains");
+    sdram_dma_pool_selftest_expect((((uintptr_t)p128k) & 255u) == 0u, &pass, "alloc 128KiB align256");
+    sdram_dma_pool_selftest_expect(after_128k.zone_stats[XHGC_MEM_ZONE_DMA_POOL].used >
+                                   after_4k.zone_stats[XHGC_MEM_ZONE_DMA_POOL].used,
+                                   &pass, "meminfo used after 128KiB");
+
+    xhgc_meminfo_get_snapshot(&before_fail);
+    pfail = SDRAM_DmaPoolAlloc((size_t)SDRAM_DmaPoolFree() + 1u, 64u);
+    xhgc_meminfo_get_snapshot(&after_fail);
+    sdram_dma_pool_selftest_expect(pfail == NULL, &pass, "oversize returns NULL");
+    sdram_dma_pool_selftest_expect(after_fail.zone_stats[XHGC_MEM_ZONE_DMA_POOL].fail_count >
+                                   before_fail.zone_stats[XHGC_MEM_ZONE_DMA_POOL].fail_count,
+                                   &pass, "oversize fail_count");
+
+    zone = sdram_dma_pool_zone();
+    sdram_dma_pool_selftest_expect(zone != NULL, &pass, "zone table");
+    if (zone != NULL) {
+        sdram_dma_pool_selftest_expect(SDRAM_DmaPoolContains((const void *)zone->base, 1u),
+                                       &pass, "contains base");
+        sdram_dma_pool_selftest_expect(SDRAM_DmaPoolContains((const void *)(zone->end - 1u), 1u),
+                                       &pass, "contains end-1");
+        sdram_dma_pool_selftest_expect(!SDRAM_DmaPoolContains((const void *)zone->end, 1u),
+                                       &pass, "reject end");
+        sdram_dma_pool_selftest_expect(!SDRAM_DmaPoolContains((const void *)(zone->end - 1u), 2u),
+                                       &pass, "reject crossing end");
+    }
+
+    local_peak_before_reset = SDRAM_DmaPoolPeak();
+    SDRAM_DmaPoolReset();
+    xhgc_meminfo_get_snapshot(&after_reset);
+    sdram_dma_pool_selftest_expect(SDRAM_DmaPoolUsed() == 0u, &pass, "reset local used");
+    sdram_dma_pool_selftest_expect(after_reset.zone_stats[XHGC_MEM_ZONE_DMA_POOL].used ==
+                                   baseline.zone_stats[XHGC_MEM_ZONE_DMA_POOL].used,
+                                   &pass, "reset meminfo used");
+    sdram_dma_pool_selftest_expect(SDRAM_DmaPoolPeak() == local_peak_before_reset,
+                                   &pass, "reset keeps peak");
+    sdram_dma_pool_selftest_expect(after_reset.zone_stats[XHGC_MEM_ZONE_DMA_POOL].peak >=
+                                   after_128k.zone_stats[XHGC_MEM_ZONE_DMA_POOL].used,
+                                   &pass, "meminfo peak kept");
+    sdram_dma_pool_selftest_expect(after_reset.zone_stats[XHGC_MEM_ZONE_DMA_POOL].fail_count ==
+                                   after_fail.zone_stats[XHGC_MEM_ZONE_DMA_POOL].fail_count,
+                                   &pass, "reset keeps fail_count");
+
+    printf("[XHGC DMA_POOL SELFTEST] %s\r\n", pass ? "PASS" : "FAIL");
+    return pass;
+}
+#endif
 
 void *SDRAM_AppArenaAlloc(size_t size, size_t align)
 {

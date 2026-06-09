@@ -2,6 +2,7 @@
 #define XHGC_MEMORY_LAYOUT_H
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -47,6 +48,7 @@ extern const XHGC_MemZoneDesc g_xhgc_mem_zones[XHGC_MEM_ZONE_COUNT];
 const XHGC_MemZoneDesc* xhgc_mem_get_zone(XHGC_MemZoneId id);
 const XHGC_MemZoneDesc* xhgc_mem_find_zone_by_addr(uintptr_t addr);
 bool xhgc_mem_addr_in_zone(XHGC_MemZoneId id, uintptr_t addr, uint32_t size);
+bool xhgc_mem_is_fixed_dma_target(const void *ptr, size_t size);
 bool xhgc_mem_layout_validate(void);
 void xhgc_mem_layout_dump(void);
 

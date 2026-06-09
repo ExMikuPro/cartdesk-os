@@ -3,7 +3,9 @@
 
 #include "main.h"
 #include "sdram_layout.h"
+#include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 extern SDRAM_HandleTypeDef hsdram1;
 
@@ -44,10 +46,23 @@ void SDRAM_ReadSpeed_Test(void);
 
 int SDRAM_MinTest(void);
 
-void *SDRAM_DmaPoolAlloc(size_t size, size_t align);
+/*
+ * DMA_POOL is a reset-only bump allocator for temporary DMA buffers.
+ * Fixed DMA targets such as framebuffer zones, LAUNCHER_CACHE, and
+ * APP_ARENA_REST resources are not allocated from this pool.
+ */
+void SDRAM_DmaPoolInit(void);
 void SDRAM_DmaPoolReset(void);
-size_t SDRAM_DmaPoolUsed(void);
-size_t SDRAM_DmaPoolFree(void);
+void *SDRAM_DmaPoolAlloc(size_t size, size_t align);
+void *SDRAM_DmaPoolCalloc(size_t count, size_t size, size_t align);
+uint32_t SDRAM_DmaPoolUsed(void);
+uint32_t SDRAM_DmaPoolPeak(void);
+uint32_t SDRAM_DmaPoolFree(void);
+bool SDRAM_DmaPoolContains(const void *ptr, size_t size);
+
+#if XHGC_DMA_POOL_SELFTEST_ENABLE
+bool SDRAM_DmaPoolSelftest(void);
+#endif
 
 /* Backward-compatible API names; these functions operate on RESOURCE_ARENA only. */
 void *SDRAM_AppArenaAlloc(size_t size, size_t align);

@@ -17,6 +17,7 @@ message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 
 option(CARTDESK_ENABLE_BOARD_TESTS "Run board-level test diagnostics at startup" OFF)
 option(XHGC_MEMINFO_SELFTEST_ENABLE "Run APP_ARENA_REST meminfo selftest in Debug builds" OFF)
+option(XHGC_DMA_POOL_SELFTEST_ENABLE "Run DMA_POOL allocator meminfo selftest in Debug builds" OFF)
 option(XHGC_ENABLE_EXPERIMENTAL_CART_RESOURCE_CACHE "Enable legacy experimental cart resource cache owner for RESOURCE_ARENA" OFF)
 find_package(Python3 QUIET COMPONENTS Interpreter)
 include(ExternalProject)
@@ -132,6 +133,10 @@ endif()
 
 if(XHGC_MEMINFO_SELFTEST_ENABLE AND CMAKE_BUILD_TYPE STREQUAL "Debug")
     list(APPEND COMMON_DEFINES XHGC_MEMINFO_SELFTEST_ENABLE=1)
+endif()
+
+if(XHGC_DMA_POOL_SELFTEST_ENABLE AND CMAKE_BUILD_TYPE STREQUAL "Debug")
+    list(APPEND COMMON_DEFINES XHGC_DMA_POOL_SELFTEST_ENABLE=1)
 endif()
 
 add_library(cartdesk_common INTERFACE)
@@ -307,12 +312,15 @@ target_link_libraries(drv_gpio PUBLIC cartdesk_common)
 add_library(mem_layout STATIC
         ${MEMORY_DIR}/xhgc_memory_layout.c
         ${MEMORY_DIR}/xhgc_memory_layout.h
+        ${MEMORY_DIR}/xhgc_dcache.c
+        ${MEMORY_DIR}/xhgc_dcache.h
         ${MEMORY_DIR}/xhgc_meminfo.c
         ${MEMORY_DIR}/xhgc_meminfo.h
 )
 
 target_include_directories(mem_layout PUBLIC ${MEMORY_DIR})
 target_link_libraries(mem_layout PUBLIC cartdesk_common)
+target_link_libraries(drv_display PUBLIC mem_layout)
 
 # ==============================================================================
 # 目标 8: lua_port —— Lua 与硬件的绑定层（C 模块 + VM 封装）

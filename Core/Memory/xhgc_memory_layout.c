@@ -157,6 +157,30 @@ bool xhgc_mem_addr_in_zone(XHGC_MemZoneId id, uintptr_t addr, uint32_t size)
     return addr >= zone->base && end <= zone->end;
 }
 
+bool xhgc_mem_is_fixed_dma_target(const void *ptr, size_t size)
+{
+    static const XHGC_MemZoneId fixed_dma_zones[] = {
+        XHGC_MEM_ZONE_LAYER1_FB0,
+        XHGC_MEM_ZONE_LAYER1_FB1,
+        XHGC_MEM_ZONE_LAYER2_FB0,
+        XHGC_MEM_ZONE_LAUNCHER_CACHE,
+        XHGC_MEM_ZONE_APP_ARENA_REST
+    };
+    uintptr_t addr = (uintptr_t)ptr;
+
+    if (ptr == NULL || size == 0u || size > UINT32_MAX) {
+        return false;
+    }
+
+    for (uint32_t i = 0u; i < (uint32_t)(sizeof(fixed_dma_zones) / sizeof(fixed_dma_zones[0])); ++i) {
+        if (xhgc_mem_addr_in_zone(fixed_dma_zones[i], addr, (uint32_t)size)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 bool xhgc_mem_layout_validate(void)
 {
     uintptr_t expected_base = XHGC_SDRAM_BASE;

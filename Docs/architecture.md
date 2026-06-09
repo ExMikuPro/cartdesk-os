@@ -41,6 +41,7 @@ flowchart TD
     LuaVM["Lua Runtime / VM\nCore/Src/lua_vm.c"]
     CartLoader["Cart / BIN Loader\nCore/Cart/xhgc_cart.c\nCore/Cart/cart_bin.c"]
     ResIndex["Resource Index\nCore/Cart/cart_index.c\nCore/LuaPort/resource_manager.c"]
+    Memory["Memory Layout / DMA_POOL\nCore/Memory\nCore/Driver/SDRAM/sdram.c"]
     ScriptInst["Lua Script Instance\nlua_script_instance_t"]
     Lifecycle["Lifecycle Dispatcher\nlua_rt_drive_scheduler()"]
     Input["Input System\nlv_port_indev.c\nlua_post_input()"]
@@ -55,9 +56,12 @@ flowchart TD
     LuaTask --> LuaVM
     Launcher --> CartLoader
     LuaVM --> CartLoader
+    Entry --> Memory
     LuaVM --> ScriptInst
     LuaVM --> Lifecycle
     CartLoader --> ResIndex
+    Memory --> ResIndex
+    Memory --> Renderer
     ResIndex --> LuaVM
     Input --> Renderer
     Renderer --> Input
@@ -88,6 +92,7 @@ flowchart TD
 | Cart Header Loader | 解析 XHGC Header、slot table、MANF、INDEX/DATA 文件 | `Core/Cart/xhgc_cart.c`、`Core/Cart/xhgc_cart.h` | 已确认 | 校验 magic、header version、header size、header CRC。 |
 | Launcher BIN Reader | 快速读取标题、预览图和 Header 概要 | `Core/Cart/cart_bin.c`、`Core/Cart/cart_bin.h` | 已确认 | 预览图从固定 `0x1000` 读取，而非通过 slot0 查找。 |
 | Resource Index | 加载 XHGCIDX2，建立路径到 DATA 偏移的元数据表 | `Core/Cart/cart_index.c`、`Core/Cart/cart_index.h` | 已确认 | 线性查找 path_hash + path 字符串。 |
+| Memory Layout / DMA_POOL | SDRAM zone table、meminfo、临时 DMA buffer allocator、cache helper | `Core/Memory/xhgc_memory_layout.c`、`xhgc_meminfo.c`、`xhgc_dcache.c`、`Core/Driver/SDRAM/sdram.c` | 已确认 | DMA_POOL 为 reset 型线性 allocator；固定 DMA target 不从 DMA_POOL 分配。 |
 | Resource Manager | 图片资源按需加载、handle/refcount、scene arena 管理 | `Core/LuaPort/resource_manager.c`、`resource_manager.h` | 已确认 | 目前 `res_acquire_image()` 只支持 BGRA8888 图片。 |
 | Display Renderer | LVGL display port、LTDC 双缓冲、VSync flush | `Core/APPS/LVGL/port/lv_port_disp.c`、`Core/Driver/LCD/lcd.c` | 已确认 | `lv_port_disp.c` 直接设置 LTDC Layer1 地址并 VBlank reload。 |
 | Input System | GT911 触摸接入 LVGL pointer indev | `Core/APPS/LVGL/port/lv_port_indev.c`、`Core/Driver/TOUCH/*` | 已确认 | Lua 层输入主要来自 Lua UI widget 的 LVGL 事件回调。 |
@@ -166,6 +171,36 @@ cart entry 选择：
 2. 脚本通过 `ui.patch(self, id, patch)` 修改已有 UI 对象。
 3. LVGL 对象绘制由 `lvgl_task_handler()`/LVGL timer 机制推进。
 4. `lv_port_disp.c` 的 `disp_flush()` 等待 VSync 后将 LTDC Layer1 地址切到当前 LVGL render buffer，并调用 `lv_display_flush_ready()`。
+
+### SDRAM / DMA_POOL 初始化和统计
+
+已确认启动顺序：
+
+```mermaid
+sequenceDiagram
+    participant Main as main()
+    participant SDRAM as SDRAM Driver
+    participant Layout as Memory Layout
+    participant Meminfo as Meminfo
+    participant DmaPool as DMA_POOL
+
+    Main->>SDRAM: SDRAM_Init()
+    Main->>SDRAM: sdram_layout_check()
+    Main->>Layout: xhgc_mem_layout_validate()
+    Main->>Meminfo: xhgc_meminfo_init()
+    Main->>DmaPool: SDRAM_DmaPoolInit()
+    Main->>SDRAM: SDRAM_AppArenaReset()
+    opt XHGC_DMA_POOL_SELFTEST_ENABLE
+        Main->>DmaPool: SDRAM_DmaPoolSelftest()
+    end
+```
+
+说明：
+
+- `Core/Memory/xhgc_memory_layout.c` 中 `g_xhgc_mem_zones` 是 DMA_POOL base/size 的来源。
+- `Core/Driver/SDRAM/sdram.c` 中 `SDRAM_DmaPoolAlloc()` 使用 reset 型 bump allocator，成功记录 `XHGC_MEM_ZONE_DMA_POOL` + `XHGC_MEM_TAG_DMA` 的 used/peak/alloc_count，失败记录 fail_count。
+- `Core/Memory/xhgc_memory_layout.c` 中 `xhgc_mem_is_fixed_dma_target()` 确认 framebuffer、LAUNCHER_CACHE、APP_ARENA_REST 可作为固定 DMA 目标；这些区域不计入 DMA_POOL used。
+- `Core/Memory/xhgc_dcache.c` 提供 `xhgc_dcache_clean_range()`、`xhgc_dcache_invalidate_range()`、`xhgc_dcache_clean_invalidate_range()`，按 32-byte cache line 对齐覆盖。当前只是统一 helper，不自动改写已有 DMA2D / MDMA / LTDC 路径。
 
 ### 游戏逻辑驱动音频
 
@@ -545,6 +580,7 @@ flowchart TD
     HAL["STM32 HAL / CMSIS-RTOS2\nCore/Src/*"]
     FatFs["FatFs / SD\nFATFS/*"]
     DisplayDrv["LCD / LTDC / DMA2D\nCore/Driver/LCD\nCore/APPS/LVGL/port"]
+    Memory["Memory Layout / Meminfo\nCore/Memory\nCore/Driver/SDRAM"]
     TouchDrv["Touch / GT911\nCore/Driver/TOUCH\nlv_port_indev.c"]
     LVGL["LVGL\nCore/APPS/LVGL"]
     Launcher["Launcher\nCore/Screen/Page"]
@@ -558,7 +594,11 @@ flowchart TD
 
     HAL --> FatFs
     HAL --> DisplayDrv
+    HAL --> Memory
     HAL --> TouchDrv
+    Memory --> DisplayDrv
+    Memory --> LuaVM
+    Memory --> ResMgr
     DisplayDrv --> LVGL
     TouchDrv --> LVGL
     LVGL --> Launcher
@@ -580,6 +620,7 @@ flowchart TD
 
 - `Core/Src/main.c` 强依赖 HAL/CubeMX 初始化、CMSIS-RTOS2、LVGL task 入口。
 - `Core/Src/lua_vm.c` 强依赖 Lua C API、FatFs、cart parser、resource manager、Lua port bindings。
+- `Core/Driver/SDRAM/sdram.c` 强依赖 `Core/Memory/xhgc_memory_layout.c` 的 zone table 和 `Core/Memory/xhgc_meminfo.c` 的 DMA tag 统计。
 - `ui.image` 强依赖 `resource_manager`、LVGL image、cart path 校验。
 - launcher 强依赖 LVGL、`cart_bin` 快速读取、`Task_LUA` 启停接口。
 
@@ -622,6 +663,14 @@ flowchart TD
 - `Core/Src/main.c`
 - `Core/Src/lua_vm.c`
 - `Core/Inc/lua_vm.h`
+- `Core/Driver/SDRAM/sdram.c`
+- `Core/Driver/SDRAM/sdram.h`
+- `Core/Memory/xhgc_memory_layout.c`
+- `Core/Memory/xhgc_memory_layout.h`
+- `Core/Memory/xhgc_meminfo.c`
+- `Core/Memory/xhgc_meminfo.h`
+- `Core/Memory/xhgc_dcache.c`
+- `Core/Memory/xhgc_dcache.h`
 - `Core/APPS/TASK/LUA.c`
 - `Core/APPS/TASK/LVGL.c`
 - `Core/Screen/Page/ui_screen_launcher.c`
@@ -645,6 +694,7 @@ flowchart TD
 - `Docs/lua/lua_lifecycle.md`
 - `Docs/display/DMA2D_适配逻辑.md`
 - `Docs/display/launcher_action_hints.md`
+- `Docs/memory/SDRAM_Layout_Spec_v1.0.md`
 - `tools/luavm/main.c`
 - `tools/luavm/CMakeLists.txt`
 - `CMakeLists.txt`

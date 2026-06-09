@@ -34,7 +34,7 @@ SDRAM 采用"固定锚点 + 顺序紧贴"的布局策略，分为以下逻辑区
 | Layer1_FB0 | 0xD0000000 | 0xD0176FFF | 1.46 | 主图层缓冲0 |
 | Layer1_FB1 | 0xD0177000 | 0xD02EDFFF | 1.46 | 主图层缓冲1 |
 | Layer2_FB0 | 0xD02EE000 | 0xD0464FFF | 1.46 | 背景层单缓冲 |
-| LVGL_HEAP | 0xD0465000 | 0xD1464FFF | 16 | UI 对象内存 |
+| LVGL_HEAP | 0xD0465000 | 0xD1464FFF | 16 | 保留/future-use |
 | DMA_POOL | 0xD1465000 | 0xD1864FFF | 4 | DMA 专用区 |
 | LAUNCHER_CACHE | 0xD1865000 | 0xD1C64FFF | 4 | 图标缓存 |
 | APP_ARENA_REST | 0xD1C65000 | 0xD3FFFFFF | 约 35.6 | 资源加载 |
@@ -101,9 +101,68 @@ SDRAM 采用"固定锚点 + 顺序紧贴"的布局策略，分为以下逻辑区
 
 ## 6. DMA_POOL 规范
 
--   所有 DMA buffer 必须来自本区。
--   必须在使用前进行 cache clean / invalidate。
--   禁止 LVGL 对象放入此区。
+DMA_POOL 仅用于临时 DMA buffer，不作为通用 heap，也不接收 LVGL 对象或 framebuffer allocation。
+
+### 6.1 DMA buffer 分类
+
+固定 DMA 目标（Fixed DMA Target）不需要来自 DMA_POOL，但允许作为 DMA2D / MDMA / LTDC / 外设 DMA 的源或目标，前提是满足 cache 和对齐规则：
+
+-   Layer1_FB0
+-   Layer1_FB1
+-   Layer2_FB0
+-   LAUNCHER_CACHE
+-   APP_ARENA_REST 中的资源区
+
+临时 DMA buffer（Temporary DMA Buffer）必须来自 DMA_POOL：
+
+-   USB 临时 RX/TX buffer
+-   SDMMC / SPI / QSPI 临时 RX/TX buffer
+-   AUDIO DMA buffer
+-   解码 staging buffer
+-   外设 DMA 中转 buffer
+-   任何没有固定 zone 所属关系的 DMA 临时内存
+
+注意：固定 DMA 目标不计入 DMA_POOL used；framebuffer fixed reserve 已由 meminfo 初始化统计，LAUNCHER_CACHE / APP_ARENA_REST 作为 DMA 目标时也不额外计入 DMA_POOL。
+
+### 6.2 DMA_POOL allocator
+
+-   `SDRAM_DmaPoolInit()` / `SDRAM_DmaPoolReset()` 管理整个池的生命周期。
+-   `SDRAM_DmaPoolAlloc(size, align)` 和 `SDRAM_DmaPoolCalloc(count, size, align)` 使用线性 / bump allocator。
+-   不支持单块 free；回收只能通过 reset。
+-   DMA_POOL base/size 来自 `Core/Memory/xhgc_memory_layout.c` 中的 `g_xhgc_mem_zones[XHGC_MEM_ZONE_DMA_POOL]`。
+-   对齐至少 64 bytes；小于 64 的 align 自动提升，非 2 的幂 align 会向上修正到合法 2 的幂。
+-   越界或非法请求返回 `NULL`，不得 HardFault。
+-   `SDRAM_DmaPoolContains(ptr, size)` 用于检查逻辑范围是否完整位于 DMA_POOL。
+-   `SDRAM_DmaPoolUsed()` 返回当前 bump used；`SDRAM_DmaPoolPeak()` 返回 reset 后仍保留的峰值。
+
+### 6.3 cache 维护规则
+
+-   CPU 写、DMA 读：DMA 开始前 clean DCache。
+-   DMA 写、CPU 读：DMA 完成后 invalidate DCache。
+-   双向 DMA：开始前 clean，完成后 invalidate。
+-   `xhgc_dcache_clean_range()`、`xhgc_dcache_invalidate_range()`、`xhgc_dcache_clean_invalidate_range()` 统一按 Cortex-M7 32-byte cache line 向外对齐覆盖。
+-   cache line 对齐覆盖可能触及调用方逻辑范围相邻的同一 cache line 字节；调用方仍以原始 `ptr + size` 作为 DMA 逻辑范围。
+-   Debug 下 helper 可提示地址不在 SDRAM、不在 DMA_POOL 且不属于固定 DMA target、或 size 未 32-byte 对齐。
+
+DMA_POOL allocator 与 meminfo 数据流：
+
+```mermaid
+flowchart TD
+    Caller["Temporary DMA caller"]
+    Pool["SDRAM_DmaPoolAlloc"]
+    Layout["DMA_POOL zone table"]
+    Meminfo["meminfo DMA tag"]
+    Cache["xhgc_dcache_* helper"]
+    DMA["DMA peripheral"]
+
+    Caller --> Pool
+    Pool --> Layout
+    Pool --> Meminfo
+    Caller --> Cache
+    Caller --> DMA
+```
+
+说明：调用者先通过 DMA_POOL 获取临时 DMA buffer，再按 DMA 方向调用 cache helper；本阶段只提供统一 helper，不自动改写现有 DMA2D / MDMA / LTDC 调用路径。
 
 ------------------------------------------------------------------------
 
@@ -164,12 +223,17 @@ Lua cart 图片资源使用 `APP_ARENA_REST` 中的资源区作为 scene 资源 
 -   `xhgc_meminfo_fail_record()` 只记录失败次数。
 -   meminfo 不分配内存，不替换 `malloc/free`，不接管 LVGL、DMA、Lua、newlib 或 FreeRTOS heap。
 -   LVGL runtime heap 当前位于片内 RAM，不计入任何 SDRAM zone；`SDRAM_LVGL_HEAP` 作为 reserved/future-use 区域显示，`used` 保持 0。
+-   DMA_POOL 分配成功会记录 `XHGC_MEM_ZONE_DMA_POOL` + `XHGC_MEM_TAG_DMA` 的 used、peak 和 alloc_count；记录大小为 bump allocator 实际消耗空间，包含对齐 padding。
+-   DMA_POOL 分配失败会记录 `XHGC_MEM_ZONE_DMA_POOL` + `XHGC_MEM_TAG_DMA` 的 fail_count。
+-   DMA_POOL reset 会将 `XHGC_MEM_ZONE_DMA_POOL` used 归零或回到基线；peak 和 fail_count 保留。
+-   固定 DMA 目标不进入 DMA_POOL meminfo used，避免 framebuffer reserve、LAUNCHER_CACHE 或 APP_ARENA_REST 资源重复计数。
 -   APP_ARENA_REST 第一阶段 meminfo 统计以总 zone 为单位，`app_arena_alloc()` 成功、失败和 reset 会同步该 zone 的 used、peak 和 fail；Lua UI image view buffer 申请成功会增加 APP_ARENA_REST used/peak，申请失败会增加 fail_count。
 -   RESOURCE_ARENA owner guard 不改变 meminfo 模型；统计仍以 APP_ARENA_REST 总 zone + `RESOURCE`/`TEXTURE` tag 为准。
 -   大图像 view buffer 不应增加 `LVGL` tag；当前通过资源区接口分配，tag 计入 `RESOURCE`。
 -   Lua VM heap 位于 APP_ARENA_REST 内的 `LUA_HEAP` 子区；当前 meminfo 仍按 APP_ARENA_REST 总 zone 统计，并以 `XHGC_MEM_TAG_LUA` 记录 `lua_vm_alloc()` 的成功、释放和失败。
 -   RESOURCE_ARENA、LUA_HEAP、COLD_POOL 等 APP_ARENA_REST 内部子区级统计留到后续阶段，不在本阶段重排地址或改变子区模型。
 -   Debug 构建可通过 CMake 选项 `XHGC_MEMINFO_SELFTEST_ENABLE=ON` 打开 APP_ARENA_REST meminfo 自测；默认关闭。
+-   Debug 构建可通过 CMake 选项 `XHGC_DMA_POOL_SELFTEST_ENABLE=ON` 打开 DMA_POOL meminfo 自测；默认关闭，默认构建不包含 selftest 符号。
 
 ### 10.1 Lua VM allocator 约束
 
@@ -187,5 +251,6 @@ Lua cart 图片资源使用 `APP_ARENA_REST` 中的资源区作为 scene 资源 
 ## 版本记录
 
 -   v1.0 回退 LVGL runtime heap 到片内 RAM，SDRAM_LVGL_HEAP 保留为 reserved/future-use
+-   v1.0 补充 DMA_POOL 临时 DMA buffer 规则、cache helper 和 meminfo 接入
 -   v1.0 添加 meminfo 统计骨架说明
 -   v1.0 初始发布版本
