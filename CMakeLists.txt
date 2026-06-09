@@ -17,6 +17,7 @@ message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 
 option(CARTDESK_ENABLE_BOARD_TESTS "Run board-level test diagnostics at startup" OFF)
 option(XHGC_MEMINFO_SELFTEST_ENABLE "Run APP_ARENA_REST meminfo selftest in Debug builds" OFF)
+option(XHGC_ENABLE_EXPERIMENTAL_CART_RESOURCE_CACHE "Enable legacy experimental cart resource cache owner for RESOURCE_ARENA" OFF)
 find_package(Python3 QUIET COMPONENTS Interpreter)
 include(ExternalProject)
 
@@ -326,6 +327,8 @@ add_library(lua_port STATIC
         ${LUA_PORT_DIR}/lua_cart_resource_cache.c
         ${LUA_PORT_DIR}/lua_cart_resource_cache.h
         ${LUA_PORT_DIR}/lua_port.c
+        ${LUA_PORT_DIR}/resource_arena_owner.c
+        ${LUA_PORT_DIR}/resource_arena_owner.h
         ${LUA_PORT_DIR}/resource_manager.c
         ${LUA_PORT_DIR}/resource_manager.h
         ${LUA_PORT_DIR}/modules/lua_gpio.c
@@ -349,6 +352,10 @@ target_include_directories(lua_port PUBLIC
 target_link_libraries(lua_port PUBLIC cartdesk_common lua lvgl cart_core drv_gpio mem_layout)
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    target_compile_definitions(lua_port PRIVATE XHGC_RESOURCE_ARENA_OWNER_DEBUG_LOG=1)
+endif()
+
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     add_custom_target(check_lua_allocator_usage ALL
             COMMAND ${CMAKE_COMMAND}
                     -DPROJECT_ROOT=${PROJECT_ROOT}
@@ -357,6 +364,10 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
             VERBATIM
     )
     add_dependencies(lua_port check_lua_allocator_usage)
+endif()
+
+if(XHGC_ENABLE_EXPERIMENTAL_CART_RESOURCE_CACHE)
+    target_compile_definitions(lua_port PRIVATE XHGC_ENABLE_EXPERIMENTAL_CART_RESOURCE_CACHE=1)
 endif()
 
 # ==============================================================================

@@ -7,6 +7,7 @@
 #if XHGC_MEMINFO_SELFTEST_ENABLE
 #include <stdio.h>
 
+#include "resource_arena_owner.h"
 #include "sdram_layout.h"
 #endif
 
@@ -168,6 +169,10 @@ bool app_arena_meminfo_selftest(void)
   void *ptr;
   bool pass;
   const uint32_t alloc_size = 4096u;
+
+  if (!resource_arena_owner_selftest()) {
+    return false;
+  }
 
   app_arena_meminfo_selftest_dump("baseline");
   xhgc_meminfo_get_snapshot(&baseline);

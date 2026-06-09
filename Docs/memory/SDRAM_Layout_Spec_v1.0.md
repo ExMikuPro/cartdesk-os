@@ -127,10 +127,13 @@ Lua cart 图片资源使用 `APP_ARENA_REST` 中的资源区作为 scene 资源 
 
 -   cart 入口脚本加载后，宿主解析 Header、地址表和 INDEX，生成图片资源目录。
 -   第一版使用同步懒加载；`ui.image()` 创建时才把 BGRA8888 图片从 DATA 段读入资源区。
+-   RESOURCE_ARENA 运行期必须只有一个 owner；默认 owner 固定为 `resource_manager`。
+-   `resource_manager` 负责 scene 资源 arena 的 claim、线性分配、scene reset 和资源 handle 失效。
+-   `lua_cart_resource_cache` 当前为 legacy/experimental/disabled；默认不得 claim 或直接管理 `RESOURCE_ARENA_BASE`，也不得与 `resource_manager` 同时维护同一段 arena offset/free list。
 -   `ui.image()` 需要生成 copied/cropped/flipped view buffer 时，必须从 APP_ARENA_REST 的资源区或基于该区的 image scratch 分配，不得使用 `lv_malloc()` / LVGL runtime heap。
 -   同一个 Drawable 频繁 rebuild view 时应优先复用已有 scratch buffer；容量不足时才追加申请，旧块随 scene reset 统一回收。
 -   cart 脚本运行期间，该资源管理器独占资源区；其它代码不得同时通过线性 arena 接口在资源区分配。
--   第一版不使用 MDMA、异步加载、LRU、压缩资源或 tile streaming。
+-   第一版不启用 MDMA、LRU、eviction、异步加载、压缩资源或 tile streaming。
 -   `ui.image()` Drawable 引用对应资源块，并维护引用计数。
 -   Drawable 销毁后释放引用；引用计数归零只标记为未使用，不释放 arena 中间块。
 -   场景结束时，宿主先销毁 `self.children`，再统一 reset scene arena 并让旧资源 handle 失效。
@@ -162,8 +165,9 @@ Lua cart 图片资源使用 `APP_ARENA_REST` 中的资源区作为 scene 资源 
 -   meminfo 不分配内存，不替换 `malloc/free`，不接管 LVGL、DMA、Lua、newlib 或 FreeRTOS heap。
 -   LVGL runtime heap 当前位于片内 RAM，不计入任何 SDRAM zone；`SDRAM_LVGL_HEAP` 作为 reserved/future-use 区域显示，`used` 保持 0。
 -   APP_ARENA_REST 第一阶段 meminfo 统计以总 zone 为单位，`app_arena_alloc()` 成功、失败和 reset 会同步该 zone 的 used、peak 和 fail；Lua UI image view buffer 申请成功会增加 APP_ARENA_REST used/peak，申请失败会增加 fail_count。
--   Lua VM heap 位于 APP_ARENA_REST 内的 `LUA_HEAP` 子区；当前 meminfo 仍按 APP_ARENA_REST 总 zone 统计，并以 `XHGC_MEM_TAG_LUA` 记录 `lua_vm_alloc()` 的成功、释放和失败。
+-   RESOURCE_ARENA owner guard 不改变 meminfo 模型；统计仍以 APP_ARENA_REST 总 zone + `RESOURCE`/`TEXTURE` tag 为准。
 -   大图像 view buffer 不应增加 `LVGL` tag；当前通过资源区接口分配，tag 计入 `RESOURCE`。
+-   Lua VM heap 位于 APP_ARENA_REST 内的 `LUA_HEAP` 子区；当前 meminfo 仍按 APP_ARENA_REST 总 zone 统计，并以 `XHGC_MEM_TAG_LUA` 记录 `lua_vm_alloc()` 的成功、释放和失败。
 -   RESOURCE_ARENA、LUA_HEAP、COLD_POOL 等 APP_ARENA_REST 内部子区级统计留到后续阶段，不在本阶段重排地址或改变子区模型。
 -   Debug 构建可通过 CMake 选项 `XHGC_MEMINFO_SELFTEST_ENABLE=ON` 打开 APP_ARENA_REST meminfo 自测；默认关闭。
 

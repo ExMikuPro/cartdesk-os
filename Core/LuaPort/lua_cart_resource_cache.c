@@ -7,7 +7,14 @@
 #include "fatfs.h"
 #include "ff.h"
 #include "main.h"
+#include "resource_arena_owner.h"
 #include "sdram_layout.h"
+
+#ifndef XHGC_ENABLE_EXPERIMENTAL_CART_RESOURCE_CACHE
+#define XHGC_ENABLE_EXPERIMENTAL_CART_RESOURCE_CACHE 0
+#endif
+
+#if XHGC_ENABLE_EXPERIMENTAL_CART_RESOURCE_CACHE
 
 #ifndef LUA_CART_RES_CACHE_MAX_ENTRIES
 #define LUA_CART_RES_CACHE_MAX_ENTRIES 64u
@@ -56,6 +63,7 @@ static LuaCartArenaBlock s_blocks[LUA_CART_RES_CACHE_MAX_BLOCKS];
 static uint32_t s_block_count;
 static char s_cart_path[256];
 static bool s_active;
+static bool s_owner_claimed;
 static MDMA_HandleTypeDef s_hmdma_cache;
 static bool s_mdma_ready;
 static uint8_t s_bounce[LUA_CART_RES_CACHE_BOUNCE_SIZE] LUA_CART_RES_RAM_RUNTIME;
@@ -324,6 +332,7 @@ static bool load_entry(LuaCartResourceEntry* ent, bool allow_evict)
   void* dst;
 
   if (!ent) return false;
+  if (resource_arena_get_owner() != RESOURCE_ARENA_OWNER_CART_RESOURCE_CACHE) return false;
   if (ent->loaded) return true;
   dst = arena_alloc(ent->entry.size);
   while (!dst && allow_evict && evict_one_unreferenced(ent)) {
@@ -343,6 +352,10 @@ static bool load_entry(LuaCartResourceEntry* ent, bool allow_evict)
 
 void lua_cart_resource_cache_reset(void)
 {
+  if (s_owner_claimed) {
+    (void)resource_arena_release(RESOURCE_ARENA_OWNER_CART_RESOURCE_CACHE);
+    s_owner_claimed = false;
+  }
   memset(s_entries, 0, sizeof(s_entries));
   s_entry_count = 0u;
   s_cart_path[0] = '\0';
@@ -358,6 +371,11 @@ int lua_cart_resource_cache_preload(const char* cart_path)
 
   lua_cart_resource_cache_reset();
   if (!cart_path || cart_path[0] == '\0') return -1;
+  if (!resource_arena_claim(RESOURCE_ARENA_OWNER_CART_RESOURCE_CACHE)) {
+    printf("lua_cart_resource_cache disabled: resource_manager owns RESOURCE_ARENA\r\n");
+    return -2;
+  }
+  s_owner_claimed = true;
   snprintf(s_cart_path, sizeof(s_cart_path), "%s", cart_path);
 
   (void)SD_FATFS_Mount();
@@ -441,3 +459,40 @@ void lua_cart_resource_cache_release_image(const uint8_t* data)
     return;
   }
 }
+
+#else
+
+static const char *disabled_reason(void)
+{
+  return "lua_cart_resource_cache disabled: resource_manager owns RESOURCE_ARENA";
+}
+
+void lua_cart_resource_cache_reset(void)
+{
+  printf("%s\r\n", disabled_reason());
+}
+
+int lua_cart_resource_cache_preload(const char* cart_path)
+{
+  (void)cart_path;
+  printf("%s\r\n", disabled_reason());
+  return -1;
+}
+
+bool lua_cart_resource_cache_acquire_image(const char* path,
+                                           LuaCartCachedResource* out,
+                                           const char** out_err)
+{
+  (void)path;
+  if (out) memset(out, 0, sizeof(*out));
+  if (out_err) *out_err = disabled_reason();
+  printf("%s\r\n", disabled_reason());
+  return false;
+}
+
+void lua_cart_resource_cache_release_image(const uint8_t* data)
+{
+  (void)data;
+}
+
+#endif

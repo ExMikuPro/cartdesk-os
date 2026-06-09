@@ -5,6 +5,7 @@
 
 #include "app_arena.h"
 #include "main.h"
+#include "resource_arena_owner.h"
 #include "sdram_layout.h"
 #include "xhgc_cart.h"
 
@@ -49,6 +50,16 @@ static void clean_dcache_range(const void *ptr, uint32_t size)
 
 void res_manager_init(void)
 {
+  if (!resource_arena_claim(RESOURCE_ARENA_OWNER_RESOURCE_MANAGER)) {
+    memset(&s_scene_arena, 0, sizeof(s_scene_arena));
+    memset(s_records, 0, sizeof(s_records));
+    s_record_count = 0u;
+    s_initialized = false;
+    s_last_error = "resource arena is owned by another module";
+    cart_index_reset();
+    return;
+  }
+
   app_arena_init(&s_scene_arena, (void*)RESOURCE_ARENA_BASE, RESOURCE_ARENA_SIZE);
   memset(s_records, 0, sizeof(s_records));
   s_record_count = 0u;
@@ -60,6 +71,7 @@ void res_manager_init(void)
 bool res_manager_mount_cart(const char *cart_path)
 {
   if (!s_initialized) res_manager_init();
+  if (!s_initialized) return false;
   app_arena_reset(&s_scene_arena);
   memset(s_records, 0, sizeof(s_records));
   s_record_count = 0u;
@@ -105,6 +117,7 @@ res_handle_t res_acquire_image(const char *path, res_lifetime_t life)
 
   s_last_error = NULL;
   if (!s_initialized) res_manager_init();
+  if (!s_initialized) return invalid_handle();
   if (!cart_index_is_loaded()) {
     s_last_error = "cart resource index is not active";
     return invalid_handle();
@@ -182,6 +195,7 @@ void *res_alloc_image_view_buffer(size_t size, size_t align)
 
   s_last_error = NULL;
   if (!s_initialized) res_manager_init();
+  if (!s_initialized) return NULL;
 
   pixels = app_arena_alloc(&s_scene_arena, size, align);
   if (!pixels) {
@@ -215,7 +229,7 @@ void res_release(res_handle_t h)
 
 void res_scene_reset(void)
 {
-  if (!s_initialized) res_manager_init();
+  if (!s_initialized) return;
   app_arena_reset(&s_scene_arena);
   for (uint16_t i = 0; i < s_record_count; ++i) {
     res_record_t *rec = &s_records[i];
@@ -226,6 +240,13 @@ void res_scene_reset(void)
     rec->state = rec->meta ? RES_INDEXED : RES_FAILED;
     bump_generation(rec);
   }
+  memset(&s_scene_arena, 0, sizeof(s_scene_arena));
+  memset(s_records, 0, sizeof(s_records));
+  s_record_count = 0u;
+  s_initialized = false;
+  s_last_error = NULL;
+  cart_index_reset();
+  (void)resource_arena_release(RESOURCE_ARENA_OWNER_RESOURCE_MANAGER);
 }
 
 const char *res_last_error(void)

@@ -69,6 +69,146 @@ Required behavior:
 * If no documentation update is needed, explicitly state why in the final response.
 
 
+## Architecture documentation policy
+
+When asked to analyze or document system architecture, create or update Markdown documentation instead of generating image files.
+
+Preferred output:
+
+* Use Mermaid diagrams inside Markdown.
+* Prefer `flowchart` for high-level architecture.
+* Prefer `sequenceDiagram` for lifecycle, loading flow, or runtime execution order.
+* Keep high-level architecture diagrams under 15 nodes unless explicitly requested.
+* Do not create PNG, SVG, draw.io, Excalidraw, or other binary diagram files unless explicitly requested.
+
+Required behavior:
+
+* Do not invent modules, APIs, lifecycle callbacks, file formats, or dependencies.
+* Separate confirmed facts from inferred relationships.
+* Use solid arrows for confirmed relationships.
+* Use dashed arrows for inferred or uncertain relationships.
+* Mark uncertain sections as `推测` or `未确认`.
+* Reference real repository file paths for important conclusions.
+* If a file path cannot be confirmed, do not cite it as evidence.
+* If documentation and implementation disagree, explicitly list the difference.
+
+When creating architecture documentation, include these sections when relevant:
+
+* System overview
+* High-level architecture diagram
+* Core module table
+* Main data flow
+* Runtime / main loop flow
+* Lua VM lifecycle
+* Cart / BIN loading flow
+* Resource system
+* Module dependencies
+* Confirmed facts
+* Inferred relationships
+* Open questions
+* Referenced files
+* Check results
+
+## Project architecture focus
+
+For this project, pay special attention to:
+
+* Program entry point
+* Runtime / engine initialization
+* Main loop / frame loop
+* Lua VM setup and script execution
+* Lua lifecycle callback dispatch
+* Cart / BIN package loading
+* Manifest / index / resource table parsing
+* Resource loading and lookup
+* Input dispatch
+* Rendering boundary
+* Audio boundary
+* Save / persistent storage
+* Tooling / packer behavior
+* Hot reload / reload behavior if present
+
+## Lua VM lifecycle analysis
+
+When analyzing Lua VM behavior, check whether the project supports callbacks such as:
+
+```lua
+function init(self)
+end
+
+function final(self)
+end
+
+function fixed_update(self, dt)
+end
+
+function update(self, dt)
+end
+
+function late_update(self, dt)
+end
+
+function on_message(self, message_id, message, sender)
+end
+
+function on_input(self, action_id, action)
+end
+
+function on_reload(self)
+end
+```
+
+Rules:
+
+* Do not assume a callback exists unless the source code confirms it.
+* If a callback appears only in documentation or examples, mark it as `文档出现，源码未确认`.
+* If a callback exists but the call order is unclear, mark the order as `未确认`.
+* If `fixed_update`, `update`, and `late_update` order is confirmed by code, document the exact order.
+* If shutdown or cleanup behavior calls `final`, document the owner responsible for calling it.
+
+## Cart / BIN format analysis
+
+When analyzing cart or BIN package behavior:
+
+* Check both format documentation and implementation.
+* Identify magic, version, header, manifest, index, directory, script section, resource section, entry script, checksum, compression, or alignment fields only if they are actually present.
+* Do not add fields just because they are common in similar formats.
+* If a field exists in documentation but not in implementation, mark it as `文档定义，源码未确认`.
+* If implementation differs from documentation, add a `文档与实现差异` section.
+* Prefer citing parser, loader, packer, and format documentation files together.
+
+## Mermaid diagram rules
+
+Use Mermaid syntax that can render in GitHub Markdown.
+
+For confirmed dependencies:
+
+```mermaid
+flowchart TD
+    A[Module A] --> B[Module B]
+```
+
+For inferred or uncertain dependencies:
+
+```mermaid
+flowchart TD
+    A[Module A] -. 推测 .-> B[Module B]
+```
+
+For lifecycle or loading order:
+
+```mermaid
+sequenceDiagram
+    participant Runtime
+    participant LuaVM
+    participant Script
+    Runtime->>LuaVM: initialize
+    LuaVM->>Script: init(self)
+```
+
+Keep labels short. Put detailed explanation below the diagram instead of overloading diagram nodes.
+
+
 ## Code exploration policy
 
 Before using grep/find/Read for project-wide exploration, use CodeGraph first.
