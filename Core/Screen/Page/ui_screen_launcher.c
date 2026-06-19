@@ -64,6 +64,14 @@ extern const lv_font_t lv_font_source_han_sans_sc_16_cjk;
 #define COLOR_BLACK           0x000000
 #define COLOR_CYAN            0x00FFFF
 
+#ifndef CARTDESK_DEBUG_LAUNCHER_PROFILE
+#define CARTDESK_DEBUG_LAUNCHER_PROFILE 0
+#endif
+
+#ifndef CARTDESK_LAUNCHER_TITLE_SCROLL_OPT
+#define CARTDESK_LAUNCHER_TITLE_SCROLL_OPT 1
+#endif
+
 /* ------------------------------------------------------------------ */
 /*  私有状态                                                            */
 /* ------------------------------------------------------------------ */
@@ -103,6 +111,7 @@ static bool s_runtime_exit_pending = false;
 static bool s_launcher_assets_loaded = false;
 static LauncherActionHints s_action_hints;
 static bool s_app_launch_armed = false;
+static bool s_launcher_scrolling = false;
 
 /*
  * 每个槽独立的 LVGL 图像描述符。
@@ -111,6 +120,189 @@ static bool s_app_launch_armed = false;
 static lv_image_dsc_t s_image_dsc[DESIGN_APP_COUNT];
 
 static int s_selected_index = 0;
+
+#if CARTDESK_DEBUG_LAUNCHER_PROFILE
+typedef struct {
+    uint32_t build_count;
+    uint32_t restore_count;
+    uint32_t object_total;
+    uint32_t card_object_total;
+    uint32_t scroll_begin_count;
+    uint32_t scroll_count;
+    uint32_t scroll_end_count;
+    uint32_t selection_update_count;
+    uint32_t selection_update_peak_us;
+    uint32_t action_hint_update_count;
+    uint32_t action_hint_update_peak_us;
+    uint32_t preview_load_count;
+    uint32_t image_set_src_count;
+    uint32_t title_scroll_enabled_count;
+} LauncherDebugProfile;
+
+static LauncherDebugProfile s_launcher_debug_profile;
+
+static void prv_profile_count_object(uint32_t count)
+{
+    s_launcher_debug_profile.object_total += count;
+}
+
+static void prv_profile_count_card_object(uint32_t count)
+{
+    s_launcher_debug_profile.card_object_total += count;
+}
+
+#else
+static void prv_profile_count_object(uint32_t count)
+{
+    (void)count;
+}
+
+static void prv_profile_count_card_object(uint32_t count)
+{
+    (void)count;
+}
+#endif
+
+static void prv_update_title_long_mode_for_slot(uint32_t slot, bool enable_scroll_if_needed);
+static void prv_disable_all_title_scroll(void);
+static void prv_refresh_selected_title_scroll(void);
+static void prv_box_scroll_event_cb(lv_event_t *e);
+
+static bool prv_title_needs_scroll(lv_obj_t *label)
+{
+#if CARTDESK_LAUNCHER_TITLE_SCROLL_OPT
+    lv_point_t text_size;
+    const char *text;
+    const lv_font_t *font;
+    int32_t content_width;
+    int32_t letter_space;
+    int32_t line_space;
+
+    if (label == NULL) {
+        return false;
+    }
+
+    text = lv_label_get_text(label);
+    if (text == NULL || text[0] == '\0') {
+        return false;
+    }
+
+    content_width = lv_obj_get_content_width(label);
+    if (content_width <= 0) {
+        return false;
+    }
+
+    font = lv_obj_get_style_text_font(label, LV_PART_MAIN);
+    letter_space = lv_obj_get_style_text_letter_space(label, LV_PART_MAIN);
+    line_space = lv_obj_get_style_text_line_space(label, LV_PART_MAIN);
+    lv_text_get_size(&text_size, text, font, letter_space, line_space, LV_COORD_MAX, LV_TEXT_FLAG_EXPAND);
+
+    return text_size.x > content_width;
+#else
+    LV_UNUSED(label);
+    return true;
+#endif
+}
+
+static void prv_update_title_scroll_enabled_count(void)
+{
+#if CARTDESK_DEBUG_LAUNCHER_PROFILE
+    uint32_t enabled_count = 0u;
+
+    for (uint32_t i = 0; i < DESIGN_APP_COUNT; ++i) {
+        if (s_slot_labels[i] != NULL &&
+            lv_label_get_long_mode(s_slot_labels[i]) == LV_LABEL_LONG_SCROLL_CIRCULAR) {
+            enabled_count += 1u;
+        }
+    }
+
+    s_launcher_debug_profile.title_scroll_enabled_count = enabled_count;
+#endif
+}
+
+static void prv_update_title_long_mode_for_slot(uint32_t slot, bool enable_scroll_if_needed)
+{
+    lv_obj_t *label;
+
+    if (slot >= DESIGN_APP_COUNT) {
+        return;
+    }
+
+    label = s_slot_labels[slot];
+    if (label == NULL) {
+        return;
+    }
+
+#if CARTDESK_LAUNCHER_TITLE_SCROLL_OPT
+    if (enable_scroll_if_needed && prv_title_needs_scroll(label)) {
+        lv_label_set_long_mode(label, LV_LABEL_LONG_SCROLL_CIRCULAR);
+    } else {
+        lv_label_set_long_mode(label, LV_LABEL_LONG_CLIP);
+    }
+#else
+    LV_UNUSED(enable_scroll_if_needed);
+    lv_label_set_long_mode(label, LV_LABEL_LONG_SCROLL_CIRCULAR);
+#endif
+}
+
+static void prv_disable_all_title_scroll(void)
+{
+    for (uint32_t i = 0; i < DESIGN_APP_COUNT; ++i) {
+        prv_update_title_long_mode_for_slot(i, false);
+    }
+
+    prv_update_title_scroll_enabled_count();
+}
+
+static void prv_refresh_selected_title_scroll(void)
+{
+#if CARTDESK_LAUNCHER_TITLE_SCROLL_OPT
+    prv_disable_all_title_scroll();
+
+    if (s_launcher_scrolling) {
+        return;
+    }
+
+    if (s_selected_index >= 0 && s_selected_index < DESIGN_APP_COUNT) {
+        prv_update_title_long_mode_for_slot((uint32_t)s_selected_index, true);
+    }
+
+    prv_update_title_scroll_enabled_count();
+#else
+    for (uint32_t i = 0; i < DESIGN_APP_COUNT; ++i) {
+        prv_update_title_long_mode_for_slot(i, true);
+    }
+
+    prv_update_title_scroll_enabled_count();
+#endif
+}
+
+static void prv_box_scroll_event_cb(lv_event_t *e)
+{
+    switch (lv_event_get_code(e)) {
+    case LV_EVENT_SCROLL_BEGIN:
+#if CARTDESK_DEBUG_LAUNCHER_PROFILE
+        s_launcher_debug_profile.scroll_begin_count += 1u;
+#endif
+        s_launcher_scrolling = true;
+        prv_disable_all_title_scroll();
+        break;
+    case LV_EVENT_SCROLL:
+#if CARTDESK_DEBUG_LAUNCHER_PROFILE
+        s_launcher_debug_profile.scroll_count += 1u;
+#endif
+        break;
+    case LV_EVENT_SCROLL_END:
+#if CARTDESK_DEBUG_LAUNCHER_PROFILE
+        s_launcher_debug_profile.scroll_end_count += 1u;
+#endif
+        s_launcher_scrolling = false;
+        prv_refresh_selected_title_scroll();
+        break;
+    default:
+        break;
+    }
+}
 
 static LauncherActionHintState prv_make_action_hint_state(void)
 {
@@ -138,9 +330,20 @@ static LauncherActionHintState prv_make_action_hint_state(void)
 
 static void prv_update_action_hints(void)
 {
+#if CARTDESK_DEBUG_LAUNCHER_PROFILE
+    uint32_t start_us = RuntimeStats_NowUs();
+#endif
     LauncherActionHintState state = prv_make_action_hint_state();
 
     launcher_action_hints_update(&s_action_hints, &state);
+
+#if CARTDESK_DEBUG_LAUNCHER_PROFILE
+    uint32_t elapsed_us = RuntimeStats_NowUs() - start_us;
+    s_launcher_debug_profile.action_hint_update_count += 1u;
+    if (elapsed_us > s_launcher_debug_profile.action_hint_update_peak_us) {
+        s_launcher_debug_profile.action_hint_update_peak_us = elapsed_us;
+    }
+#endif
 }
 
 static void prv_uart_write(const char *text)
@@ -386,6 +589,10 @@ static void prv_show_launcher_screen(void)
 
     DesignLauncher_Destroy();
     DesignLauncher_Create(NULL);
+
+#if CARTDESK_DEBUG_LAUNCHER_PROFILE
+    s_launcher_debug_profile.restore_count += 1u;
+#endif
 }
 
 static void prv_runtime_exit_clicked_cb(lv_event_t *e)
@@ -514,6 +721,9 @@ static void prv_copy_img_to_sdram(uint32_t dst, const uint8_t *src)
 static void prv_set_selection(lv_obj_t *selected_obj)
 {
     int old_selected_index = s_selected_index;
+#if CARTDESK_DEBUG_LAUNCHER_PROFILE
+    uint32_t start_us = RuntimeStats_NowUs();
+#endif
 
     for (int i = 0; i < DESIGN_APP_COUNT; i++) {
         lv_obj_set_style_border_color(s_slots[i], lv_color_hex(COLOR_BLACK), LV_PART_MAIN);
@@ -525,7 +735,7 @@ static void prv_set_selection(lv_obj_t *selected_obj)
         lv_obj_add_flag(s_circle_labels[i], LV_OBJ_FLAG_HIDDEN);
     }
 
-    if (selected_obj == NULL) return;
+    if (selected_obj == NULL) goto done;
 
     lv_obj_set_style_border_color(selected_obj, lv_color_hex(COLOR_CYAN), LV_PART_MAIN);
 
@@ -538,7 +748,8 @@ static void prv_set_selection(lv_obj_t *selected_obj)
                 prv_info_popup_close_cb(NULL);
             }
             prv_update_action_hints();
-            return;
+            prv_refresh_selected_title_scroll();
+            goto done;
         }
     }
     for (int i = 0; i < DESIGN_CIRCLE_COUNT; i++) {
@@ -549,11 +760,25 @@ static void prv_set_selection(lv_obj_t *selected_obj)
             s_app_launch_armed = false;
             prv_info_popup_close_cb(NULL);
             prv_update_action_hints();
-            return;
+            prv_refresh_selected_title_scroll();
+            goto done;
         }
     }
 
     prv_update_action_hints();
+    prv_refresh_selected_title_scroll();
+
+done:
+#if CARTDESK_DEBUG_LAUNCHER_PROFILE
+    {
+        uint32_t elapsed_us = RuntimeStats_NowUs() - start_us;
+        s_launcher_debug_profile.selection_update_count += 1u;
+        if (elapsed_us > s_launcher_debug_profile.selection_update_peak_us) {
+            s_launcher_debug_profile.selection_update_peak_us = elapsed_us;
+        }
+    }
+#endif
+    return;
 }
 
 /* ------------------------------------------------------------------ */
@@ -617,6 +842,10 @@ static void prv_create_box_area(lv_obj_t *parent)
     lv_obj_set_scroll_dir(box_container, LV_DIR_HOR);
     lv_obj_set_style_anim_duration(box_container, 0, 0);
     lv_obj_remove_flag(box_container, LV_OBJ_FLAG_SCROLL_ELASTIC);
+    prv_profile_count_object(1u);
+    lv_obj_add_event_cb(box_container, prv_box_scroll_event_cb, LV_EVENT_SCROLL_BEGIN, NULL);
+    lv_obj_add_event_cb(box_container, prv_box_scroll_event_cb, LV_EVENT_SCROLL, NULL);
+    lv_obj_add_event_cb(box_container, prv_box_scroll_event_cb, LV_EVENT_SCROLL_END, NULL);
 
     lv_obj_t *content_container = lv_obj_create(box_container);
     lv_obj_set_size(content_container, content_width, container_height + 60);
@@ -625,6 +854,7 @@ static void prv_create_box_area(lv_obj_t *parent)
     lv_obj_set_style_pad_all(content_container, 0, 0);
     lv_obj_set_scrollbar_mode(content_container, LV_SCROLLBAR_MODE_OFF);
     lv_obj_remove_flag(content_container, LV_OBJ_FLAG_SCROLLABLE);
+    prv_profile_count_object(1u);
 
     for (int i = 0; i < DESIGN_APP_COUNT; i++) {
         const int box_x = 20 + i * (BOX_WIDTH + BOX_SPACING);
@@ -640,6 +870,8 @@ static void prv_create_box_area(lv_obj_t *parent)
         lv_obj_remove_flag(slot_container, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_set_scrollbar_mode(slot_container, LV_SCROLLBAR_MODE_OFF);
         lv_obj_add_flag(slot_container, LV_OBJ_FLAG_CLICKABLE);
+        prv_profile_count_object(1u);
+        prv_profile_count_card_object(1u);
 
         /*
          * 如果该槽有图片，且 DMA2D 已在 DesignLauncher_Create 里完成了
@@ -653,6 +885,11 @@ static void prv_create_box_area(lv_obj_t *parent)
             lv_image_set_src(img_obj, &s_image_dsc[i]);
             lv_obj_set_style_border_width(img_obj, 0, LV_PART_MAIN);
             lv_obj_remove_flag(img_obj, LV_OBJ_FLAG_SCROLLABLE);
+            prv_profile_count_object(1u);
+            prv_profile_count_card_object(1u);
+#if CARTDESK_DEBUG_LAUNCHER_PROFILE
+            s_launcher_debug_profile.image_set_src_count += 1u;
+#endif
         }
 
         lv_obj_add_event_cb(slot_container, prv_box_clicked_cb, LV_EVENT_CLICKED, NULL);
@@ -662,12 +899,14 @@ static void prv_create_box_area(lv_obj_t *parent)
         lv_label_set_text(label, (i == 0) ? s_cart0_title : app_names[i]);
         lv_obj_set_style_text_color(label, lv_color_hex(COLOR_CYAN), 0);
         lv_obj_set_style_text_font(label, &lv_font_montserrat_20, 0);
-        lv_label_set_long_mode(label, LV_LABEL_LONG_SCROLL_CIRCULAR);
-        lv_obj_set_pos(label, box_x, 45);
         lv_obj_set_width(label, BOX_WIDTH);
+        lv_obj_set_pos(label, box_x, 45);
         lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
         lv_obj_add_flag(label, LV_OBJ_FLAG_HIDDEN);
         s_slot_labels[i] = label;
+        prv_update_title_long_mode_for_slot((uint32_t)i, false);
+        prv_profile_count_object(1u);
+        prv_profile_count_card_object(1u);
     }
 
     lv_obj_remove_flag(s_slot_labels[0], LV_OBJ_FLAG_HIDDEN);
@@ -692,6 +931,7 @@ static void prv_create_circle_area(lv_obj_t *parent)
         lv_obj_set_style_border_color(circle, lv_color_hex(COLOR_BLACK), 0);
         lv_obj_add_event_cb(circle, prv_circle_clicked_cb, LV_EVENT_CLICKED, NULL);
         s_circles[i] = circle;
+        prv_profile_count_object(1u);
 
         lv_obj_t *label = lv_label_create(parent);
         lv_label_set_text(label, circle_names[i]);
@@ -702,6 +942,7 @@ static void prv_create_circle_area(lv_obj_t *parent)
         lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
         lv_obj_add_flag(label, LV_OBJ_FLAG_HIDDEN);
         s_circle_labels[i] = label;
+        prv_profile_count_object(1u);
     }
 }
 
@@ -712,6 +953,7 @@ static void prv_create_divider_line(lv_obj_t *parent)
     lv_obj_set_pos(line, LINE_X, LINE_Y);
     lv_obj_set_style_bg_color(line, lv_color_hex(COLOR_BLACK), 0);
     lv_obj_set_style_border_width(line, 0, 0);
+    prv_profile_count_object(1u);
 }
 
 static void prv_create_status_label(lv_obj_t *parent)
@@ -725,6 +967,7 @@ static void prv_create_status_label(lv_obj_t *parent)
     lv_obj_set_width(s_status_label, SCREEN_W - 80);
     lv_obj_set_pos(s_status_label, 40, LINE_Y + 16);
     lv_obj_add_flag(s_status_label, LV_OBJ_FLAG_HIDDEN);
+    prv_profile_count_object(1u);
 }
 
 /* ------------------------------------------------------------------ */
@@ -735,6 +978,7 @@ void Launcher_Init(void)
 {
     s_launcher_screen = lv_screen_active();
     s_runtime_exit_pending = false;
+    s_launcher_scrolling = false;
     DesignLauncher_Destroy();
     DesignLauncher_Create(NULL);
 }
@@ -764,6 +1008,13 @@ void DesignLauncher_Create(lv_display_t *disp)
 
     lv_obj_set_style_pad_all(scr, 0, 0);
 
+#if CARTDESK_DEBUG_LAUNCHER_PROFILE
+    s_launcher_debug_profile.build_count += 1u;
+    s_launcher_debug_profile.object_total = 0u;
+    s_launcher_debug_profile.card_object_total = 0u;
+    s_launcher_debug_profile.title_scroll_enabled_count = 0u;
+#endif
+
     if (!s_launcher_assets_loaded) {
         launcher_cache_init();
 
@@ -787,6 +1038,9 @@ void DesignLauncher_Create(lv_display_t *disp)
             uint32_t dst = (uint32_t)launcher_get_big_icon(0);
 
             int ret = cart_bin_read_preview_from_sd("0:/cart.bin", (uint8_t*)dst, CART_BIN_PREVIEW_SIZE);
+#if CARTDESK_DEBUG_LAUNCHER_PROFILE
+            s_launcher_debug_profile.preview_load_count += 1u;
+#endif
             if (ret == 0) {
                 /* 初始化独立描述符，指向 SDRAM，magic 必须设置 */
                 s_image_dsc[0].header.magic = LV_IMAGE_HEADER_MAGIC;
@@ -827,6 +1081,7 @@ void DesignLauncher_Create(lv_display_t *disp)
     lv_obj_set_style_border_width(s_main_container, 0, 0);
     lv_obj_set_style_pad_all(s_main_container, 0, 0);
     lv_obj_remove_flag(s_main_container, LV_OBJ_FLAG_SCROLLABLE);
+    prv_profile_count_object(1u);
 
     prv_create_box_area(s_main_container);
     prv_create_circle_area(s_main_container);
@@ -834,10 +1089,12 @@ void DesignLauncher_Create(lv_display_t *disp)
     prv_create_status_label(s_main_container);
     launcher_action_hints_init(&s_action_hints, s_main_container);
     launcher_action_hints_set_callback(&s_action_hints, prv_action_hint_clicked_cb, NULL);
+    prv_profile_count_object(11u);
 
     s_selected_index = 0;
     s_app_launch_armed = false;
     prv_update_action_hints();
+    prv_refresh_selected_title_scroll();
 }
 
 void DesignLauncher_SetSelected(int app_index)
@@ -868,4 +1125,35 @@ void DesignLauncher_Destroy(void)
      */
     s_selected_index = 0;
     s_app_launch_armed = false;
+    s_launcher_scrolling = false;
+}
+
+void Launcher_DebugPrintProfileIfEnabled(void)
+{
+#if CARTDESK_DEBUG_LAUNCHER_PROFILE
+    uint32_t card_avg_times_100 = 0u;
+
+    if (DESIGN_APP_COUNT > 0) {
+        card_avg_times_100 = (s_launcher_debug_profile.card_object_total * 100u) / DESIGN_APP_COUNT;
+    }
+
+    printf("[launcher-prof] builds=%lu restores=%lu objs=%lu card_objs=%lu avg_card=%lu.%02lu "
+           "scroll=%lu/%lu/%lu select=%lu peak=%luus hints=%lu peak=%luus preview=%lu imgsrc=%lu title_scroll=%lu\r\n",
+           (unsigned long)s_launcher_debug_profile.build_count,
+           (unsigned long)s_launcher_debug_profile.restore_count,
+           (unsigned long)s_launcher_debug_profile.object_total,
+           (unsigned long)s_launcher_debug_profile.card_object_total,
+           (unsigned long)(card_avg_times_100 / 100u),
+           (unsigned long)(card_avg_times_100 % 100u),
+           (unsigned long)s_launcher_debug_profile.scroll_begin_count,
+           (unsigned long)s_launcher_debug_profile.scroll_count,
+           (unsigned long)s_launcher_debug_profile.scroll_end_count,
+           (unsigned long)s_launcher_debug_profile.selection_update_count,
+           (unsigned long)s_launcher_debug_profile.selection_update_peak_us,
+           (unsigned long)s_launcher_debug_profile.action_hint_update_count,
+           (unsigned long)s_launcher_debug_profile.action_hint_update_peak_us,
+           (unsigned long)s_launcher_debug_profile.preview_load_count,
+           (unsigned long)s_launcher_debug_profile.image_set_src_count,
+           (unsigned long)s_launcher_debug_profile.title_scroll_enabled_count);
+#endif
 }

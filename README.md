@@ -118,6 +118,8 @@ Core/Src/main.c
 
 `StartLvglTask()` 同时承载 LVGL 刷新、Lua 生命周期调度和 cart 资源读取，线程栈按 32 KiB 配置，避免 Lua 初始化、FatFs 读取和 LVGL 对象创建叠加时栈空间不足。
 
+launcher 卡槽标题默认使用静态 long mode；当 `CARTDESK_LAUNCHER_TITLE_SCROLL_OPT=1` 时，只有当前选中项且文本超出 label 宽度时才启用 `LV_LABEL_LONG_SCROLL_CIRCULAR`，滚动开始时会统一关闭，滚动结束后再按需恢复。把该宏改为 `0` 可回到旧行为，方便做 A/B 对比。
+
 ## Runtime Stats
 
 固件在 `StartLvglTask()` 的主循环里按秒输出一行 `[stats]` 日志，默认走当前标准输出串口（`USART1`）。输出会包含最近一次和峰值的 `lvgl_task_handler()` / `Task_LUA()` / `Launcher_Task()` / 主循环 work time，以及独立的 loop `period`、慢帧计数、Lua state 名称、Lua heap / resource arena / queue 的 runtime global peak、当前任务栈 high-water 和 FreeRTOS heap 剩余量。当前 `lua_runtime_state` 读取的是正式的 `TaskLuaState`，不再直接映射 `lua_vm` 内部执行相位。
@@ -125,6 +127,8 @@ Core/Src/main.c
 当前 `[stats]` 已额外追加 LVGL breakdown 字段：`lv_timer`、`flush`、`flush_wait`、`dma2d`、`input_read`、`screen`、`flush_cnt`、`flush_px`、`input_cnt` 和 `lvgl_reason`。当最近出现新的 LVGL 慢帧时，还会额外输出一行 `[lvgl-slow]` 摘要，帮助判断慢帧主要来自 timer、flush submit、现有等待路径、输入读取还是明确的 screen 切换片段；这些统计只记录数值，不会在 flush/input callback 内打印。
 
 默认不会额外创建屏幕 overlay，也不会改变 Lua、LVGL、launcher 的调用顺序；主循环仍保持 `lvgl_task_handler() -> Task_LUA() -> Launcher_Task() -> osDelay(5)`。如需关闭 stats 串口输出，可在编译期调整 `RUNTIME_STATS_ENABLE_UART_PRINT`，或在运行时调用 `RuntimeStats_SetPrintEnabled(false)`；如需恢复 `ui.image.dump` 大段图片调试输出，可把 `LUA_UI_IMAGE_ENABLE_DUMP` 改为 `1`。
+
+如需观察 launcher title scroll 实验的对象数、scroll begin/end 次数、选中态更新峰值，以及当前启用 circular scroll 的 title 数量，可把 `CARTDESK_DEBUG_LAUNCHER_PROFILE` 改为 `1`；该诊断默认关闭，只在现有每秒 stats 打印点集中输出，不会在高频 callback 内直接打印。
 
 ## cart.bin
 

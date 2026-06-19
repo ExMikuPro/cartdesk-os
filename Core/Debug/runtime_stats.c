@@ -11,6 +11,8 @@
 #include "lua_vm.h"
 #include "lua_vm_memory.h"
 
+extern void Launcher_DebugPrintProfileIfEnabled(void);
+
 typedef enum {
     RUNTIME_STATS_LVGL_TIMING_TIMER = 0,
     RUNTIME_STATS_LVGL_TIMING_FLUSH,
@@ -756,4 +758,6 @@ void RuntimeStats_PrintEveryMs(uint32_t interval_ms)
                (unsigned long)snapshot.lvgl_slow_last_reason,
                RuntimeStats_LvglSlowReasonName(snapshot.lvgl_slow_last_reason));
     }
+
+    Launcher_DebugPrintProfileIfEnabled();
 }
