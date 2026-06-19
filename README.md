@@ -114,13 +114,13 @@ Core/Src/main.c
       -> 周期调用 Task_LUA()，未点击卡带槽时不会初始化 Lua VM
 ```
 
-`Launcher_Init()` 会创建启动器页面，并尝试从 `0:/cart.bin` 读取第一个卡带槽的标题和预览图。开机默认不创建 Lua VM；点击卡带槽后，启动器会切换到空白运行屏并保留系统 `EXIT` 按钮，`Task_LUA_StartCart("0:/cart.bin")` 会请求启动脚本，随后 `Task_LUA()` 从 `cart.bin` 的 ENTRY 段加载 luac 并启动 Lua 运行时。点击 `EXIT` 会同步停止 Lua VM、清理运行屏上的 LVGL 对象，并回到 launcher。
+`Launcher_Init()` 会创建启动器页面，并尝试从 `0:/cart.bin` 读取第一个卡带槽的标题和预览图。开机默认不创建 Lua VM；点击卡带槽后，launcher 会先调用 `Task_LUA_StartCart("0:/cart.bin")` 提交启动请求，只有请求被接受后才切换到空白运行屏并保留系统 `EXIT` 按钮。随后 `Task_LUA()` 从 `cart.bin` 的 ENTRY 段加载 luac 并推进 `START_REQUESTED -> STARTING -> RUNNING` 生命周期状态机。点击 `EXIT` 只会请求 `Task_LUA_Stop()`，launcher 仅在 Lua task 回到 `IDLE` 后恢复 launcher 页面。
 
 `StartLvglTask()` 同时承载 LVGL 刷新、Lua 生命周期调度和 cart 资源读取，线程栈按 32 KiB 配置，避免 Lua 初始化、FatFs 读取和 LVGL 对象创建叠加时栈空间不足。
 
 ## Runtime Stats
 
-固件在 `StartLvglTask()` 的主循环里按秒输出一行 `[stats]` 日志，默认走当前标准输出串口（`USART1`）。输出会包含最近一次和峰值的 `lvgl_task_handler()` / `Task_LUA()` / `Launcher_Task()` / 主循环 work time，以及独立的 loop `period`、慢帧计数、Lua state 名称、Lua heap / resource arena / queue 的 runtime global peak、当前任务栈 high-water 和 FreeRTOS heap 剩余量。
+固件在 `StartLvglTask()` 的主循环里按秒输出一行 `[stats]` 日志，默认走当前标准输出串口（`USART1`）。输出会包含最近一次和峰值的 `lvgl_task_handler()` / `Task_LUA()` / `Launcher_Task()` / 主循环 work time，以及独立的 loop `period`、慢帧计数、Lua state 名称、Lua heap / resource arena / queue 的 runtime global peak、当前任务栈 high-water 和 FreeRTOS heap 剩余量。当前 `lua_runtime_state` 读取的是正式的 `TaskLuaState`，不再直接映射 `lua_vm` 内部执行相位。
 
 当前 `[stats]` 已额外追加 LVGL breakdown 字段：`lv_timer`、`flush`、`flush_wait`、`dma2d`、`input_read`、`screen`、`flush_cnt`、`flush_px`、`input_cnt` 和 `lvgl_reason`。当最近出现新的 LVGL 慢帧时，还会额外输出一行 `[lvgl-slow]` 摘要，帮助判断慢帧主要来自 timer、flush submit、现有等待路径、输入读取还是明确的 screen 切换片段；这些统计只记录数值，不会在 flush/input callback 内打印。
 

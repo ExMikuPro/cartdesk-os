@@ -496,6 +496,7 @@ add_library(runtime_debug STATIC
 
 target_include_directories(runtime_debug PUBLIC ${DEBUG_DIR})
 target_link_libraries(runtime_debug PUBLIC cartdesk_common freertos_kernel lua_port)
+target_include_directories(runtime_debug PUBLIC ${TASK_DIR})
 
 set(DEBUG_OVERLAY_LIBS)
 if(XHGC_MEM_OVERLAY_ENABLE)

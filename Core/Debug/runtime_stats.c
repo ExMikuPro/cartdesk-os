@@ -7,6 +7,7 @@
 #include "main.h"
 #include "resource_manager.h"
 #include "task.h"
+#include "cartdesk_task.h"
 #include "lua_vm.h"
 #include "lua_vm_memory.h"
 
@@ -549,7 +550,7 @@ void RuntimeStats_UpdateSnapshot(void)
     s_runtime_stats.snapshot.message_queue_capacity = lua_vm_message_queue_capacity();
     s_runtime_stats.snapshot.freertos_heap_free = RuntimeStats_ReadFreeRtosHeapFree();
     s_runtime_stats.snapshot.current_task_stack_high_water = RuntimeStats_ReadCurrentTaskStackHighWater();
-    s_runtime_stats.snapshot.lua_runtime_state = lua_vm_runtime_state();
+    s_runtime_stats.snapshot.lua_runtime_state = (uint32_t)Task_LUA_GetState();
 
     if (s_runtime_stats.snapshot.lua_heap_used > s_runtime_stats.snapshot.lua_heap_global_peak) {
         s_runtime_stats.snapshot.lua_heap_global_peak = s_runtime_stats.snapshot.lua_heap_used;
@@ -626,18 +627,7 @@ bool RuntimeStats_IsPrintEnabled(void)
 
 const char *RuntimeStats_LuaStateName(uint32_t state)
 {
-    switch (state) {
-        case 0u:
-            return "IDLE";
-        case 1u:
-            return "INITIALIZED";
-        case 2u:
-            return "RUNNING";
-        case 3u:
-            return "BUSY";
-        default:
-            return "UNKNOWN";
-    }
+    return Task_LUA_GetStateName((TaskLuaState)state);
 }
 
 const char *RuntimeStats_LvglSlowReasonName(uint32_t reason)

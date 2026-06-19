@@ -125,7 +125,7 @@ static LauncherActionHintState prv_make_action_hint_state(void)
     if (state.has_selection) {
         state.can_start = (s_selected_index == 0)
                           && (strcmp(s_cart0_title, "ERR") != 0)
-                          && !Task_LUA_IsRunning();
+                          && Task_LUA_IsIdle();
         state.has_info = (s_selected_index == 0);
     }
 
@@ -268,7 +268,7 @@ static bool prv_selected_app_can_start(void)
 {
     return (s_selected_index == 0)
            && (strcmp(s_cart0_title, "ERR") != 0)
-           && !Task_LUA_IsRunning();
+           && Task_LUA_IsIdle();
 }
 
 static void prv_info_popup_close_cb(lv_event_t *e)
@@ -448,8 +448,11 @@ static void prv_start_selected_app(void)
     }
 
     s_app_launch_armed = false;
+    if (!Task_LUA_StartCart("0:/cart.bin")) {
+        prv_set_status_text("App cannot start");
+        return;
+    }
     prv_show_runtime_screen();
-    Task_LUA_StartCart("0:/cart.bin");
 }
 
 static void prv_action_hint_clicked_cb(LauncherActionHintAction action, void *user_data)
@@ -741,7 +744,7 @@ void Launcher_Task(void)
     if (!s_runtime_exit_pending) {
         return;
     }
-    if (Task_LUA_IsRunning()) {
+    if (!Task_LUA_IsIdle()) {
         return;
     }
 
