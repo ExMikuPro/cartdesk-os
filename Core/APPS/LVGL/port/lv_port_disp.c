@@ -7,6 +7,7 @@
 #include "lv_port_disp.h"
 #include "lvgl.h"
 #include "lcd.h"
+#include "runtime_stats.h"
 
 /*********************
  *      宏定义
@@ -97,9 +98,21 @@ void lv_port_disp_init(void)
  */
 static void disp_flush(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map)
 {
+    uint32_t width = 0u;
+    uint32_t height = 0u;
+    uint32_t area_px = 0u;
+
+    if (area != NULL && area->x2 >= area->x1 && area->y2 >= area->y1) {
+        width = (uint32_t)(area->x2 - area->x1 + 1);
+        height = (uint32_t)(area->y2 - area->y1 + 1);
+        area_px = width * height;
+    }
+    RuntimeStats_BeginLvglFlush(area_px);
+
     /* 如果禁用更新，直接返回 */
     if (!g_update_enabled) {
         lv_display_flush_ready(disp);
+        RuntimeStats_EndLvglFlush();
         return;
     }
 
@@ -126,6 +139,7 @@ static void disp_flush(lv_display_t *disp, const lv_area_t *area, uint8_t *px_ma
 
     /* 通知LVGL刷新完成 */
     lv_display_flush_ready(disp);
+    RuntimeStats_EndLvglFlush();
 
     /* 更新帧计数 */
     g_frame_count++;
@@ -145,6 +159,8 @@ static void disp_flush(lv_display_t *disp, const lv_area_t *area, uint8_t *px_ma
 static void disp_wait_for_vsync(void)
 {
 #if USE_VSYNC
+    RuntimeStats_BeginLvglFlushWait();
+
     /* 清除标志 */
     g_vsync_flag = false;
 
@@ -158,6 +174,8 @@ static void disp_wait_for_vsync(void)
     if (!g_vsync_flag) {
         // VSync超时，可以记录日志或采取其他措施
     }
+
+    RuntimeStats_EndLvglFlushWait();
 #endif
 }
 

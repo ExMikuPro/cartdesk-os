@@ -94,6 +94,11 @@ static bool lua_vm_block_valid(const LuaVmAllocator *allocator,
            block->magic == LUA_VM_BLOCK_MAGIC;
 }
 
+static size_t lua_vm_configured_capacity(void)
+{
+    return (size_t)LUA_HEAP_SIZE;
+}
+
 /**
  * @brief  将空闲/可用块按目标payload大小拆分出尾部空闲块
  * @param  block: 待拆分的块头
@@ -360,7 +365,44 @@ void lua_vm_memory_get_stats(LuaVmMemoryStats *out_stats)
 {
     if (out_stats != NULL) {
         *out_stats = g_lua_allocator.stats;
+        if (out_stats->capacity == 0u) {
+            out_stats->capacity = lua_vm_configured_capacity();
+        }
     }
+}
+
+static uint32_t lua_vm_stat_to_u32(size_t value)
+{
+    return value > (size_t)UINT32_MAX ? UINT32_MAX : (uint32_t)value;
+}
+
+uint32_t lua_vm_heap_used(void)
+{
+    return lua_vm_stat_to_u32(g_lua_allocator.stats.used);
+}
+
+uint32_t lua_vm_heap_peak(void)
+{
+    return lua_vm_stat_to_u32(g_lua_allocator.stats.peak);
+}
+
+uint32_t lua_vm_heap_capacity(void)
+{
+    size_t capacity = g_lua_allocator.stats.capacity;
+    if (capacity == 0u) {
+        capacity = lua_vm_configured_capacity();
+    }
+    return lua_vm_stat_to_u32(capacity);
+}
+
+uint32_t lua_vm_alloc_fail_count(void)
+{
+    return lua_vm_stat_to_u32(g_lua_allocator.stats.alloc_fail_count);
+}
+
+size_t lua_vm_heap_capacity_bytes(void)
+{
+    return lua_vm_configured_capacity();
 }
 
 /**

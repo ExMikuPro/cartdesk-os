@@ -9,6 +9,7 @@
  *********************/
 #include "lv_port_indev.h"
 #include "lvgl.h"
+#include "runtime_stats.h"
 #include "touch.h"
 
 /*********************
@@ -224,11 +225,15 @@ static void touchpad_read(lv_indev_t * indev, lv_indev_data_t * data)
     static int16_t last_y = 0;
     bool has_touch = false;
 
+    LV_UNUSED(indev);
+    RuntimeStats_BeginLvglInput();
+
     /* 如果触摸被禁用，直接返回释放状态 */
     if (!touchpad_enabled) {
         data->state = LV_INDEV_STATE_RELEASED;
         data->point.x = last_x;
         data->point.y = last_y;
+        RuntimeStats_EndLvglInput();
         return;
     }
 
@@ -272,6 +277,7 @@ static void touchpad_read(lv_indev_t * indev, lv_indev_data_t * data)
     /* 始终更新坐标（LVGL要求） */
     data->point.x = last_x;
     data->point.y = last_y;
+    RuntimeStats_EndLvglInput();
 }
 
 #if MULTITOUCH_ENABLED
@@ -288,11 +294,15 @@ static void touchpad_read_multitouch(lv_indev_t * indev, lv_indev_data_t * data)
     static int16_t last_y = 0;
     bool has_touch = false;
 
+    LV_UNUSED(indev);
+    RuntimeStats_BeginLvglInput();
+
     /* 如果触摸被禁用，直接返回释放状态 */
     if (!touchpad_enabled) {
         data->state = LV_INDEV_STATE_RELEASED;
         data->point.x = last_x;
         data->point.y = last_y;
+        RuntimeStats_EndLvglInput();
         return;
     }
 
@@ -356,6 +366,8 @@ static void touchpad_read_multitouch(lv_indev_t * indev, lv_indev_data_t * data)
         data->continue_reading = false;
         current_point_index = 0;
     }
+
+    RuntimeStats_EndLvglInput();
 }
 #endif /* MULTITOUCH_ENABLED */
 

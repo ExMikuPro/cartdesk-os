@@ -36,6 +36,11 @@ int  lua_post_message(const char *message_id, const char *sender);
 void lua_update_task(void);
 void lua_rt_delay_ms(uint32_t delay_ms);
 const char *lua_current_cart_path(void);
+uint32_t lua_vm_input_queue_len(void);
+uint32_t lua_vm_input_queue_capacity(void);
+uint32_t lua_vm_message_queue_len(void);
+uint32_t lua_vm_message_queue_capacity(void);
+uint32_t lua_vm_runtime_state(void);
 
 #ifdef __cplusplus
 }

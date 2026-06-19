@@ -12,6 +12,7 @@
 #include "cart_bin.h"
 #include "cartdesk_task.h"
 #include "launcher_action_hints.h"
+#include "runtime_stats.h"
 #include "ui_launcher_cache.h"
 #include "usart.h"
 
@@ -375,11 +376,13 @@ static void prv_show_launcher_screen(void)
         s_launcher_screen = lv_obj_create(NULL);
     }
 
+    RuntimeStats_BeginLvglScreenOp();
     lv_screen_load(s_launcher_screen);
     if (s_runtime_screen != NULL) {
         lv_obj_delete(s_runtime_screen);
         s_runtime_screen = NULL;
     }
+    RuntimeStats_EndLvglScreenOp();
 
     DesignLauncher_Destroy();
     DesignLauncher_Create(NULL);
@@ -404,6 +407,7 @@ static void prv_show_runtime_screen(void)
 {
     s_runtime_exit_pending = false;
 
+    RuntimeStats_BeginLvglScreenOp();
     if (s_runtime_screen != NULL) {
         lv_obj_delete(s_runtime_screen);
         s_runtime_screen = NULL;
@@ -428,6 +432,7 @@ static void prv_show_runtime_screen(void)
 
     DesignLauncher_Destroy();
     lv_screen_load(s_runtime_screen);
+    RuntimeStats_EndLvglScreenOp();
 }
 
 static void prv_start_selected_app(void)
