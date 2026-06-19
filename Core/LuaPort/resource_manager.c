@@ -21,6 +21,7 @@ static res_record_t s_records[RES_MANAGER_MAX_RECORDS];
 static uint16_t s_record_count;
 static bool s_initialized;
 static const char *s_last_error;
+static uint32_t s_scene_arena_peak_bytes;
 
 static res_handle_t invalid_handle(void)
 {
@@ -64,6 +65,19 @@ static void clean_dcache_range(const void *ptr, uint32_t size)
 #endif
 }
 
+static uint32_t arena_size_to_u32(size_t size)
+{
+  return size > (size_t)UINT32_MAX ? UINT32_MAX : (uint32_t)size;
+}
+
+static void res_manager_track_peak(void)
+{
+  uint32_t used = arena_size_to_u32(app_arena_used(&s_scene_arena));
+  if (used > s_scene_arena_peak_bytes) {
+    s_scene_arena_peak_bytes = used;
+  }
+}
+
 /**
  * @brief  初始化资源管理器并申请RESOURCE_ARENA所有权
  * @retval None
@@ -88,6 +102,7 @@ void res_manager_init(void)
   s_record_count = 0u;
   s_initialized = true;
   s_last_error = NULL;
+  s_scene_arena_peak_bytes = 0u;
   cart_index_reset();
 }
 
@@ -106,6 +121,7 @@ bool res_manager_mount_cart(const char *cart_path)
   app_arena_reset(&s_scene_arena);
   memset(s_records, 0, sizeof(s_records));
   s_record_count = 0u;
+  s_scene_arena_peak_bytes = 0u;
 
   if (!cart_index_load(cart_path)) {
     s_last_error = cart_index_last_error();
@@ -227,6 +243,7 @@ res_handle_t res_acquire_image(const char *path, res_lifetime_t life)
   rec->refcount = 1u;
   rec->lifetime = life;
   rec->state = RES_READY;
+  res_manager_track_peak();
   return (res_handle_t){ (uint16_t)index, rec->generation };
 }
 
@@ -249,6 +266,8 @@ void *res_alloc_image_view_buffer(size_t size, size_t align)
   pixels = app_arena_alloc(&s_scene_arena, size, align);
   if (!pixels) {
     s_last_error = "not enough app arena memory for image view";
+  } else {
+    res_manager_track_peak();
   }
   return pixels;
 }
@@ -320,6 +339,7 @@ void res_scene_reset(void)
   s_record_count = 0u;
   s_initialized = false;
   s_last_error = NULL;
+  s_scene_arena_peak_bytes = 0u;
   cart_index_reset();
   (void)resource_arena_release(RESOURCE_ARENA_OWNER_RESOURCE_MANAGER);
 }
@@ -331,4 +351,42 @@ void res_scene_reset(void)
 const char *res_last_error(void)
 {
   return s_last_error;
+}
+
+uint32_t res_manager_used_bytes(void)
+{
+  return arena_size_to_u32(app_arena_used(&s_scene_arena));
+}
+
+uint32_t res_manager_peak_bytes(void)
+{
+  return s_scene_arena_peak_bytes;
+}
+
+uint32_t res_manager_capacity_bytes(void)
+{
+  return (uint32_t)RESOURCE_ARENA_SIZE;
+}
+
+uint32_t res_manager_alive_count(void)
+{
+  uint32_t count = 0u;
+
+  for (uint16_t i = 0; i < s_record_count; ++i) {
+    if (s_records[i].state == RES_READY || s_records[i].state == RES_READY_UNUSED) {
+      ++count;
+    }
+  }
+  return count;
+}
+
+uint32_t res_manager_indexed_count(void)
+{
+  return (uint32_t)s_record_count;
+}
+
+uint32_t res_manager_refcount_anomaly_count(void)
+{
+  /* currently unavailable: resource manager does not classify refcount anomalies yet. */
+  return 0u;
 }

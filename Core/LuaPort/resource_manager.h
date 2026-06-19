@@ -55,6 +55,12 @@ const image_resource_t *res_get_image(res_handle_t h);
 void res_scene_reset(void);
 bool res_handle_valid(res_handle_t h);
 const char *res_last_error(void);
+uint32_t res_manager_used_bytes(void);
+uint32_t res_manager_peak_bytes(void);
+uint32_t res_manager_capacity_bytes(void);
+uint32_t res_manager_alive_count(void);
+uint32_t res_manager_indexed_count(void);
+uint32_t res_manager_refcount_anomaly_count(void);
 
 #ifdef __cplusplus
 }

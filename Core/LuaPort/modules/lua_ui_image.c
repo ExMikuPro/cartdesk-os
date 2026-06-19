@@ -11,8 +11,8 @@
 
 #define UI_IMAGE_MT "ui.image.mt"
 
-#ifndef LUA_UI_IMAGE_DEBUG_DUMP
-#define LUA_UI_IMAGE_DEBUG_DUMP 1
+#ifndef LUA_UI_IMAGE_ENABLE_DUMP
+#define LUA_UI_IMAGE_ENABLE_DUMP 0
 #endif
 
 #define UI_IMAGE_VIEW_ALIGN 32u
@@ -70,7 +70,7 @@ static ui_image_ud_t* check_image(lua_State* L, int idx) {
   return (ui_image_ud_t*)luaL_checkudata(L, idx, UI_IMAGE_MT);
 }
 
-#if LUA_UI_IMAGE_DEBUG_DUMP
+#if LUA_UI_IMAGE_ENABLE_DUMP
 static uint32_t debug_argb_from_bgra(const uint8_t* p) {
   if (!p) return 0u;
   return ((uint32_t)p[3] << 24) |
@@ -599,7 +599,7 @@ static int l_image_call(lua_State* L) {
   lua_setmetatable(L, -2);
   (void)rebuild_view(L, ud);
   apply_image_config(L, ud, 2);
-#if LUA_UI_IMAGE_DEBUG_DUMP
+#if LUA_UI_IMAGE_ENABLE_DUMP
   debug_dump_image_dsc(ud);
 #endif
   return 1;

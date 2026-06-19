@@ -43,6 +43,7 @@
 #endif
 #include "board_test.h"
 #include "lcd.h"
+#include "runtime_stats.h"
 #include "sdram.h"
 #include "sdram_cold_pool.h"
 #include "ui_screen_launcher.h"
@@ -211,6 +212,7 @@ static void StartLvglTask(void *argument) {
   (void) argument;
 
   /* LCD/UI */
+  RuntimeStats_Init();
   lv_init();
 
   lv_mem_monitor_t mon;
@@ -227,12 +229,25 @@ static void StartLvglTask(void *argument) {
   // DesignLauncher_Create(lv_display_get_default());
 
   for (;;) {
+    RuntimeStats_BeginSection(RUNTIME_STATS_SECTION_FRAME);
+
+    RuntimeStats_BeginSection(RUNTIME_STATS_SECTION_LVGL);
     lvgl_task_handler();
+    RuntimeStats_EndSection(RUNTIME_STATS_SECTION_LVGL);
+
+    RuntimeStats_BeginSection(RUNTIME_STATS_SECTION_LUA);
     Task_LUA();
+    RuntimeStats_EndSection(RUNTIME_STATS_SECTION_LUA);
+
+    RuntimeStats_BeginSection(RUNTIME_STATS_SECTION_LAUNCHER);
     Launcher_Task();
+    RuntimeStats_EndSection(RUNTIME_STATS_SECTION_LAUNCHER);
 #if XHGC_MEM_OVERLAY_ENABLE
     xhgc_mem_overlay_update();
 #endif
+    RuntimeStats_EndSection(RUNTIME_STATS_SECTION_FRAME);
+    RuntimeStats_UpdateSnapshot();
+    RuntimeStats_PrintEveryMs(1000u);
     osDelay(5);
   }
 }
@@ -242,6 +257,7 @@ static void StartLvglTask(void *argument) {
 static void StartLuaTask(void *argument) {
   (void) argument;
 
+  RuntimeStats_Init();
   int lua_rc = lua_init();
   if (lua_rc != 0) {
     printf("lua_init failed: %d\r\n", lua_rc);
@@ -249,7 +265,13 @@ static void StartLuaTask(void *argument) {
   }
 
   for (;;) {
+    RuntimeStats_BeginSection(RUNTIME_STATS_SECTION_FRAME);
+    RuntimeStats_BeginSection(RUNTIME_STATS_SECTION_LUA);
     lua_update_task();
+    RuntimeStats_EndSection(RUNTIME_STATS_SECTION_LUA);
+    RuntimeStats_EndSection(RUNTIME_STATS_SECTION_FRAME);
+    RuntimeStats_UpdateSnapshot();
+    RuntimeStats_PrintEveryMs(1000u);
     osDelay(5);
   }
 }

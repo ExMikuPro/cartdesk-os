@@ -243,6 +243,13 @@ static lua_lifecycle_t g_entry_lifecycle = LUA_LIFECYCLE_COUNT;
 static bool           g_entry_sleeping = false;
 static uint32_t       g_entry_wake_ms = 0;
 
+typedef enum {
+    LUA_VM_RUNTIME_STATE_STOPPED = 0,
+    LUA_VM_RUNTIME_STATE_INITIALIZED = 1,
+    LUA_VM_RUNTIME_STATE_RUNNING = 2,
+    LUA_VM_RUNTIME_STATE_BUSY = 3,
+} lua_vm_runtime_state_t;
+
 static void lua_rt_openlibs(lua_State *L)
 {
     luaL_requiref(L, LUA_GNAME, luaopen_base, 1);
@@ -1743,4 +1750,38 @@ void lua_update_task(void)
 
     lua_rt_scheduler_next_phase(LUA_SCHED_INPUT);
     lua_rt_drive_scheduler();
+}
+
+uint32_t lua_vm_input_queue_len(void)
+{
+    return (uint32_t)g_input_count;
+}
+
+uint32_t lua_vm_input_queue_capacity(void)
+{
+    return (uint32_t)LUA_RT_INPUT_QUEUE_CAPACITY;
+}
+
+uint32_t lua_vm_message_queue_len(void)
+{
+    return (uint32_t)g_message_count;
+}
+
+uint32_t lua_vm_message_queue_capacity(void)
+{
+    return (uint32_t)LUA_RT_MESSAGE_QUEUE_CAPACITY;
+}
+
+uint32_t lua_vm_runtime_state(void)
+{
+    if (!g_L) {
+        return LUA_VM_RUNTIME_STATE_STOPPED;
+    }
+    if (!g_runtime_started) {
+        return LUA_VM_RUNTIME_STATE_INITIALIZED;
+    }
+    if (g_entry_thread != NULL || g_scheduler_phase != LUA_SCHED_IDLE) {
+        return LUA_VM_RUNTIME_STATE_BUSY;
+    }
+    return LUA_VM_RUNTIME_STATE_RUNNING;
 }

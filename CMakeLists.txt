@@ -152,6 +152,7 @@ add_library(cartdesk_common INTERFACE)
 target_compile_definitions(cartdesk_common INTERFACE ${COMMON_DEFINES})
 target_include_directories(cartdesk_common INTERFACE
         ${CORE_INC_DIR}
+        ${DEBUG_DIR}
         ${STM32_HAL_INCLUDES}
         ${FREERTOS_INCLUDES}
 )
@@ -488,6 +489,14 @@ target_include_directories(board_test PUBLIC
 )
 target_link_libraries(board_test PUBLIC cartdesk_common lvgl drv_display drv_storage)
 
+add_library(runtime_debug STATIC
+        ${DEBUG_DIR}/runtime_stats.c
+        ${DEBUG_DIR}/runtime_stats.h
+)
+
+target_include_directories(runtime_debug PUBLIC ${DEBUG_DIR})
+target_link_libraries(runtime_debug PUBLIC cartdesk_common freertos_kernel lua_port)
+
 set(DEBUG_OVERLAY_LIBS)
 if(XHGC_MEM_OVERLAY_ENABLE)
     add_library(mem_overlay STATIC
@@ -527,6 +536,7 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
         app_screen
         app_task
         board_test
+        runtime_debug
         ${DEBUG_OVERLAY_LIBS}
         freertos_kernel
         lvgl
