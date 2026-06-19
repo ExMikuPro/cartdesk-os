@@ -61,6 +61,23 @@ cmake --preset Release
 cmake --build --preset Release -j8
 ```
 
+### CMake Preset 说明
+
+仓库根目录的 `CMakePresets.json` 用来统一管理常用构建配置。当前各个 preset 的用途如下：
+
+| Preset | 作用 | 适用场景 |
+| --- | --- | --- |
+| `Debug` | 默认开发构建，使用 ARM 交叉工具链，关闭内存自测、LCD memory overlay 和实验性 cart 资源缓存。 | 日常开发、CLion 调试、常规实机验证。 |
+| `Debug-Memory-Overlay` | 在 Debug 基础上启用 `XHGC_MEM_OVERLAY_ENABLE` 和启动即显示的 `XHGC_MEM_OVERLAY_BOOT_VISIBLE`。 | 低频观察 LCD 上的 meminfo snapshot，不适合正式固件或日常刷机。 |
+| `Debug-MemInfo-SelfTest` | 在 Debug 基础上启用 `XHGC_MEMINFO_SELFTEST_ENABLE`。 | 验证 `APP_ARENA_REST` / meminfo 的 `used`、`peak`、`reset`、`fail` 统计行为。 |
+| `Debug-DmaPool-SelfTest` | 在 Debug 基础上启用 `XHGC_DMA_POOL_SELFTEST_ENABLE`。 | 验证 `DMA_POOL` 的临时 buffer 分配、对齐、越界失败记录和 reset 统计。 |
+| `Debug-All-Memory-SelfTest` | 同时启用 meminfo 和 DMA_POOL 两组 Debug-only 内存自测。 | 本地集中回归内存统计相关行为，不建议作为默认刷机配置。 |
+| `Debug-Experimental-CartCache` | 在 Debug 基础上启用 `XHGC_ENABLE_EXPERIMENTAL_CART_RESOURCE_CACHE`。 | 研究实验性 `lua_cart_resource_cache` 路径，不用于稳定版本。 |
+| `Release` | 正式发布构建，关闭所有 Debug-only 自测、overlay 和实验缓存。 | 生成接近正式发布形态的固件。 |
+| `Release-MinSize` | 在 `Release` 基础上额外启用 `CARTDESK_EXTREME_SIZE_OPT`，通过 LTO 并排除部分 demo / 调试源码进一步压缩体积。 | 需要尽量缩小固件体积、但又不想改变默认 `Release` 语义时。 |
+
+这些 preset 都继承自隐藏的 `default` 配置：统一使用 `Ninja` 生成器、输出到 `build/<preset-name>/`，并通过 `cmake/gcc-arm-none-eabi.cmake` 选择 `arm-none-eabi` 工具链。
+
 主要产物位于：
 
 ```text

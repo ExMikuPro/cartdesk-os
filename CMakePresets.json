@@ -107,6 +107,21 @@
                 "XHGC_MEM_OVERLAY_BOOT_VISIBLE": "OFF",
                 "XHGC_ENABLE_EXPERIMENTAL_CART_RESOURCE_CACHE": "OFF"
             }
+        },
+        {
+            "name": "Release-MinSize",
+            "displayName": "Release 极限压缩构建",
+            "description": "正式发布构建基础上额外启用 LTO，用于在保持功能边界不变的前提下进一步压缩固件体积。",
+            "inherits": "default",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "XHGC_MEMINFO_SELFTEST_ENABLE": "OFF",
+                "XHGC_DMA_POOL_SELFTEST_ENABLE": "OFF",
+                "XHGC_MEM_OVERLAY_ENABLE": "OFF",
+                "XHGC_MEM_OVERLAY_BOOT_VISIBLE": "OFF",
+                "XHGC_ENABLE_EXPERIMENTAL_CART_RESOURCE_CACHE": "OFF",
+                "CARTDESK_EXTREME_SIZE_OPT": "ON"
+            }
         }
     ],
     "buildPresets": [
@@ -155,6 +170,13 @@
         {
             "name": "Release",
             "configurePreset": "Release",
+            "targets": [
+                "cartdesk-os"
+            ]
+        },
+        {
+            "name": "Release-MinSize",
+            "configurePreset": "Release-MinSize",
             "targets": [
                 "cartdesk-os"
             ]

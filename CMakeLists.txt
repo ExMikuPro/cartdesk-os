@@ -226,6 +226,11 @@ file(GLOB_RECURSE LVGL_SOURCES CONFIGURE_DEPENDS
         ${LVGL_DIR}/demos/widgets/*.c
 )
 
+if(CARTDESK_EXTREME_SIZE_OPT)
+    list(FILTER LVGL_SOURCES EXCLUDE REGEX ".*/demos/widgets/.*\\.c$")
+    list(FILTER LVGL_SOURCES EXCLUDE REGEX ".*/src/debugging/test/.*\\.c$")
+endif()
+
 add_library(lvgl STATIC
         ${LVGL_SOURCES}
         ${LVGL_DIR}/font/lv_menu_font.c

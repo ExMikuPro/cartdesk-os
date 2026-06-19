@@ -236,7 +236,11 @@
 
 #define LV_BUILD_EXAMPLES 0
 
-#define LV_USE_DEMO_WIDGETS    1
+#if defined(CARTDESK_EXTREME_SIZE_OPT) && CARTDESK_EXTREME_SIZE_OPT
+    #define LV_USE_DEMO_WIDGETS    0
+#else
+    #define LV_USE_DEMO_WIDGETS    1
+#endif
 #define LV_USE_DEMO_BENCHMARK  0
 #define LV_USE_DEMO_STRESS     0
 #define LV_USE_DEMO_MUSIC      0
