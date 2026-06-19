@@ -19,7 +19,7 @@
 - Launcher 原生右下角操作提示栏，用字母和中文显示当前选中项操作。
 - Lua VM 运行时，支持生命周期函数和 GPIO/PWM/UI 等宿主 API。
 - FreeRTOS/CMSIS-RTOS2 任务模型，LVGL 和 Lua 在独立任务路径中调度。
-- 运行时可观测性输出：主循环每秒打印一行 runtime stats，覆盖 LVGL/Lua/Launcher 帧耗时、Lua heap、resource arena、队列长度和 FreeRTOS 基础指标。
+- 运行时可观测性输出：主循环每秒打印一行 runtime stats，覆盖 LVGL/Lua/Launcher 帧耗时、Lua heap、resource arena、队列长度和 FreeRTOS 基础指标，并对 LVGL slow frame 继续拆分 `lv_timer` / `flush` / `flush_wait` / `input` / `screen` 来源。
 - CMake/Ninja 构建，按模块拆成显示、存储、GPIO、Lua、UI、任务等静态库。
 
 ## 硬件目标
@@ -121,6 +121,8 @@ Core/Src/main.c
 ## Runtime Stats
 
 固件在 `StartLvglTask()` 的主循环里按秒输出一行 `[stats]` 日志，默认走当前标准输出串口（`USART1`）。输出会包含最近一次和峰值的 `lvgl_task_handler()` / `Task_LUA()` / `Launcher_Task()` / 主循环 work time，以及独立的 loop `period`、慢帧计数、Lua state 名称、Lua heap / resource arena / queue 的 runtime global peak、当前任务栈 high-water 和 FreeRTOS heap 剩余量。
+
+当前 `[stats]` 已额外追加 LVGL breakdown 字段：`lv_timer`、`flush`、`flush_wait`、`dma2d`、`input_read`、`screen`、`flush_cnt`、`flush_px`、`input_cnt` 和 `lvgl_reason`。当最近出现新的 LVGL 慢帧时，还会额外输出一行 `[lvgl-slow]` 摘要，帮助判断慢帧主要来自 timer、flush submit、现有等待路径、输入读取还是明确的 screen 切换片段；这些统计只记录数值，不会在 flush/input callback 内打印。
 
 默认不会额外创建屏幕 overlay，也不会改变 Lua、LVGL、launcher 的调用顺序；主循环仍保持 `lvgl_task_handler() -> Task_LUA() -> Launcher_Task() -> osDelay(5)`。如需关闭 stats 串口输出，可在编译期调整 `RUNTIME_STATS_ENABLE_UART_PRINT`，或在运行时调用 `RuntimeStats_SetPrintEnabled(false)`；如需恢复 `ui.image.dump` 大段图片调试输出，可把 `LUA_UI_IMAGE_ENABLE_DUMP` 改为 `1`。
 

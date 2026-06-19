@@ -7,6 +7,7 @@
 #include "lv_port_disp.h"
 #include "lv_port_tick.h"
 #include "lv_port_indev.h"
+#include "runtime_stats.h"
 
 /*********************
  *      DEFINES
@@ -70,7 +71,9 @@ void lvgl_init(void)
  */
 void lvgl_task_handler(void)
 {
+  RuntimeStats_BeginLvglTimer();
   lv_timer_handler();
+  RuntimeStats_EndLvglTimer();
 }
 
 /**********************

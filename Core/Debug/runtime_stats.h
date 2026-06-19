@@ -24,6 +24,17 @@ typedef enum {
     RUNTIME_STATS_SECTION_COUNT
 } RuntimeStatsSection;
 
+typedef enum {
+    RUNTIME_STATS_LVGL_SLOW_NONE = 0,
+    RUNTIME_STATS_LVGL_SLOW_TIMER,
+    RUNTIME_STATS_LVGL_SLOW_FLUSH,
+    RUNTIME_STATS_LVGL_SLOW_FLUSH_WAIT,
+    RUNTIME_STATS_LVGL_SLOW_DMA2D,
+    RUNTIME_STATS_LVGL_SLOW_INPUT,
+    RUNTIME_STATS_LVGL_SLOW_SCREEN,
+    RUNTIME_STATS_LVGL_SLOW_UNKNOWN
+} RuntimeStatsLvglSlowReason;
+
 typedef struct {
     uint32_t last_us;
     uint32_t peak_us;
@@ -35,10 +46,37 @@ typedef struct {
     uint32_t uptime_ms;
 
     RuntimeStatsTiming lvgl;
+    RuntimeStatsTiming lvgl_timer;
+    RuntimeStatsTiming lvgl_flush;
+    RuntimeStatsTiming lvgl_flush_wait;
+    RuntimeStatsTiming lvgl_dma2d;
+    RuntimeStatsTiming lvgl_input;
+    RuntimeStatsTiming lvgl_screen;
     RuntimeStatsTiming lua;
     RuntimeStatsTiming launcher;
     RuntimeStatsTiming frame;
     RuntimeStatsTiming period;
+
+    uint32_t lvgl_flush_count_last;
+    uint32_t lvgl_flush_count_peak;
+    uint64_t lvgl_flush_count_total;
+    uint32_t lvgl_flush_px_last;
+    uint32_t lvgl_flush_px_peak;
+    uint64_t lvgl_flush_px_total;
+    uint32_t lvgl_input_read_count_last;
+    uint32_t lvgl_input_read_count_peak;
+    uint64_t lvgl_input_read_count_total;
+    uint32_t lvgl_slow_reason;
+    uint32_t lvgl_slow_last_total_us;
+    uint32_t lvgl_slow_last_timer_us;
+    uint32_t lvgl_slow_last_flush_us;
+    uint32_t lvgl_slow_last_flush_wait_us;
+    uint32_t lvgl_slow_last_dma2d_us;
+    uint32_t lvgl_slow_last_input_us;
+    uint32_t lvgl_slow_last_screen_us;
+    uint32_t lvgl_slow_last_flush_count;
+    uint32_t lvgl_slow_last_flush_px;
+    uint32_t lvgl_slow_last_reason;
 
     uint32_t frame_over_16ms_count;
     uint32_t frame_over_33ms_count;
@@ -87,6 +125,18 @@ void RuntimeStats_Init(void);
 uint32_t RuntimeStats_NowUs(void);
 void RuntimeStats_BeginSection(RuntimeStatsSection section);
 void RuntimeStats_EndSection(RuntimeStatsSection section);
+void RuntimeStats_BeginLvglTimer(void);
+void RuntimeStats_EndLvglTimer(void);
+void RuntimeStats_BeginLvglFlush(uint32_t area_px);
+void RuntimeStats_EndLvglFlush(void);
+void RuntimeStats_BeginLvglFlushWait(void);
+void RuntimeStats_EndLvglFlushWait(void);
+void RuntimeStats_BeginLvglDma2d(void);
+void RuntimeStats_EndLvglDma2d(void);
+void RuntimeStats_BeginLvglInput(void);
+void RuntimeStats_EndLvglInput(void);
+void RuntimeStats_BeginLvglScreenOp(void);
+void RuntimeStats_EndLvglScreenOp(void);
 void RuntimeStats_UpdateSnapshot(void);
 void RuntimeStats_GetSnapshot(RuntimeStatsSnapshot *out);
 void RuntimeStats_ResetPeaks(void);
@@ -95,6 +145,7 @@ void RuntimeStats_PrintEveryMs(uint32_t interval_ms);
 void RuntimeStats_SetPrintEnabled(bool enabled);
 bool RuntimeStats_IsPrintEnabled(void);
 const char *RuntimeStats_LuaStateName(uint32_t state);
+const char *RuntimeStats_LvglSlowReasonName(uint32_t reason);
 
 #ifdef __cplusplus
 }
