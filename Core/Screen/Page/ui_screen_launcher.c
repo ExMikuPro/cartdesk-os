@@ -112,6 +112,7 @@ static bool s_launcher_assets_loaded = false;
 static LauncherActionHints s_action_hints;
 static bool s_app_launch_armed = false;
 static bool s_launcher_scrolling = false;
+static bool s_title_overflow[DESIGN_APP_COUNT];
 
 /*
  * 每个槽独立的 LVGL 图像描述符。
@@ -164,11 +165,12 @@ static void prv_profile_count_card_object(uint32_t count)
 #endif
 
 static void prv_update_title_long_mode_for_slot(uint32_t slot, bool enable_scroll_if_needed);
+static void prv_measure_title_overflow_all(void);
 static void prv_disable_all_title_scroll(void);
 static void prv_refresh_selected_title_scroll(void);
 static void prv_box_scroll_event_cb(lv_event_t *e);
 
-static bool prv_title_needs_scroll(lv_obj_t *label)
+static bool prv_measure_title_overflow(lv_obj_t *label)
 {
 #if CARTDESK_LAUNCHER_TITLE_SCROLL_OPT
     lv_point_t text_size;
@@ -200,7 +202,22 @@ static bool prv_title_needs_scroll(lv_obj_t *label)
     return text_size.x > content_width;
 #else
     LV_UNUSED(label);
-    return true;
+    return false;
+#endif
+}
+
+static void prv_measure_title_overflow_all(void)
+{
+#if CARTDESK_LAUNCHER_TITLE_SCROLL_OPT
+    if (s_main_container != NULL) {
+        lv_obj_update_layout(s_main_container);
+    }
+
+    for (uint32_t i = 0; i < DESIGN_APP_COUNT; ++i) {
+        s_title_overflow[i] = prv_measure_title_overflow(s_slot_labels[i]);
+    }
+#else
+    memset(s_title_overflow, 0, sizeof(s_title_overflow));
 #endif
 }
 
@@ -234,7 +251,7 @@ static void prv_update_title_long_mode_for_slot(uint32_t slot, bool enable_scrol
     }
 
 #if CARTDESK_LAUNCHER_TITLE_SCROLL_OPT
-    if (enable_scroll_if_needed && prv_title_needs_scroll(label)) {
+    if (enable_scroll_if_needed && s_title_overflow[slot]) {
         lv_label_set_long_mode(label, LV_LABEL_LONG_SCROLL_CIRCULAR);
     } else {
         lv_label_set_long_mode(label, LV_LABEL_LONG_CLIP);
@@ -1014,6 +1031,7 @@ void DesignLauncher_Create(lv_display_t *disp)
     s_launcher_debug_profile.card_object_total = 0u;
     s_launcher_debug_profile.title_scroll_enabled_count = 0u;
 #endif
+    memset(s_title_overflow, 0, sizeof(s_title_overflow));
 
     if (!s_launcher_assets_loaded) {
         launcher_cache_init();
@@ -1090,6 +1108,7 @@ void DesignLauncher_Create(lv_display_t *disp)
     launcher_action_hints_init(&s_action_hints, s_main_container);
     launcher_action_hints_set_callback(&s_action_hints, prv_action_hint_clicked_cb, NULL);
     prv_profile_count_object(11u);
+    prv_measure_title_overflow_all();
 
     s_selected_index = 0;
     s_app_launch_armed = false;
@@ -1126,6 +1145,7 @@ void DesignLauncher_Destroy(void)
     s_selected_index = 0;
     s_app_launch_armed = false;
     s_launcher_scrolling = false;
+    memset(s_title_overflow, 0, sizeof(s_title_overflow));
 }
 
 void Launcher_DebugPrintProfileIfEnabled(void)
