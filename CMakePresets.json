@@ -95,6 +95,20 @@
             }
         },
         {
+            "name": "SizeDebug",
+            "displayName": "SizeDebug 体积调试构建",
+            "description": "使用 -Os -g3 并生成 .su 栈使用文件，用于接近 Release 行为的性能与栈审计。",
+            "inherits": "default",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+                "XHGC_MEMINFO_SELFTEST_ENABLE": "OFF",
+                "XHGC_DMA_POOL_SELFTEST_ENABLE": "OFF",
+                "XHGC_MEM_OVERLAY_ENABLE": "OFF",
+                "XHGC_MEM_OVERLAY_BOOT_VISIBLE": "OFF",
+                "XHGC_ENABLE_EXPERIMENTAL_CART_RESOURCE_CACHE": "OFF"
+            }
+        },
+        {
             "name": "Release",
             "displayName": "Release 正式构建",
             "description": "正式发布构建，关闭 Debug-only 自测和实验性资源缓存。",
@@ -163,6 +177,13 @@
         {
             "name": "Debug-Experimental-CartCache",
             "configurePreset": "Debug-Experimental-CartCache",
+            "targets": [
+                "cartdesk-os"
+            ]
+        },
+        {
+            "name": "SizeDebug",
+            "configurePreset": "SizeDebug",
             "targets": [
                 "cartdesk-os"
             ]

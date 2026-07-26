@@ -488,11 +488,16 @@ target_include_directories(board_test PUBLIC
 target_link_libraries(board_test PUBLIC cartdesk_common lvgl drv_display drv_storage)
 
 add_library(runtime_debug STATIC
+        ${DEBUG_DIR}/perf_monitor.c
+        ${DEBUG_DIR}/perf_monitor.h
         ${DEBUG_DIR}/runtime_stats.c
         ${DEBUG_DIR}/runtime_stats.h
 )
 
 target_include_directories(runtime_debug PUBLIC ${DEBUG_DIR})
+target_compile_definitions(runtime_debug PUBLIC
+        $<$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>:PERF_MONITOR_ENABLE=1>
+)
 target_link_libraries(runtime_debug PUBLIC cartdesk_common freertos_kernel lua_port)
 target_include_directories(runtime_debug PUBLIC ${TASK_DIR})
 

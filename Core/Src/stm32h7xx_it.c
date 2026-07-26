@@ -20,6 +20,9 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "stm32h7xx_it.h"
+#include "FreeRTOS.h"
+#include "task.h"
+#include "perf_monitor.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "lv_port_disp.h"
@@ -66,9 +69,11 @@ void PendSV_Handler(void) __attribute__((naked));
 /* USER CODE END 0 */
 
 /* External variables --------------------------------------------------------*/
+extern PCD_HandleTypeDef hpcd_USB_OTG_HS;
 extern DMA2D_HandleTypeDef hdma2d;
 extern LTDC_HandleTypeDef hltdc;
 extern MDMA_HandleTypeDef hmdma_mdma_channel0_sw_0;
+extern SD_HandleTypeDef hsd1;
 extern TIM_HandleTypeDef htim16;
 /* USER CODE BEGIN EV */
 
@@ -162,20 +167,6 @@ void UsageFault_Handler(void)
 }
 
 /**
-  * @brief This function handles System service call via SWI instruction.
-  */
-void SVC_Handler(void)
-{
-  /* USER CODE BEGIN SVCall_IRQn 0 */
-  __asm volatile ("b vPortSVCHandler");
-
-  /* USER CODE END SVCall_IRQn 0 */
-  /* USER CODE BEGIN SVCall_IRQn 1 */
-
-  /* USER CODE END SVCall_IRQn 1 */
-}
-
-/**
   * @brief This function handles Debug monitor.
   */
 void DebugMon_Handler(void)
@@ -189,33 +180,29 @@ void DebugMon_Handler(void)
 }
 
 /**
-  * @brief This function handles Pendable request for system service.
-  */
-void PendSV_Handler(void)
-{
-  /* USER CODE BEGIN PendSV_IRQn 0 */
-  __asm volatile ("b xPortPendSVHandler");
-
-  /* USER CODE END PendSV_IRQn 0 */
-  /* USER CODE BEGIN PendSV_IRQn 1 */
-
-  /* USER CODE END PendSV_IRQn 1 */
-}
-
-/**
   * @brief This function handles System tick timer.
   */
 void SysTick_Handler(void)
 {
   /* USER CODE BEGIN SysTick_IRQn 0 */
-
+  uint32_t perf_start = PerfMonitor_Begin();
   /* USER CODE END SysTick_IRQn 0 */
-  HAL_IncTick();
+  /* Explicitly clear COUNTFLAG to avoid timing jitter in CMSIS-RTOS V2 */
+#if (configUSE_TICKLESS_IDLE == 0)
+  (void)SysTick->CTRL;
+#endif
+HAL_IncTick();
+#if (INCLUDE_xTaskGetSchedulerState == 1 )
+  if (xTaskGetSchedulerState() != taskSCHEDULER_NOT_STARTED)
+  {
+#endif /* INCLUDE_xTaskGetSchedulerState */
+  xPortSysTickHandler();
+#if (INCLUDE_xTaskGetSchedulerState == 1 )
+  }
+#endif /* INCLUDE_xTaskGetSchedulerState */
   /* USER CODE BEGIN SysTick_IRQn 1 */
   lv_tick_inc(1);
-  if (xTaskGetSchedulerState() != taskSCHEDULER_NOT_STARTED) {
-    xPortSysTickHandler();
-  }
+  PerfMonitor_End(PERF_MONITOR_IRQ_SYSTICK, perf_start);
 
   /* USER CODE END SysTick_IRQn 1 */
 }
@@ -233,12 +220,40 @@ void SysTick_Handler(void)
 void EXTI3_IRQHandler(void)
 {
   /* USER CODE BEGIN EXTI3_IRQn 0 */
-
+  uint32_t perf_start = PerfMonitor_Begin();
   /* USER CODE END EXTI3_IRQn 0 */
   HAL_GPIO_EXTI_IRQHandler(TOUCH_INT_Pin);
   /* USER CODE BEGIN EXTI3_IRQn 1 */
-
+  PerfMonitor_End(PERF_MONITOR_IRQ_EXTI3, perf_start);
   /* USER CODE END EXTI3_IRQn 1 */
+}
+
+/**
+  * @brief This function handles SDMMC1 global interrupt.
+  */
+void SDMMC1_IRQHandler(void)
+{
+  /* USER CODE BEGIN SDMMC1_IRQn 0 */
+  uint32_t perf_start = PerfMonitor_Begin();
+  /* USER CODE END SDMMC1_IRQn 0 */
+  HAL_SD_IRQHandler(&hsd1);
+  /* USER CODE BEGIN SDMMC1_IRQn 1 */
+  PerfMonitor_End(PERF_MONITOR_IRQ_SDMMC1, perf_start);
+  /* USER CODE END SDMMC1_IRQn 1 */
+}
+
+/**
+  * @brief This function handles USB OTG HS global interrupt.
+  */
+void OTG_HS_IRQHandler(void)
+{
+  /* USER CODE BEGIN OTG_HS_IRQn 0 */
+  uint32_t perf_start = PerfMonitor_Begin();
+  /* USER CODE END OTG_HS_IRQn 0 */
+  HAL_PCD_IRQHandler(&hpcd_USB_OTG_HS);
+  /* USER CODE BEGIN OTG_HS_IRQn 1 */
+  PerfMonitor_End(PERF_MONITOR_IRQ_USB_OTG_HS, perf_start);
+  /* USER CODE END OTG_HS_IRQn 1 */
 }
 
 /**
@@ -247,12 +262,12 @@ void EXTI3_IRQHandler(void)
 void LTDC_IRQHandler(void)
 {
   /* USER CODE BEGIN LTDC_IRQn 0 */
-
+  uint32_t perf_start = PerfMonitor_Begin();
   /* USER CODE END LTDC_IRQn 0 */
   HAL_LTDC_IRQHandler(&hltdc);
   /* USER CODE BEGIN LTDC_IRQn 1 */
   LTDC_IRQHandler_Callback();
-
+  PerfMonitor_End(PERF_MONITOR_IRQ_LTDC, perf_start);
   /* USER CODE END LTDC_IRQn 1 */
 }
 
@@ -262,6 +277,7 @@ void LTDC_IRQHandler(void)
 void DMA2D_IRQHandler(void)
 {
   /* USER CODE BEGIN DMA2D_IRQn 0 */
+  uint32_t perf_start = PerfMonitor_Begin();
   /* Capture ISR flags before HAL clears them */
   uint32_t isr = DMA2D->ISR;
   /* USER CODE END DMA2D_IRQn 0 */
@@ -275,6 +291,7 @@ void DMA2D_IRQHandler(void)
 #else
   (void)isr;
 #endif
+  PerfMonitor_End(PERF_MONITOR_IRQ_DMA2D, perf_start);
   /* USER CODE END DMA2D_IRQn 1 */
 }
 
@@ -284,7 +301,7 @@ void DMA2D_IRQHandler(void)
 void TIM16_IRQHandler(void)
 {
   /* USER CODE BEGIN TIM16_IRQn 0 */
-
+  uint32_t perf_start = PerfMonitor_Begin();
   /* USER CODE END TIM16_IRQn 0 */
   HAL_TIM_IRQHandler(&htim16);
   /* USER CODE BEGIN TIM16_IRQn 1 */
@@ -292,6 +309,7 @@ void TIM16_IRQHandler(void)
   if (TaskTicks_LED) TaskTicks_LED--;
   if (TaskTicks_LVGL) TaskTicks_LVGL--;
   if (TaskTicks_LUA) TaskTicks_LUA--;
+  PerfMonitor_End(PERF_MONITOR_IRQ_TIM16, perf_start);
 
   /* USER CODE END TIM16_IRQn 1 */
 }
@@ -302,11 +320,11 @@ void TIM16_IRQHandler(void)
 void MDMA_IRQHandler(void)
 {
   /* USER CODE BEGIN MDMA_IRQn 0 */
-
+  uint32_t perf_start = PerfMonitor_Begin();
   /* USER CODE END MDMA_IRQn 0 */
   HAL_MDMA_IRQHandler(&hmdma_mdma_channel0_sw_0);
   /* USER CODE BEGIN MDMA_IRQn 1 */
-
+  PerfMonitor_End(PERF_MONITOR_IRQ_MDMA, perf_start);
   /* USER CODE END MDMA_IRQn 1 */
 }
 

@@ -7,7 +7,6 @@
 #endif
 
 #if defined(LV_LVGL_H_INCLUDE_SIMPLE)
-#pragma once
     #include "lvgl.h"
 #else
     #include "lvgl/lvgl.h"

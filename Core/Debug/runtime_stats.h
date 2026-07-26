@@ -13,7 +13,7 @@ extern "C" {
 #endif
 
 #ifndef RUNTIME_STATS_ENABLE_UART_PRINT
-#define RUNTIME_STATS_ENABLE_UART_PRINT 1
+#define RUNTIME_STATS_ENABLE_UART_PRINT 0
 #endif
 
 typedef enum {

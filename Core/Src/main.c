@@ -18,6 +18,9 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "perf_monitor.h"
+#include "FreeRTOS.h"
+#include "cmsis_os2.h"
 #include "crc.h"
 #include "dma2d.h"
 #include "fatfs.h"
@@ -29,6 +32,7 @@
 #include "sdmmc.h"
 #include "tim.h"
 #include "usart.h"
+#include "usb_device.h"
 #include "gpio.h"
 #include "fmc.h"
 
@@ -115,7 +119,9 @@ static const osThreadAttr_t lua_task_attributes = {
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
+void PeriphCommonClock_Config(void);
 static void MPU_Config(void);
+void MX_FREERTOS_Init(void);
 /* USER CODE BEGIN PFP */
 #if !CARTDESK_RUN_LUA_VM_ONLY
 static void StartLvglTask(void *argument);
@@ -333,9 +339,13 @@ int main(void)
   /* MPU Configuration--------------------------------------------------------*/
   MPU_Config();
 
+  /* Enable the CPU Cache */
+
+  /* Enable I-Cache---------------------------------------------------------*/
+  SCB_EnableICache();
+
   /* Enable D-Cache---------------------------------------------------------*/
   SCB_EnableDCache();
-  SCB_EnableICache();
 
   /* MCU Configuration--------------------------------------------------------*/
 
@@ -353,6 +363,9 @@ int main(void)
   /* Configure the system clock */
   SystemClock_Config();
 
+  /* Configure the peripherals common clocks */
+  PeriphCommonClock_Config();
+
   /* USER CODE BEGIN SysInit */
 
   /* USER CODE END SysInit */
@@ -362,28 +375,7 @@ int main(void)
   MX_MDMA_Init();
   MX_LTDC_Init();
   MX_FMC_Init();
-  SDRAM_Init();
-  sdram_layout_check();
-  if (!xhgc_mem_layout_validate()) {
-    Error_Handler();
-  }
-  xhgc_meminfo_init();
-  SDRAM_DmaPoolInit();
-  SDRAM_AppArenaReset();
-  cold_pool_init();
   MX_USART1_UART_Init();
-  xhgc_mem_layout_dump();
-  xhgc_meminfo_dump();
-#if XHGC_MEMINFO_SELFTEST_ENABLE
-  if (!app_arena_meminfo_selftest()) {
-    Error_Handler();
-  }
-#endif
-#if XHGC_DMA_POOL_SELFTEST_ENABLE
-  if (!SDRAM_DmaPoolSelftest()) {
-    Error_Handler();
-  }
-#endif
   MX_SDMMC1_SD_Init();
   MX_FATFS_Init();
   MX_CRC_Init();
@@ -397,6 +389,31 @@ int main(void)
   MX_TIM17_Init();
   MX_TIM16_Init();
   /* USER CODE BEGIN 2 */
+  SDRAM_Init();
+  sdram_layout_check();
+  if (!xhgc_mem_layout_validate()) {
+    Error_Handler();
+  }
+  xhgc_meminfo_init();
+  SDRAM_DmaPoolInit();
+  SDRAM_AppArenaReset();
+  cold_pool_init();
+  xhgc_mem_layout_dump();
+  xhgc_meminfo_dump();
+  PerfMonitor_Init();
+#if XHGC_MEMINFO_SELFTEST_ENABLE
+  if (!app_arena_meminfo_selftest()) {
+    Error_Handler();
+  }
+#endif
+#if XHGC_DMA_POOL_SELFTEST_ENABLE
+  if (!SDRAM_DmaPoolSelftest()) {
+    Error_Handler();
+  }
+#endif
+
+  QFlashFont_ProgrammerReady();
+
   if (osKernelInitialize() != osOK) {
     Error_Handler();
   }
@@ -420,6 +437,15 @@ int main(void)
     Error_Handler();
   }
   /* USER CODE END 2 */
+
+  /* Init scheduler */
+  osKernelInitialize();  /* Call init function for freertos objects (in cmsis_os2.c) */
+  MX_FREERTOS_Init();
+
+  /* Start scheduler */
+  osKernelStart();
+
+  /* We should never get here as control is now taken by the scheduler */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
@@ -495,6 +521,33 @@ void SystemClock_Config(void)
   HAL_RCC_EnableCSS();
 }
 
+/**
+  * @brief Peripherals Common Clock Configuration
+  * @retval None
+  */
+void PeriphCommonClock_Config(void)
+{
+  RCC_PeriphCLKInitTypeDef PeriphClkInitStruct = {0};
+
+  /** Initializes the peripherals clock
+  */
+  PeriphClkInitStruct.PeriphClockSelection = RCC_PERIPHCLK_QSPI|RCC_PERIPHCLK_SDMMC;
+  PeriphClkInitStruct.PLL2.PLL2M = 25;
+  PeriphClkInitStruct.PLL2.PLL2N = 400;
+  PeriphClkInitStruct.PLL2.PLL2P = 2;
+  PeriphClkInitStruct.PLL2.PLL2Q = 2;
+  PeriphClkInitStruct.PLL2.PLL2R = 2;
+  PeriphClkInitStruct.PLL2.PLL2RGE = RCC_PLL2VCIRANGE_0;
+  PeriphClkInitStruct.PLL2.PLL2VCOSEL = RCC_PLL2VCOWIDE;
+  PeriphClkInitStruct.PLL2.PLL2FRACN = 0;
+  PeriphClkInitStruct.QspiClockSelection = RCC_QSPICLKSOURCE_PLL2;
+  PeriphClkInitStruct.SdmmcClockSelection = RCC_SDMMCCLKSOURCE_PLL2;
+  if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInitStruct) != HAL_OK)
+  {
+    Error_Handler();
+  }
+}
+
 /* USER CODE BEGIN 4 */
 
 /* USER CODE END 4 */
@@ -565,7 +618,7 @@ void MPU_Config(void)
   /** Initializes and configures the Region and the memory to be protected
   */
   MPU_InitStruct.Number = MPU_REGION_NUMBER5;
-  MPU_InitStruct.BaseAddress = SDRAM_BASE_ADDR;
+  MPU_InitStruct.BaseAddress = 0xD0000000;
   MPU_InitStruct.Size = MPU_REGION_SIZE_64MB;
   MPU_InitStruct.AccessPermission = MPU_REGION_FULL_ACCESS;
   MPU_InitStruct.DisableExec = MPU_INSTRUCTION_ACCESS_ENABLE;

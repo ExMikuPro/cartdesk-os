@@ -831,8 +831,10 @@ void LCD_DrawTriangleFilled(uint8_t Layer, int x0, int y0, int x1, int y1, int x
     if (y1 > y2) { int tx=x1,ty=y1; x1=x2; y1=y2; x2=tx; y2=ty; }
 
     int minx = x0, maxx = x0;
-    if (x1 < minx) minx = x1; if (x1 > maxx) maxx = x1;
-    if (x2 < minx) minx = x2; if (x2 > maxx) maxx = x2;
+    if (x1 < minx) minx = x1;
+    if (x1 > maxx) maxx = x1;
+    if (x2 < minx) minx = x2;
+    if (x2 > maxx) maxx = x2;
     int miny = y0, maxy = y2;
 
     uint32_t *fb = LCD_GetDrawFB(Layer);  // 【修复】使用back buffer

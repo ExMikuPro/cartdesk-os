@@ -431,13 +431,14 @@ void SDRAM_WriteSpeed_Test(void)
     {
         if (*pBuf++ != j++)
         {
-            printf("Write error at j=%d\r\n", j);
+            printf("Write error at j=%lu\r\n", (unsigned long)j);
             SDRAM_Checkfailed();
         }
     }
 
-    printf("64MB write time: %dms, write speed: %dMB/s\r\n",
-           write_timer, (EXT_SDRAM_SIZE / 1024 / 1024 * 1000) / write_timer);
+    printf("64MB write time: %lums, write speed: %luMB/s\r\n",
+           (unsigned long)write_timer,
+           (unsigned long)((EXT_SDRAM_SIZE / 1024 / 1024 * 1000) / write_timer));
 }
 
 /**
@@ -466,11 +467,13 @@ void SDRAM_ReadSpeed_Test(void)
         ulTemp = *pBuf++;  ulTemp = *pBuf++;  ulTemp = *pBuf++;  ulTemp = *pBuf++;
         ulTemp = *pBuf++;  ulTemp = *pBuf++;  ulTemp = *pBuf++;  ulTemp = *pBuf++;
     }
+    (void)ulTemp;
 
     read_time = timer; /* Save elapsed time */
 
-    printf("64MB read time: %dms, read speed: %dMB/s\r\n\r\n",
-           read_time, (EXT_SDRAM_SIZE / 1024 / 1024 * 1000) / read_time);
+    printf("64MB read time: %lums, read speed: %luMB/s\r\n\r\n",
+           (unsigned long)read_time,
+           (unsigned long)((EXT_SDRAM_SIZE / 1024 / 1024 * 1000) / read_time));
 }
 
 /**
