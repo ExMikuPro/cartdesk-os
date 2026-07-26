@@ -56,6 +56,8 @@ RENDER  1.0 FPS
 
 overlay 使用固定 208 px 宽度、随文本内容自动调整的高度、50% 不透明的黑色背景和全不透明白色文字。它调用 `xhgc_meminfo_get_snapshot()` 复制现有快照，并通过 `disp_get_fps()` 读取 display port 已维护的帧率，不新增高频计数器。它不调用 reset、dump、peak/fail 清理，也不直接读写 allocator 内部变量。文本 buffer 使用静态 `char[512]`，并通过 `lv_label_set_text_static()` 更新 label。
 
+`APP` 的当前值包含 `APP_ARENA_REST` 中仍存活的 LUA、RESOURCE 等用途；应用退出后当前值应随资源和 Lua VM 释放而下降。`P` 是启动以来的历史峰值，退出应用后不会清零。
+
 ## LVGL 上下文限制
 
 所有 API 都必须在 LVGL/UI 线程或主 UI 上下文调用。当前项目没有为其它任务提供 UI 事件队列，因此其它任务不应直接调用这些 API；后续若需要从输入任务、DevLink 或调试命令切换 overlay，应先投递到 UI 上下文。

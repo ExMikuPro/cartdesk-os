@@ -206,16 +206,17 @@ void app_arena_reset_to(app_arena_t *a, app_arena_mark_t mark)
  * @param  a: arena实例指针
  * @retval None
  * @note   - 本函数不清零底层内存
- *         - 若arena位于APP_ARENA_REST，会重置RESOURCE标签的meminfo used统计
+ *         - 若arena位于APP_ARENA_REST，只释放该arena实际占用的RESOURCE统计
+ *         - APP_ARENA_REST由LUA、RESOURCE等标签共享，不能按整个zone清零
  */
 void app_arena_reset(app_arena_t *a)
 {
+  size_t used_before;
+
   if (!a) return;
+  used_before = app_arena_used(a);
   a->ptr = a->base;
-  if (app_arena_meminfo_tracked(a)) {
-    (void)xhgc_meminfo_zone_reset_tag(XHGC_MEM_ZONE_APP_ARENA_REST,
-                                      XHGC_MEM_TAG_RESOURCE);
-  }
+  app_arena_meminfo_free(a, used_before);
 }
 
 /**
