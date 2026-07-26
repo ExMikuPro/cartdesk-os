@@ -40,9 +40,4 @@ int DesignLauncher_GetSelected(void);
  */
 void DesignLauncher_Destroy(void);
 
-/**
- * @brief 打印 launcher 诊断统计（默认关闭）
- */
-void Launcher_DebugPrintProfileIfEnabled(void);
-
 #endif // UI_SCREEN_LAUNCHER_H
