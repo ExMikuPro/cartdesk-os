@@ -75,6 +75,7 @@ set(LVGL_PUBLIC_INCLUDES
         ${LVGL_DIR}
         ${LVGL_DIR}/src
         ${LVGL_DIR}/src/core
+        ${LVGL_DIR}/font
         ${LVGL_PORT_DIR}
 )
 
@@ -234,6 +235,8 @@ endif()
 add_library(lvgl STATIC
         ${LVGL_SOURCES}
         ${LVGL_DIR}/font/lv_menu_font.c
+        ${LVGL_DIR}/font/qflash_font.c
+        ${LVGL_DIR}/font/qflash_font.h
 )
 
 # LVGL v9 内部头文件通过相对路径互相引用，只暴露根目录、src 和移植层。
@@ -276,6 +279,8 @@ target_link_libraries(drv_display PUBLIC cartdesk_common lvgl)
 add_library(drv_storage STATIC
         ${DRIVER_DIR}/FLASH/flash.c
         ${DRIVER_DIR}/FLASH/flash.h
+        ${DRIVER_DIR}/FLASH/qflash_font_programmer.c
+        ${DRIVER_DIR}/FLASH/qflash_font_programmer.h
         ${DRIVER_DIR}/FLASH/lfs.c
         ${DRIVER_DIR}/FLASH/lfs.h
         ${DRIVER_DIR}/FLASH/lfs_util.c
@@ -562,3 +567,5 @@ if(Python3_Interpreter_FOUND)
 else()
     message(WARNING "Python3 not found; SDRAM usage summary will not be printed after build")
 endif()
+
+include(${PROJECT_ROOT}/cmake/QFlashFont.cmake)

@@ -61,18 +61,21 @@
 #include "touch.h"
 #include "lvgl_init.h"
 #include "lvgl.h"
+#include "qflash_font.h"
 #include "cartdesk_task.h"
 #include "flash.h"
 #include "lfs_port.h"
+#include "qflash_font_programmer.h"
 
 #define CARTDESK_RUN_LUA_VM_ONLY 0
 #define CARTDESK_ENABLE_QSPI_STORAGE 0
+#define CARTDESK_ENABLE_QFLASH_FONT 1
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
 
-#if !CARTDESK_RUN_LUA_VM_ONLY && CARTDESK_ENABLE_QSPI_STORAGE
+#if !CARTDESK_RUN_LUA_VM_ONLY && (CARTDESK_ENABLE_QSPI_STORAGE || CARTDESK_ENABLE_QFLASH_FONT)
 static FLASH_Handle g_flash;
 #endif
 #if !CARTDESK_RUN_LUA_VM_ONLY
@@ -125,6 +128,39 @@ static void StartLuaTask(void *argument);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 /* ============================== Storage init ============================== */
+
+#if !CARTDESK_RUN_LUA_VM_ONLY && CARTDESK_ENABLE_QFLASH_FONT
+static void QFlashFont_InitOrFallback(void) {
+  FLASH_Status status = FLASH_Open(&g_flash, &hqspi, 64u * 1024u * 1024u);
+  if (status == FLASH_OK) {
+    status = FLASH_BringUp(&g_flash);
+  }
+  if (status == FLASH_OK) {
+    status = FLASH_EnableMemoryMapped(&g_flash);
+  }
+
+  if (status != FLASH_OK) {
+    const FLASH_ErrorInfo *error = FLASH_LastError(&g_flash);
+    printf("QFLASH font init failed: step=%s code=%d hal=%d qspi=0x%08lx; using built-in font\r\n",
+           error && error->step ? error->step : "?",
+           error ? error->code : -1,
+           error ? error->hal : -1,
+           error ? (unsigned long)error->qspi_error : 0ul);
+    return;
+  }
+
+  const void *font_pack =
+      (const void *)(uintptr_t)(FLASH_MM_BASE + QFLASH_FONT_PACK_OFFSET);
+  if (!QFlashFont_Mount(font_pack, QFLASH_FONT_REGION_SIZE)) {
+    printf("QFLASH font mount failed: %s; using built-in font\r\n",
+           QFlashFont_LastError());
+    return;
+  }
+
+  printf("QFLASH font mounted: 16/20/24 px, default=%u px\r\n",
+         (unsigned)QFLASH_FONT_DEFAULT_SIZE);
+}
+#endif
 
 #if !CARTDESK_RUN_LUA_VM_ONLY && CARTDESK_ENABLE_QSPI_STORAGE
 static void Storage_InitOrDie(void) {
@@ -213,6 +249,9 @@ static void StartLvglTask(void *argument) {
 
   /* LCD/UI */
   RuntimeStats_Init();
+#if CARTDESK_ENABLE_QFLASH_FONT
+  QFlashFont_InitOrFallback();
+#endif
   lv_init();
 
   lv_mem_monitor_t mon;

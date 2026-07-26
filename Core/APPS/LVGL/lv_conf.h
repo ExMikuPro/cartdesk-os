@@ -79,7 +79,15 @@
 
 #define LV_USE_RLE 1
 
-#define LV_FONT_DEFAULT &lv_font_montserrat_20
+#ifdef __cplusplus
+extern "C" {
+#endif
+struct _lv_font_t;
+extern struct _lv_font_t qflash_font_20;
+#ifdef __cplusplus
+}
+#endif
+#define LV_FONT_DEFAULT (&qflash_font_20)
 
 /*=========================
    HAL SETTINGS
