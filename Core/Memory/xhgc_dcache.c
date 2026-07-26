@@ -10,7 +10,7 @@
 
 #define XHGC_DCACHE_LINE_SIZE 32u
 
-typedef void (*xhgc_dcache_op_t)(uint32_t *addr, int32_t size);
+typedef void (*xhgc_dcache_op_t)(volatile void *addr, int32_t size);
 
 /**
  * @brief  将逻辑DCache维护范围扩展到32字节cache line边界
@@ -158,7 +158,7 @@ static void xhgc_dcache_apply_range(const void *ptr, size_t size, xhgc_dcache_op
      * range remains [ptr, ptr + size); the aligned cover may include adjacent
      * bytes that share the same cache lines.
      */
-    op((uint32_t *)aligned_start, (int32_t)aligned_size);
+    op((volatile void *)aligned_start, (int32_t)aligned_size);
 #else
     (void)ptr;
     (void)size;
@@ -189,7 +189,7 @@ void xhgc_dcache_clean_range(const void *ptr, size_t size)
  */
 void xhgc_dcache_invalidate_range(void *ptr, size_t size)
 {
-    xhgc_dcache_apply_range(ptr, size, (xhgc_dcache_op_t)SCB_InvalidateDCache_by_Addr);
+    xhgc_dcache_apply_range(ptr, size, SCB_InvalidateDCache_by_Addr);
 }
 
 /**

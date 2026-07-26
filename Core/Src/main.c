@@ -36,6 +36,7 @@
 /* USER CODE BEGIN Includes */
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 
 #include "cmsis_os2.h"
 #if XHGC_MEMINFO_SELFTEST_ENABLE
@@ -342,6 +343,10 @@ int main(void)
   HAL_Init();
 
   /* USER CODE BEGIN Init */
+  extern uint8_t __sdmmc_ram_start__;
+  extern uint8_t __sdmmc_ram_end__;
+  memset(&__sdmmc_ram_start__, 0,
+         (size_t)(&__sdmmc_ram_end__ - &__sdmmc_ram_start__));
 
   /* USER CODE END Init */
 

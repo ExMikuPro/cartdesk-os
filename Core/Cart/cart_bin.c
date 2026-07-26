@@ -123,7 +123,13 @@ int cart_bin_read_preview_from_sd(const char *path, uint8_t *out_buf, uint32_t b
     }
 
     const UINT row_bytes = (UINT)CART_BIN_PREVIEW_STRIDE;
-    static uint8_t row_buf[CART_BIN_PREVIEW_STRIDE];
+    /*
+     * f_read() can pass this buffer directly to SDMMC1 IDMA when it is
+     * sector-aligned. DTCMRAM is not visible to SDMMC1, so keep the row
+     * staging buffer in the dedicated AXI SRAM section.
+     */
+    static uint8_t row_buf[CART_BIN_PREVIEW_STRIDE]
+        __attribute__((section(".sdmmc_ram_data"), aligned(32)));
 
     for (uint32_t row = 0; row < CART_BIN_PREVIEW_H; row++) {
         fr = f_read(&fp, row_buf, row_bytes, &br);

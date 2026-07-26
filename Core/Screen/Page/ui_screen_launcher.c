@@ -1034,7 +1034,10 @@ void DesignLauncher_Create(lv_display_t *disp)
     memset(s_title_overflow, 0, sizeof(s_title_overflow));
 
     if (!s_launcher_assets_loaded) {
+        bool assets_loaded = false;
+
         launcher_cache_init();
+        memset(s_image_dsc, 0, sizeof(s_image_dsc));
 
         int a = cart_bin_read_title_from_sd("0:/cart.bin", s_cart0_title);
         if (a != 0) {
@@ -1065,8 +1068,10 @@ void DesignLauncher_Create(lv_display_t *disp)
                 s_image_dsc[0].header.cf    = LV_COLOR_FORMAT_ARGB8888;
                 s_image_dsc[0].header.w     = CART_BIN_PREVIEW_W;
                 s_image_dsc[0].header.h     = CART_BIN_PREVIEW_H;
+                s_image_dsc[0].header.stride = CART_BIN_PREVIEW_STRIDE;
                 s_image_dsc[0].data_size    = CART_BIN_PREVIEW_SIZE;
                 s_image_dsc[0].data         = (const uint8_t *)dst;  /* SDRAM 地址 */
+                assets_loaded = true;
             }
         }
 
@@ -1084,11 +1089,14 @@ void DesignLauncher_Create(lv_display_t *disp)
             s_image_dsc[i].header.cf    = LV_COLOR_FORMAT_ARGB8888;
             s_image_dsc[i].header.w     = CART_BIN_PREVIEW_W;
             s_image_dsc[i].header.h     = CART_BIN_PREVIEW_H;
+            s_image_dsc[i].header.stride = CART_BIN_PREVIEW_STRIDE;
             s_image_dsc[i].data_size    = CART_BIN_PREVIEW_SIZE;
             s_image_dsc[i].data         = (const uint8_t *)dst;  /* SDRAM 地址 */
+            assets_loaded = true;
         }
 
-        s_launcher_assets_loaded = true;
+        /* Keep retrying on a later launcher rebuild if every image load failed. */
+        s_launcher_assets_loaded = assets_loaded;
     }
 
     /* 主容器 */
