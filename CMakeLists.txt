@@ -67,7 +67,7 @@ set(FATFS_INCLUDES
 set(FREERTOS_INCLUDES
         ${FREERTOS_DIR}/include
         ${FREERTOS_DIR}/portable/GCC/ARM_CM4F
-        ${FREERTOS_DIR}/CMSIS_RTOS_V2/include
+        ${FREERTOS_DIR}/CMSIS_RTOS_V2
         ${PROJECT_ROOT}/Drivers/CMSIS/RTOS2/Include
 )
 
@@ -161,25 +161,13 @@ target_include_directories(cartdesk_common INTERFACE
 # ==============================================================================
 # FreeRTOS Kernel + CMSIS-RTOS2 wrapper
 # ==============================================================================
-add_library(freertos_kernel STATIC
-        ${FREERTOS_DIR}/tasks.c
-        ${FREERTOS_DIR}/queue.c
-        ${FREERTOS_DIR}/list.c
-        ${FREERTOS_DIR}/timers.c
-        ${FREERTOS_DIR}/event_groups.c
-        ${FREERTOS_DIR}/stream_buffer.c
-        ${FREERTOS_DIR}/croutine.c
-        ${FREERTOS_DIR}/portable/GCC/ARM_CM4F/port.c
-        ${FREERTOS_DIR}/portable/MemMang/heap_4.c
-        ${FREERTOS_DIR}/CMSIS_RTOS_V2/cmsis_os2.c
-        ${FREERTOS_DIR}/CMSIS_RTOS_V2/os_systick.c
-)
+add_library(freertos_kernel INTERFACE)
 
-target_compile_definitions(freertos_kernel PUBLIC
+target_compile_definitions(freertos_kernel INTERFACE
         CMSIS_OS2_CUSTOM_SYSTICK_HANDLER
         CMSIS_device_header="stm32h7xx.h"
 )
-target_link_libraries(freertos_kernel PUBLIC cartdesk_common)
+target_link_libraries(freertos_kernel INTERFACE cartdesk_common)
 
 # ==============================================================================
 # 目标 1: lua —— Lua 5.x 解释器核心
@@ -528,11 +516,37 @@ add_executable(${CMAKE_PROJECT_NAME})
 # 添加 STM32CubeMX 生成的源（main.c / 外设初始化 / 启动文件等）
 add_subdirectory(cmake/stm32cubemx)
 
+# Keep interrupt boundaries visible under extreme-size LTO. This avoids
+# cross-unit inlining of complete HAL handlers into high-frequency IRQ stubs.
+if(CARTDESK_EXTREME_SIZE_OPT)
+    set_source_files_properties(
+            ${PROJECT_ROOT}/Core/Src/stm32h7xx_it.c
+            PROPERTIES COMPILE_OPTIONS "-fno-lto"
+    )
+endif()
+
+# CubeMX 生成目标之外的启动期兼容代码。
+target_sources(${CMAKE_PROJECT_NAME} PRIVATE
+        ${PROJECT_ROOT}/Core/Src/freertos_heap.c
+        ${PROJECT_ROOT}/Core/Src/cmsis_os2_compat.c
+)
+
+# 跟踪 USB/SDMMC 专用 RAM 链接片段，修改后强制重新链接固件。
+set(USB_RAM_LINKER_FRAGMENT ${PROJECT_ROOT}/cmake/usb_ram.ld)
+set(SDMMC_RAM_LINKER_FRAGMENT ${PROJECT_ROOT}/cmake/sdmmc_ram.ld)
+target_link_options(${CMAKE_PROJECT_NAME} PRIVATE
+        "LINKER:-L,${PROJECT_ROOT}"
+)
+set_property(TARGET ${CMAKE_PROJECT_NAME} APPEND PROPERTY
+        LINK_DEPENDS
+        ${USB_RAM_LINKER_FRAGMENT}
+        ${SDMMC_RAM_LINKER_FRAGMENT}
+)
+
 # 去掉 CMake 自动添加的 libob.a（使用 C++ 时的遗留问题）
 list(REMOVE_ITEM CMAKE_C_IMPLICIT_LINK_LIBRARIES ob)
 
 target_link_libraries(${CMAKE_PROJECT_NAME}
-        PRIVATE
         cartdesk_common
         stm32cubemx
         # 用 --start-group/--end-group 让链接器对组内静态库多遍扫描，
