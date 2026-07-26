@@ -28,10 +28,12 @@
 
 | 项目 | 配置 |
 | --- | --- |
-| MCU | STM32H743 |
+| MCU | STM32H743 Rev.V |
+| 时钟 | CPU/SYSCLK 480 MHz，HCLK 240 MHz，APB1/2/3/4 120 MHz，QSPI/SDMMC 内核时钟 200 MHz |
 | 屏幕 | 800x480，ARGB8888 |
 | 显示 | LTDC + DMA2D |
 | 外部内存 | 64 MiB SDRAM，起始地址 `0xD0000000` |
+| 外部字库 | QFLASH A8 霞鹜臻楷，16/20/24 px，默认 20 px |
 | 存储 | SD/FatFs，卡带镜像路径 `0:/cart.bin` |
 | 触摸 | GT911 路径已接入 LVGL 输入层 |
 | 日志 | 标准输出重定向到板级串口路径 |

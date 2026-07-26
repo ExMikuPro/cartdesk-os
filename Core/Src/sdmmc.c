@@ -58,22 +58,11 @@ void HAL_SD_MspInit(SD_HandleTypeDef* sdHandle)
 {
 
   GPIO_InitTypeDef GPIO_InitStruct = {0};
-  RCC_PeriphCLKInitTypeDef PeriphClkInitStruct = {0};
   if(sdHandle->Instance==SDMMC1)
   {
   /* USER CODE BEGIN SDMMC1_MspInit 0 */
 
   /* USER CODE END SDMMC1_MspInit 0 */
-
-  /** Initializes the peripherals clock
-  */
-    PeriphClkInitStruct.PeriphClockSelection = RCC_PERIPHCLK_SDMMC;
-    PeriphClkInitStruct.SdmmcClockSelection = RCC_SDMMCCLKSOURCE_PLL;
-    if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInitStruct) != HAL_OK)
-    {
-      Error_Handler();
-    }
-
     /* SDMMC1 clock enable */
     __HAL_RCC_SDMMC1_CLK_ENABLE();
 
@@ -105,6 +94,8 @@ void HAL_SD_MspInit(SD_HandleTypeDef* sdHandle)
   /* USER CODE BEGIN SDMMC1_MspInit 1 */
 
     HAL_GPIO_WritePin(GPIOC, GPIO_PIN_2, GPIO_PIN_RESET);
+    HAL_NVIC_SetPriority(SDMMC1_IRQn, 5, 0);
+    HAL_NVIC_EnableIRQ(SDMMC1_IRQn);
 
   /* USER CODE END SDMMC1_MspInit 1 */
   }

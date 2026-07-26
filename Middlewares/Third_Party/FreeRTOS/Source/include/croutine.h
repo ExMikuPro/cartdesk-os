@@ -1,6 +1,6 @@
 /*
- * FreeRTOS Kernel <DEVELOPMENT BRANCH>
- * Copyright (C) 2021 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ * FreeRTOS Kernel V10.6.2
+ * Copyright (C) 2021 Amazon.com, Inc. or its affiliates.  All Rights Reserved.
  *
  * SPDX-License-Identifier: MIT
  *
@@ -47,8 +47,8 @@
 typedef void * CoRoutineHandle_t;
 
 /* Defines the prototype to which co-routine functions must conform. */
-typedef void (* crCOROUTINE_CODE)( CoRoutineHandle_t xHandle,
-                                   UBaseType_t uxIndex );
+typedef void (* crCOROUTINE_CODE)( CoRoutineHandle_t,
+                                   UBaseType_t );
 
 typedef struct corCoRoutineControlBlock
 {
@@ -246,10 +246,7 @@ void vCoRoutineSchedule( void );
  * \defgroup crSTART crSTART
  * \ingroup Tasks
  */
-
-/* *INDENT-OFF* */
 #define crEND()    }
-/* *INDENT-ON* */
 
 /*
  * These macros are intended for internal use by the co-routine implementation
@@ -748,13 +745,6 @@ void vCoRoutineAddToDelayedList( TickType_t xTicksToDelay,
  * the pending ready list.
  */
 BaseType_t xCoRoutineRemoveFromEventList( const List_t * pxEventList );
-
-
-/*
- * This function resets the internal state of the coroutine module. It must be
- * called by the application before restarting the scheduler.
- */
-void vCoRoutineResetState( void ) PRIVILEGED_FUNCTION;
 
 /* *INDENT-OFF* */
 #ifdef __cplusplus

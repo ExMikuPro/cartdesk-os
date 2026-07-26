@@ -1,142 +1,202 @@
 cmake_minimum_required(VERSION 3.22)
-
+# Enable CMake support for ASM and C languages
 enable_language(C ASM)
-
-get_filename_component(CUBEMX_ROOT "${CMAKE_CURRENT_LIST_DIR}/../.." ABSOLUTE)
-
 # STM32CubeMX generated symbols (macros)
-set(MX_Defines_Syms
-    USE_PWR_LDO_SUPPLY
-    USE_HAL_DRIVER
-    STM32H743xx
+set(MX_Defines_Syms 
+	USE_PWR_LDO_SUPPLY 
+	USE_HAL_DRIVER 
+	STM32H743xx
     $<$<CONFIG:Debug>:DEBUG>
 )
 
 # STM32CubeMX generated include paths
 set(MX_Include_Dirs
-    ${CUBEMX_ROOT}/Core/Inc
-    ${CUBEMX_ROOT}/FATFS/Target
-    ${CUBEMX_ROOT}/FATFS/App
-    ${CUBEMX_ROOT}/Drivers/STM32H7xx_HAL_Driver/Inc
-    ${CUBEMX_ROOT}/Drivers/STM32H7xx_HAL_Driver/Inc/Legacy
-    ${CUBEMX_ROOT}/Middlewares/Third_Party/FatFs/src
-    ${CUBEMX_ROOT}/Middlewares/Third_Party/FreeRTOS/Source/include
-    ${CUBEMX_ROOT}/Middlewares/Third_Party/FreeRTOS/Source/portable/GCC/ARM_CM4F
-    ${CUBEMX_ROOT}/Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2/include
-    ${CUBEMX_ROOT}/Drivers/CMSIS/Device/ST/STM32H7xx/Include
-    ${CUBEMX_ROOT}/Drivers/CMSIS/Include
-    ${CUBEMX_ROOT}/Drivers/CMSIS/RTOS2/Include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../FATFS/Target
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../FATFS/App
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../USB_DEVICE/App
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../USB_DEVICE/Target
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32H7xx_HAL_Driver/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32H7xx_HAL_Driver/Inc/Legacy
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/FreeRTOS/Source/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/FreeRTOS/Source/portable/GCC/ARM_CM4F
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/CMSIS/RTOS2/Include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/FatFs/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/ST/STM32_USB_Device_Library/Core/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/ST/STM32_USB_Device_Library/Class/CDC/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/CMSIS/Device/ST/STM32H7xx/Include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/CMSIS/Include
 )
 
 # STM32CubeMX generated application sources
 set(MX_Application_Src
-    ${CUBEMX_ROOT}/FATFS/Target/bsp_driver_sd.c
-    ${CUBEMX_ROOT}/FATFS/Target/sd_diskio.c
-    ${CUBEMX_ROOT}/FATFS/App/fatfs.c
-    ${CUBEMX_ROOT}/Core/Src/main.c
-    ${CUBEMX_ROOT}/Core/Src/gpio.c
-    ${CUBEMX_ROOT}/Core/Src/crc.c
-    ${CUBEMX_ROOT}/Core/Src/dma2d.c
-    ${CUBEMX_ROOT}/Core/Src/fmc.c
-    ${CUBEMX_ROOT}/Core/Src/i2c.c
-    ${CUBEMX_ROOT}/Core/Src/ltdc.c
-    ${CUBEMX_ROOT}/Core/Src/mdma.c
-    ${CUBEMX_ROOT}/Core/Src/quadspi.c
-    ${CUBEMX_ROOT}/Core/Src/rng.c
-    ${CUBEMX_ROOT}/Core/Src/sdmmc.c
-    ${CUBEMX_ROOT}/Core/Src/tim.c
-    ${CUBEMX_ROOT}/Core/Src/usart.c
-    ${CUBEMX_ROOT}/Core/Src/stm32h7xx_it.c
-    ${CUBEMX_ROOT}/Core/Src/stm32h7xx_hal_msp.c
-    ${CUBEMX_ROOT}/Core/Src/freertos_hooks.c
-    ${CUBEMX_ROOT}/Core/Src/freertos_heap.c
-    ${CUBEMX_ROOT}/Core/Src/sysmem.c
-    ${CUBEMX_ROOT}/Core/Src/syscalls.c
-    ${CUBEMX_ROOT}/startup_stm32h743xx.s
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../USB_DEVICE/Target/usbd_conf.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../USB_DEVICE/App/usb_device.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../USB_DEVICE/App/usbd_desc.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../USB_DEVICE/App/usbd_cdc_if.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../FATFS/Target/bsp_driver_sd.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../FATFS/Target/sd_diskio.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../FATFS/App/fatfs.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/main.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/gpio.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/freertos.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/crc.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/dma2d.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/fmc.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/i2c.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/ltdc.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/mdma.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/quadspi.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/rng.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/sdmmc.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/tim.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/usart.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/stm32h7xx_it.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/stm32h7xx_hal_msp.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/sysmem.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/syscalls.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../startup_stm32h743xx.s
 )
 
 # STM32 HAL/LL Drivers
 set(STM32_Drivers_Src
-    ${CUBEMX_ROOT}/Core/Src/system_stm32h7xx.c
-    ${CUBEMX_ROOT}/Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal.c
-    ${CUBEMX_ROOT}/Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_cortex.c
-    ${CUBEMX_ROOT}/Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_crc.c
-    ${CUBEMX_ROOT}/Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_crc_ex.c
-    ${CUBEMX_ROOT}/Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_dma.c
-    ${CUBEMX_ROOT}/Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_dma_ex.c
-    ${CUBEMX_ROOT}/Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_dma2d.c
-    ${CUBEMX_ROOT}/Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_dsi.c
-    ${CUBEMX_ROOT}/Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_exti.c
-    ${CUBEMX_ROOT}/Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_flash.c
-    ${CUBEMX_ROOT}/Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_flash_ex.c
-    ${CUBEMX_ROOT}/Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_gpio.c
-    ${CUBEMX_ROOT}/Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_hsem.c
-    ${CUBEMX_ROOT}/Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_i2c.c
-    ${CUBEMX_ROOT}/Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_i2c_ex.c
-    ${CUBEMX_ROOT}/Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_ltdc.c
-    ${CUBEMX_ROOT}/Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_ltdc_ex.c
-    ${CUBEMX_ROOT}/Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_mdma.c
-    ${CUBEMX_ROOT}/Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_mmc.c
-    ${CUBEMX_ROOT}/Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_mmc_ex.c
-    ${CUBEMX_ROOT}/Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_nand.c
-    ${CUBEMX_ROOT}/Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_nor.c
-    ${CUBEMX_ROOT}/Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_pwr.c
-    ${CUBEMX_ROOT}/Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_pwr_ex.c
-    ${CUBEMX_ROOT}/Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_qspi.c
-    ${CUBEMX_ROOT}/Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_rcc.c
-    ${CUBEMX_ROOT}/Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_rcc_ex.c
-    ${CUBEMX_ROOT}/Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_rng.c
-    ${CUBEMX_ROOT}/Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_rng_ex.c
-    ${CUBEMX_ROOT}/Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_sd.c
-    ${CUBEMX_ROOT}/Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_sd_ex.c
-    ${CUBEMX_ROOT}/Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_sdram.c
-    ${CUBEMX_ROOT}/Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_sram.c
-    ${CUBEMX_ROOT}/Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_tim.c
-    ${CUBEMX_ROOT}/Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_tim_ex.c
-    ${CUBEMX_ROOT}/Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_uart.c
-    ${CUBEMX_ROOT}/Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_uart_ex.c
-    ${CUBEMX_ROOT}/Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_ll_delayblock.c
-    ${CUBEMX_ROOT}/Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_ll_fmc.c
-    ${CUBEMX_ROOT}/Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_ll_sdmmc.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/system_stm32h7xx.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_pcd.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_pcd_ex.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_ll_usb.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_rcc.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_rcc_ex.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_flash.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_flash_ex.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_gpio.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_hsem.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_dma.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_dma_ex.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_mdma.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_pwr.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_pwr_ex.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_cortex.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_i2c.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_i2c_ex.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_exti.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_crc.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_crc_ex.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_dma2d.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_ll_fmc.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_nor.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_sram.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_nand.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_sdram.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_ltdc.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_ltdc_ex.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_qspi.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_ll_delayblock.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_rng.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_rng_ex.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_ll_sdmmc.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_sd.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_sd_ex.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_mmc.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_mmc_ex.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_tim.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_tim_ex.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_uart.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_uart_ex.c
 )
 
-# FatFs middleware
+# Drivers Midllewares
+
+
+set(USB_Device_Library_Src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/ST/STM32_USB_Device_Library/Core/Src/usbd_core.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/ST/STM32_USB_Device_Library/Core/Src/usbd_ctlreq.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/ST/STM32_USB_Device_Library/Core/Src/usbd_ioreq.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/ST/STM32_USB_Device_Library/Class/CDC/Src/usbd_cdc.c
+)
+set(FreeRTOS_Src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/FreeRTOS/Source/portable/Common/mpu_wrappers_v2.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/FreeRTOS/Source/croutine.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/FreeRTOS/Source/event_groups.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/FreeRTOS/Source/list.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/FreeRTOS/Source/queue.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/FreeRTOS/Source/stream_buffer.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/FreeRTOS/Source/tasks.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/FreeRTOS/Source/timers.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2/cmsis_os2.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/FreeRTOS/Source/portable/MemMang/heap_4.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/FreeRTOS/Source/portable/GCC/ARM_CM4F/port.c
+)
 set(FatFs_Src
-    ${CUBEMX_ROOT}/Middlewares/Third_Party/FatFs/src/diskio.c
-    ${CUBEMX_ROOT}/Middlewares/Third_Party/FatFs/src/ff.c
-    ${CUBEMX_ROOT}/Middlewares/Third_Party/FatFs/src/ff_gen_drv.c
-    ${CUBEMX_ROOT}/Middlewares/Third_Party/FatFs/src/option/syscall.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/FatFs/src/diskio.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/FatFs/src/ff.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/FatFs/src/ff_gen_drv.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/FatFs/src/option/syscall.c
 )
 
-set(MX_LINK_DIRS)
-set(MX_LINK_LIBS
+# LTO changes object identities to temporary ltrans objects. The linker RAM
+# fragments intentionally select USB/SDMMC BSS by object name, so keep only
+# those generated/DMA-facing translation units as normal ELF objects.
+if(CARTDESK_EXTREME_SIZE_OPT)
+    set_source_files_properties(
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_pcd.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_pcd_ex.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_ll_usb.c
+        ${USB_Device_Library_Src}
+        PROPERTIES COMPILE_OPTIONS "-fno-lto"
+    )
+endif()
+
+# Link directories setup
+set(MX_LINK_DIRS
+
+)
+# Project static libraries
+set(MX_LINK_LIBS 
     STM32_Drivers
     ${TOOLCHAIN_LINK_LIBRARIES}
-    FatFs
+    USB_Device_Library	FreeRTOS	FatFs	
 )
-
-# Interface library for CubeMX generated includes and symbols.
+# Interface library for includes and symbols
 add_library(stm32cubemx INTERFACE)
 target_include_directories(stm32cubemx INTERFACE ${MX_Include_Dirs})
 target_compile_definitions(stm32cubemx INTERFACE ${MX_Defines_Syms})
-target_link_libraries(stm32cubemx INTERFACE cartdesk_common)
 
-add_library(STM32_Drivers OBJECT ${STM32_Drivers_Src})
+# Create STM32_Drivers static library
+add_library(STM32_Drivers OBJECT)
+target_sources(STM32_Drivers PRIVATE ${STM32_Drivers_Src})
 target_link_libraries(STM32_Drivers PUBLIC stm32cubemx)
 
-add_library(FatFs OBJECT ${FatFs_Src})
+
+# Create USB_Device_Library static library
+add_library(USB_Device_Library OBJECT)
+target_sources(USB_Device_Library PRIVATE ${USB_Device_Library_Src})
+target_link_libraries(USB_Device_Library PUBLIC stm32cubemx)
+
+# Create FreeRTOS static library
+add_library(FreeRTOS OBJECT)
+target_sources(FreeRTOS PRIVATE ${FreeRTOS_Src})
+target_link_libraries(FreeRTOS PUBLIC stm32cubemx)
+
+# Create FatFs static library
+add_library(FatFs OBJECT)
+target_sources(FatFs PRIVATE ${FatFs_Src})
 target_link_libraries(FatFs PUBLIC stm32cubemx)
 
-# Add STM32CubeMX generated application sources to the project.
+# Add STM32CubeMX generated application sources to the project
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE ${MX_Application_Src})
+
+# Link directories setup
 target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE ${MX_LINK_DIRS})
-target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE ${MX_LINK_LIBS})
 
-set_target_properties(${CMAKE_PROJECT_NAME}
-    PROPERTIES
-        ADDITIONAL_CLEAN_FILES ${CMAKE_PROJECT_NAME}.map
-)
+# Add libraries to the project
+target_link_libraries(${CMAKE_PROJECT_NAME} ${MX_LINK_LIBS})
 
+# Add the map file to the list of files to be removed with 'clean' target
+set_target_properties(${CMAKE_PROJECT_NAME} PROPERTIES ADDITIONAL_CLEAN_FILES ${CMAKE_PROJECT_NAME}.map)
+
+# Validate that STM32CubeMX code is compatible with C standard
 if((CMAKE_C_STANDARD EQUAL 90) OR (CMAKE_C_STANDARD EQUAL 99))
     message(ERROR "Generated code requires C11 or higher")
 endif()

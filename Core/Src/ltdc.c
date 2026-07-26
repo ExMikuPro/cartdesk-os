@@ -19,7 +19,6 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "ltdc.h"
-#include "sdram_layout.h"
 
 /* USER CODE BEGIN 0 */
 
@@ -70,7 +69,7 @@ void MX_LTDC_Init(void)
   pLayerCfg.Alpha0 = 0;
   pLayerCfg.BlendingFactor1 = LTDC_BLENDING_FACTOR1_CA;
   pLayerCfg.BlendingFactor2 = LTDC_BLENDING_FACTOR2_CA;
-  pLayerCfg.FBStartAdress = SDRAM_LAYER1_FB0_ADDR;
+  pLayerCfg.FBStartAdress = 0xD0000000;
   pLayerCfg.ImageWidth = 800;
   pLayerCfg.ImageHeight = 480;
   pLayerCfg.Backcolor.Blue = 0;
@@ -89,7 +88,7 @@ void MX_LTDC_Init(void)
   pLayerCfg1.Alpha0 = 0;
   pLayerCfg1.BlendingFactor1 = LTDC_BLENDING_FACTOR1_PAxCA;
   pLayerCfg1.BlendingFactor2 = LTDC_BLENDING_FACTOR2_PAxCA;
-  pLayerCfg1.FBStartAdress = SDRAM_LAYER1_FB1_ADDR;
+  pLayerCfg1.FBStartAdress = 0xD0177000;
   pLayerCfg1.ImageWidth = 800;
   pLayerCfg1.ImageHeight = 480;
   pLayerCfg1.Backcolor.Blue = 0;
@@ -264,3 +263,4 @@ void HAL_LTDC_MspDeInit(LTDC_HandleTypeDef* ltdcHandle)
 /* USER CODE BEGIN 1 */
 
 /* USER CODE END 1 */
+

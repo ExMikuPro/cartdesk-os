@@ -60,30 +60,11 @@ void HAL_QSPI_MspInit(QSPI_HandleTypeDef* qspiHandle)
 {
 
   GPIO_InitTypeDef GPIO_InitStruct = {0};
-  RCC_PeriphCLKInitTypeDef PeriphClkInitStruct = {0};
   if(qspiHandle->Instance==QUADSPI)
   {
   /* USER CODE BEGIN QUADSPI_MspInit 0 */
 
   /* USER CODE END QUADSPI_MspInit 0 */
-
-  /** Initializes the peripherals clock
-  */
-    PeriphClkInitStruct.PeriphClockSelection = RCC_PERIPHCLK_QSPI;
-    PeriphClkInitStruct.PLL2.PLL2M = 25;
-    PeriphClkInitStruct.PLL2.PLL2N = 216;
-    PeriphClkInitStruct.PLL2.PLL2P = 2;
-    PeriphClkInitStruct.PLL2.PLL2Q = 2;
-    PeriphClkInitStruct.PLL2.PLL2R = 1;
-    PeriphClkInitStruct.PLL2.PLL2RGE = RCC_PLL2VCIRANGE_0;
-    PeriphClkInitStruct.PLL2.PLL2VCOSEL = RCC_PLL2VCOWIDE;
-    PeriphClkInitStruct.PLL2.PLL2FRACN = 0;
-    PeriphClkInitStruct.QspiClockSelection = RCC_QSPICLKSOURCE_PLL2;
-    if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInitStruct) != HAL_OK)
-    {
-      Error_Handler();
-    }
-
     /* QUADSPI clock enable */
     __HAL_RCC_QSPI_CLK_ENABLE();
 
@@ -191,3 +172,4 @@ void HAL_QSPI_MspDeInit(QSPI_HandleTypeDef* qspiHandle)
 /* USER CODE BEGIN 1 */
 
 /* USER CODE END 1 */
+

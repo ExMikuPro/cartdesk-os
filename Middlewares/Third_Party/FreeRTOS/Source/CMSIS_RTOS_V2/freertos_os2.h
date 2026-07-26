@@ -1,5 +1,5 @@
 /* --------------------------------------------------------------------------
- * Copyright (c) 2013-2024 Arm Limited. All rights reserved.
+ * Copyright (c) 2013-2021 Arm Limited. All rights reserved.
  *
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -28,38 +28,9 @@
 
 #include "FreeRTOS.h"                   // ARM.FreeRTOS::RTOS:Core
 
-#if defined(_RTE_)
-#include "RTE_Components.h"             // Component selection
-#elif !defined(CMSIS_device_header)
-#error "CMSIS_device_header must be defined to point to CMSIS device header"
-#endif
-
 #include CMSIS_device_header
 
-/* Configuration and component setup check */
-#if defined(RTE_Compiler_EventRecorder) || defined(RTE_CMSIS_View_EventRecorder)
-  #if !defined(EVR_FREERTOS_DISABLE)
-    #define USE_TRACE_EVENT_RECORDER
     /*
-      FreeRTOS provides functions and hooks to support execution tracing. This
-      functionality is only enabled if configUSE_TRACE_FACILITY == 1.
-      Set #define configUSE_TRACE_FACILITY 1 in FreeRTOSConfig.h to enable trace events.
-    */
-    #if (configUSE_TRACE_FACILITY == 0)
-      #error "Definition configUSE_TRACE_FACILITY must equal 1 to enable FreeRTOS trace events."
-    #endif
-  #endif
-#endif
-
-#if defined(RTE_RTOS_FreeRTOS_HEAP_1)
-  #define USE_FreeRTOS_HEAP_1
-#endif
-
-#if defined(RTE_RTOS_FreeRTOS_HEAP_5)
-  #define USE_FreeRTOS_HEAP_5
-#endif
-
-/*
   CMSIS-RTOS2 FreeRTOS image size optimization definitions.
 
   Note: Definitions configUSE_OS2 can be used to optimize FreeRTOS image size when
@@ -113,12 +84,6 @@
 #define configUSE_OS2_MUTEX                   configUSE_MUTEXES
 #endif
 
-/*
-  Option to exclude CMSIS-RTOS2 Processor Affinity API functions from the application image.
-*/
-#ifndef configUSE_OS2_CPU_AFFINITY
-#define configUSE_OS2_CPU_AFFINITY            configUSE_CORE_AFFINITY
-#endif
 
 /*
   CMSIS-RTOS2 FreeRTOS configuration check (FreeRTOSConfig.h).
@@ -275,26 +240,6 @@
     #error "Definition configUSE_MUTEXES must equal 1 to implement Mutex Management API."
   #endif
 #endif
-
-#if (configUSE_CORE_AFFINITY == 0)
-  /*
-    CMSIS-RTOS2 Processor Affinity API functions require FreeRTOS kernel support for
-    Symmetric Multiprocessing (SMP). In case if this functionality is not available
-    and the functions are not used in the application image, compiler will optimize
-    them away.
-    Set #define configUSE_CORE_AFFINITY 1 to fix this error.
-    Note: SMP is only available when #define configNUMBER_OF_CORES > 1
-
-    Alternatively, if the application does not use processor affinity functions they
-    can be excluded from the image code by setting:
-    #define configUSE_OS2_CPU_AFFINITY 0 (in FreeRTOSConfig.h)
-  */
-
-  #if (configUSE_OS2_CPU_AFFINITY == 1)
-    #error "Definitions configNUMBER_OF_CORES and configUSE_CORE_AFFINITY must equal 1 to implement Processor Affinity API."
-  #endif
-#endif
-
 
 #if (configUSE_COUNTING_SEMAPHORES == 0)
   /*

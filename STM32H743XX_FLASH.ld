@@ -307,6 +307,9 @@ SECTIONS
   PROVIDE( __arm32_tls_tcb_offset = MAX(8, __tls_align) );
   PROVIDE( __arm64_tls_tcb_offset = MAX(16, __tls_align) );
 
+  INCLUDE cmake/usb_ram.ld
+  INCLUDE cmake/sdmmc_ram.ld
+
   .bss (NOLOAD) : ALIGN(4)
   {
     *(.bss)

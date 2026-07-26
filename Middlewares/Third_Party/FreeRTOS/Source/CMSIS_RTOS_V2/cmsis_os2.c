@@ -1,5 +1,5 @@
 /* --------------------------------------------------------------------------
- * Copyright 2013-2026 Arm Limited and/or its affiliates.
+ * Copyright (c) 2013-2022 Arm Limited. All rights reserved.
  *
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -19,12 +19,7 @@
  *      Purpose: CMSIS RTOS2 wrapper for FreeRTOS
  *
  *---------------------------------------------------------------------------*/
-
 #include <string.h>
-
-#include "cmsis_os2.h"                  // ::CMSIS:RTOS2
-#include "cmsis_compiler.h"             // Compiler agnostic definitions
-#include "os_tick.h"                    // OS Tick API
 
 #include "FreeRTOS.h"                   // ARM.FreeRTOS::RTOS:Core
 #include "task.h"                       // ARM.FreeRTOS::RTOS:Core
@@ -34,6 +29,9 @@
 
 #include "freertos_mpool.h"             // osMemoryPool definitions
 #include "freertos_os2.h"               // Configuration check and setup
+
+#include "cmsis_os2.h"                  // ::CMSIS:RTOS2
+#include "cmsis_compiler.h"             // Compiler agnostic definitions
 
 /*---------------------------------------------------------------------------*/
 #ifndef __ARM_ARCH_6M__
@@ -85,8 +83,8 @@
 #define EVENT_FLAGS_INVALID_BITS  (~((1UL << MAX_BITS_EVENT_GROUPS) - 1U))
 
 /* Kernel version and identification string definition (major.minor.rev: mmnnnrrrr dec) */
-#define KERNEL_VERSION            (((uint32_t)tskKERNEL_VERSION_MAJOR * 10000000UL) + \
-                                   ((uint32_t)tskKERNEL_VERSION_MINOR *    10000UL) + \
+#define KERNEL_VERSION            (((uint32_t)tskKERNEL_VERSION_MAJOR * 10000000UL) | \
+                                   ((uint32_t)tskKERNEL_VERSION_MINOR *    10000UL) | \
                                    ((uint32_t)tskKERNEL_VERSION_BUILD *        1UL))
 
 #define KERNEL_ID                 ("FreeRTOS " tskKERNEL_VERSION_NUMBER)
@@ -99,6 +97,15 @@ typedef struct {
 
 /* Kernel initialization state */
 static osKernelState_t KernelState = osKernelInactive;
+
+/* Get OS Tick count value */
+static uint32_t OS_Tick_GetCount (void);
+#if (configUSE_TICKLESS_IDLE == 0)
+/* Get OS Tick overflow status */
+static uint32_t OS_Tick_GetOverflow (void);
+#endif
+/* Get OS Tick interval */
+static uint32_t OS_Tick_GetInterval (void);
 
 /*
   Heap region definition used by heap_5 variant
@@ -142,7 +149,7 @@ static osKernelState_t KernelState = osKernelInactive;
 #endif /* configAPPLICATION_ALLOCATED_HEAP */
 #endif /* USE_FreeRTOS_HEAP_5 */
 
-#if defined(SysTick) && !defined(CMSIS_OS2_CUSTOM_SYSTICK_HANDLER)
+#if defined(SysTick)
 #undef SysTick_Handler
 
 /* CMSIS SysTick interrupt handler prototype */
@@ -153,6 +160,7 @@ extern void xPortSysTickHandler (void);
 /*
   SysTick handler implementation that also clears overflow flag.
 */
+#if (USE_CUSTOM_SYSTICK_HANDLER_IMPLEMENTATION == 0)
 void SysTick_Handler (void) {
 #if (configUSE_TICKLESS_IDLE == 0)
   /* Clear overflow flag */
@@ -164,7 +172,27 @@ void SysTick_Handler (void) {
     xPortSysTickHandler();
   }
 }
+#endif
 #endif /* SysTick */
+
+/*
+  Setup SVC to reset value.
+*/
+__STATIC_INLINE void SVC_Setup (void) {
+#if (__ARM_ARCH_7A__ == 0U)
+  /* Service Call interrupt might be configured before kernel start      */
+  /* and when its priority is lower or equal to BASEPRI, svc instruction */
+  /* causes a Hard Fault.                                                */
+  NVIC_SetPriority (SVCall_IRQn, 0U);
+#endif
+}
+
+/*
+  Function macro used to retrieve semaphore count from ISR
+*/
+#ifndef uxSemaphoreGetCountFromISR
+#define uxSemaphoreGetCountFromISR( xSemaphore ) uxQueueMessagesWaitingFromISR( ( QueueHandle_t ) ( xSemaphore ) )
+#endif
 
 /*
   Determine if CPU executes from interrupt context or if interrupts are masked.
@@ -196,6 +224,37 @@ __STATIC_INLINE uint32_t IRQ_Context (void) {
   return (irq);
 }
 
+/* Get OS Tick count value */
+static uint32_t OS_Tick_GetCount (void) {
+#if (__ARM_ARCH_7A__ == 1U)
+  return (__get_CNTFRQ() - PL1_GetCurrentValue());
+#else
+  uint32_t load = SysTick->LOAD;
+  return  (load - SysTick->VAL);
+#endif /* __ARM_ARCH_7A__ */
+}
+
+#if (configUSE_TICKLESS_IDLE == 0)
+/* Get OS Tick overflow status */
+static uint32_t OS_Tick_GetOverflow (void) {
+#if (__ARM_ARCH_7A__ == 1U)
+  CNTP_CTL_Type cntp_ctl;
+  cntp_ctl.w = PL1_GetControl();
+  return (cntp_ctl.b.ISTATUS);
+#else
+  return ((SysTick->CTRL >> 16) & 1U);
+#endif /* __ARM_ARCH_7A__ */
+}
+#endif
+
+/* Get OS Tick interval */
+static uint32_t OS_Tick_GetInterval (void) {
+#if (__ARM_ARCH_7A__ == 1U)
+  return (__get_CNTFRQ() + 1U);
+#else
+  return (SysTick->LOAD + 1U);
+#endif /* __ARM_ARCH_7A__ */
+}
 
 /* ==== Kernel Management Functions ==== */
 
@@ -303,6 +362,8 @@ osStatus_t osKernelStart (void) {
 
     /* Start scheduler if initialized and not started before */
     if ((state == taskSCHEDULER_NOT_STARTED) && (KernelState == osKernelReady)) {
+      /* Ensure SVC priority is at the reset value */
+      SVC_Setup();
       /* Change state to ensure correct API flow */
       KernelState = osKernelRunning;
       /* Start the kernel scheduler */
@@ -329,8 +390,6 @@ int32_t osKernelLock (void) {
   else {
     switch (xTaskGetSchedulerState()) {
       case taskSCHEDULER_SUSPENDED:
-        /* Suspend scheduler or increment nesting level */
-        vTaskSuspendAll();
         lock = 1;
         break;
 
@@ -363,8 +422,12 @@ int32_t osKernelUnlock (void) {
     switch (xTaskGetSchedulerState()) {
       case taskSCHEDULER_SUSPENDED:
         lock = 1;
-        /* Resume scheduler or decrement nesting level */
-        (void)xTaskResumeAll();
+
+        if (xTaskResumeAll() != pdTRUE) {
+          if (xTaskGetSchedulerState() == taskSCHEDULER_SUSPENDED) {
+            lock = (int32_t)osError;
+          }
+        }
         break;
 
       case taskSCHEDULER_RUNNING:
@@ -393,25 +456,20 @@ int32_t osKernelRestoreLock (int32_t lock) {
   else {
     switch (xTaskGetSchedulerState()) {
       case taskSCHEDULER_SUSPENDED:
-        if (lock == 0) {
-          /* Resume scheduler or decrement nesting level */
-          (void)xTaskResumeAll();
-        }
-        else {
-          if (lock != 1) {
-            lock = (int32_t)osError;
-          }
-        }
-        break;
-
       case taskSCHEDULER_RUNNING:
         if (lock == 1) {
-          /* Suspend scheduler or increment nesting level */
           vTaskSuspendAll();
         }
         else {
           if (lock != 0) {
             lock = (int32_t)osError;
+          }
+          else {
+            if (xTaskResumeAll() != pdTRUE) {
+              if (xTaskGetSchedulerState() != taskSCHEDULER_RUNNING) {
+                lock = (int32_t)osError;
+              }
+            }
           }
         }
         break;
@@ -470,9 +528,7 @@ uint32_t osKernelGetSysTimerCount (void) {
   val0 = OS_Tick_GetCount();
 #endif
 
-  if (irqmask == 0U) {
-    __disable_irq();
-  }
+  __disable_irq();
 
   ticks = xTaskGetTickCount();
   val   = OS_Tick_GetCount();
@@ -524,9 +580,6 @@ osThreadId_t osThreadNew (osThreadFunc_t func, void *argument, const osThreadAtt
   TaskHandle_t hTask;
   UBaseType_t prio;
   int32_t mem;
-#if (configUSE_OS2_CPU_AFFINITY == 1)
-  UBaseType_t core_aff = tskNO_AFFINITY;
-#endif
 
   hTask = NULL;
 
@@ -538,9 +591,9 @@ osThreadId_t osThreadNew (osThreadFunc_t func, void *argument, const osThreadAtt
     mem  = -1;
 
     if (attr != NULL) {
-      /* Take the name from attributes */
-      name = attr->name;
-
+      if (attr->name != NULL) {
+        name = attr->name;
+      }
       if (attr->priority != osPriorityNone) {
         prio = (UBaseType_t)attr->priority;
       }
@@ -548,11 +601,6 @@ osThreadId_t osThreadNew (osThreadFunc_t func, void *argument, const osThreadAtt
       if ((prio < osPriorityIdle) || (prio > osPriorityISR) || ((attr->attr_bits & osThreadJoinable) == osThreadJoinable)) {
         /* Invalid priority or unsupported osThreadJoinable attribute used */
         return (NULL);
-      }
-
-      if ((attr->attr_bits & osThreadPrivileged) == osThreadPrivileged) {
-        /* Set privilege bit to create a privileged task */
-        prio |= portPRIVILEGE_BIT;
       }
 
       if (attr->stack_size > 0U) {
@@ -572,12 +620,6 @@ osThreadId_t osThreadNew (osThreadFunc_t func, void *argument, const osThreadAtt
           mem = 0;
         }
       }
-
-      #if (configUSE_OS2_CPU_AFFINITY == 1)
-        if (attr->affinity_mask != 0U) {
-          core_aff = attr->affinity_mask;
-        }
-      #endif
     }
     else {
       mem = 0;
@@ -585,49 +627,16 @@ osThreadId_t osThreadNew (osThreadFunc_t func, void *argument, const osThreadAtt
 
     if (mem == 1) {
       #if (configSUPPORT_STATIC_ALLOCATION == 1)
-        #if (configUSE_OS2_CPU_AFFINITY == 0)
-          hTask = xTaskCreateStatic ((TaskFunction_t)func,
-                                                     name,
-                                                     stack,
-                                                     argument,
-                                                     prio - 1U,
-                                     (StackType_t  *)attr->stack_mem,
-                                     (StaticTask_t *)attr->cb_mem);
-        #else
-          hTask = xTaskCreateStaticAffinitySet ((TaskFunction_t)func,
-                                                                name,
-                                                                stack,
-                                                                argument,
-                                                                prio - 1U,
-                                                (StackType_t  *)attr->stack_mem,
-                                                (StaticTask_t *)attr->cb_mem,
-                                                                core_aff);
-        #endif
+        hTask = xTaskCreateStatic ((TaskFunction_t)func, name, stack, argument, prio, (StackType_t  *)attr->stack_mem,
+                                                                                      (StaticTask_t *)attr->cb_mem);
       #endif
     }
     else {
       if (mem == 0) {
         #if (configSUPPORT_DYNAMIC_ALLOCATION == 1)
-          #if (configUSE_OS2_CPU_AFFINITY == 0)
-            if (xTaskCreate ((TaskFunction_t        )func,
-                                                     name,
-                             (configSTACK_DEPTH_TYPE)stack,
-                                                     argument,
-                                                     prio - 1U,
-                                                     &hTask) != pdPASS) {
-              hTask = NULL;
-            }
-          #else
-            if (xTaskCreateAffinitySet ((TaskFunction_t        )func,
-                                                                name,
-                                        (configSTACK_DEPTH_TYPE)stack,
-                                                                argument,
-                                                                prio - 1U,
-                                                                core_aff,
-                                                                &hTask) != pdPASS) {
-              hTask = NULL;
-            }
-          #endif
+          if (xTaskCreate ((TaskFunction_t)func, name, (configSTACK_DEPTH_TYPE)stack, argument, prio, &hTask) != pdPASS) {
+            hTask = NULL;
+          }
         #endif
       }
     }
@@ -644,15 +653,9 @@ const char *osThreadGetName (osThreadId_t thread_id) {
   TaskHandle_t hTask = (TaskHandle_t)thread_id;
   const char *name;
 
-  if (hTask == NULL) {
+  if ((IRQ_Context() != 0U) || (hTask == NULL)) {
     name = NULL;
-  }
-  else if (IRQ_Context() != 0U) {
-    /* Retrieve the name even though the function is not allowed to be called from ISR */
-    /* Function implementation allows this therefore we make an exception.             */
-    name = pcTaskGetName (hTask);
-  }
-  else {
+  } else {
     name = pcTaskGetName (hTask);
   }
 
@@ -730,7 +733,7 @@ osStatus_t osThreadSetPriority (osThreadId_t thread_id, osPriority_t priority) {
   }
   else {
     stat = osOK;
-    vTaskPrioritySet (hTask, (UBaseType_t)priority - 1U);
+    vTaskPrioritySet (hTask, (UBaseType_t)priority);
   }
 
   /* Return execution status */
@@ -747,7 +750,7 @@ osPriority_t osThreadGetPriority (osThreadId_t thread_id) {
   if ((IRQ_Context() != 0U) || (hTask == NULL)) {
     prio = osPriorityError;
   } else {
-    prio = (osPriority_t)(uxTaskPriorityGet (hTask) + 1U);
+    prio = (osPriority_t)((int32_t)uxTaskPriorityGet (hTask));
   }
 
   /* Return current thread priority */
@@ -800,7 +803,6 @@ osStatus_t osThreadSuspend (osThreadId_t thread_id) {
 osStatus_t osThreadResume (osThreadId_t thread_id) {
   TaskHandle_t hTask = (TaskHandle_t)thread_id;
   osStatus_t stat;
-  eTaskState tstate;
 
   if (IRQ_Context() != 0U) {
     stat = osErrorISR;
@@ -809,22 +811,8 @@ osStatus_t osThreadResume (osThreadId_t thread_id) {
     stat = osErrorParameter;
   }
   else {
-    tstate = eTaskGetState (hTask);
-
-    if (tstate == eSuspended) {
-      /* Thread is suspended */
-      stat = osOK;
-      vTaskResume (hTask);
-    } else {
-      /* Not suspended, might be blocked */
-      if (xTaskAbortDelay(hTask) == pdPASS) {
-        /* Thread was unblocked */
-        stat = osOK;
-      } else {
-        /* Thread was not blocked */
-        stat = osErrorResource;
-      }
-    }
+    stat = osOK;
+    vTaskResume (hTask);
   }
 
   /* Return execution status */
@@ -846,10 +834,9 @@ __NO_RETURN void osThreadExit (void) {
   Terminate execution of a thread.
 */
 osStatus_t osThreadTerminate (osThreadId_t thread_id) {
-  osStatus_t stat;
-
-#ifndef USE_FreeRTOS_HEAP_1
   TaskHandle_t hTask = (TaskHandle_t)thread_id;
+  osStatus_t stat;
+#ifndef USE_FreeRTOS_HEAP_1
   eTaskState tstate;
 
   if (IRQ_Context() != 0U) {
@@ -869,51 +856,11 @@ osStatus_t osThreadTerminate (osThreadId_t thread_id) {
     }
   }
 #else
-  (void)thread_id;
   stat = osError;
 #endif
 
   /* Return execution status */
   return (stat);
-}
-
-/*
-  Detach a thread.
-
-  The FreeRTOS CMSIS-RTOS2 wrapper creates detached threads by default and does
-  not support joinable threads. Treat detach as a successful no-op for a valid
-  thread handle so CMSIS-RTOS2 clients can call it unconditionally.
-*/
-osStatus_t osThreadDetach (osThreadId_t thread_id) {
-  osStatus_t stat;
-
-  if (IRQ_Context() != 0U) {
-    stat = osErrorISR;
-  }
-  else if (thread_id == NULL) {
-    stat = osErrorParameter;
-  }
-  else {
-    stat = osOK;
-  }
-
-  return (stat);
-}
-
-/*
-  Join a thread.
-
-  Joinable threads are not supported by this wrapper; osThreadNew rejects
-  osThreadJoinable attributes.
-*/
-osStatus_t osThreadJoin (osThreadId_t thread_id) {
-  (void) thread_id;
-
-  if (IRQ_Context() != 0U) {
-    return osErrorISR;
-  }
-
-  return osErrorResource;
 }
 
 /*
@@ -969,50 +916,6 @@ uint32_t osThreadEnumerate (osThreadId_t *thread_array, uint32_t array_items) {
 }
 #endif /* (configUSE_OS2_THREAD_ENUMERATE == 1) */
 
-#if (configUSE_OS2_CPU_AFFINITY == 1)
-/*
-  Set processor affinity mask of a thread.
-*/
-osStatus_t osThreadSetAffinityMask (osThreadId_t thread_id, uint32_t affinity_mask) {
-  TaskHandle_t hTask = (TaskHandle_t)thread_id;
-  osStatus_t stat;
-
-  if (IRQ_Context() != 0U) {
-    stat = osErrorISR;
-  }
-  else if (hTask == NULL) {
-    stat = osErrorParameter;
-  }
-  else {
-    stat = osOK;
-    vTaskCoreAffinitySet (hTask, (UBaseType_t)affinity_mask);
-  }
-
-  /* Return execution status */
-  return (stat);
-}
-
-/*
-  Get current processor affinity mask of a thread.
-*/
-uint32_t osThreadGetAffinityMask (osThreadId_t thread_id) {
-  TaskHandle_t hTask = (TaskHandle_t)thread_id;
-  UBaseType_t affinity_mask;
-
-  if (IRQ_Context() != 0U) {
-    affinity_mask = 0U;
-  }
-  else if (hTask == NULL) {
-    affinity_mask = 0U;
-  }
-  else {
-    affinity_mask = vTaskCoreAffinityGet (hTask);
-  }
-
-  /* Return current processor affinity mask */
-  return ((uint32_t)affinity_mask);
-}
-#endif /* (configUSE_OS2_CPU_AFFINITY == 1) */
 
 /* ==== Thread Flags Functions ==== */
 
@@ -1052,7 +955,8 @@ uint32_t osThreadFlagsSet (osThreadId_t thread_id, uint32_t flags) {
   Clear the specified Thread Flags of current running thread.
 */
 uint32_t osThreadFlagsClear (uint32_t flags) {
-  uint32_t rflags;
+  TaskHandle_t hTask;
+  uint32_t rflags, cflags;
 
   if (IRQ_Context() != 0U) {
     rflags = (uint32_t)osErrorISR;
@@ -1061,7 +965,19 @@ uint32_t osThreadFlagsClear (uint32_t flags) {
     rflags = (uint32_t)osErrorParameter;
   }
   else {
-    rflags = ulTaskNotifyValueClear(NULL, flags);
+    hTask = xTaskGetCurrentTaskHandle();
+
+    if (xTaskNotifyAndQuery (hTask, 0, eNoAction, &cflags) == pdPASS) {
+      rflags = cflags;
+      cflags &= ~flags;
+
+      if (xTaskNotify (hTask, cflags, eSetValueWithOverwrite) != pdPASS) {
+        rflags = (uint32_t)osError;
+      }
+    }
+    else {
+      rflags = (uint32_t)osError;
+    }
   }
 
   /* Return flags before clearing */
@@ -1094,12 +1010,10 @@ uint32_t osThreadFlagsGet (void) {
   Wait for one or more Thread Flags of the current running thread to become signaled.
 */
 uint32_t osThreadFlagsWait (uint32_t flags, uint32_t options, uint32_t timeout) {
-  TaskHandle_t hTask;
   uint32_t rflags, nval;
   uint32_t clear;
   TickType_t t0, td, tout;
   BaseType_t rval;
-  BaseType_t notify = pdFALSE;
 
   if (IRQ_Context() != 0U) {
     rflags = (uint32_t)osErrorISR;
@@ -1124,11 +1038,6 @@ uint32_t osThreadFlagsWait (uint32_t flags, uint32_t options, uint32_t timeout) 
       if (rval == pdPASS) {
         rflags &= flags;
         rflags |= nval;
-
-        if ((rflags & ~flags) != 0) {
-          /* Other flags already set, notify task to change its state */
-          notify = pdTRUE;
-        }
 
         if ((options & osFlagsWaitAll) == osFlagsWaitAll) {
           if ((flags & rflags) == flags) {
@@ -1169,15 +1078,6 @@ uint32_t osThreadFlagsWait (uint32_t flags, uint32_t options, uint32_t timeout) 
       }
     }
     while (rval != pdFAIL);
-  }
-
-  if (notify == pdTRUE) {
-    hTask = xTaskGetCurrentTaskHandle();
-
-    /* Ensure task is already notified without changing existing flags */
-    if (xTaskNotify(hTask, 0, eNoAction) != pdPASS) {
-      rflags = (uint32_t)osError;
-    }
   }
 
   /* Return flags before clearing */
@@ -1317,8 +1217,9 @@ osTimerId_t osTimerNew (osTimerFunc_t func, osTimerType_t type, void *argument, 
       name = NULL;
 
       if (attr != NULL) {
-        /* Take the name from attributes */
-        name = attr->name;
+        if (attr->name != NULL) {
+          name = attr->name;
+        }
 
         if ((attr->cb_mem != NULL) && (attr->cb_size >= sizeof(StaticTimer_t))) {
           /* The memory for control block is provided, use static object */
@@ -1375,15 +1276,9 @@ const char *osTimerGetName (osTimerId_t timer_id) {
   TimerHandle_t hTimer = (TimerHandle_t)timer_id;
   const char *p;
 
-  if (hTimer == NULL) {
+  if ((IRQ_Context() != 0U) || (hTimer == NULL)) {
     p = NULL;
-  }
-  else if (IRQ_Context() != 0U) {
-    /* Retrieve the name even though the function is not allowed to be called from ISR */
-    /* Function implementation allows this therefore we make an exception.             */
-    p = pcTimerGetName (hTimer);
-  }
-  else {
+  } else {
     p = pcTimerGetName (hTimer);
   }
 
@@ -1467,13 +1362,12 @@ uint32_t osTimerIsRunning (osTimerId_t timer_id) {
   Delete a timer.
 */
 osStatus_t osTimerDelete (osTimerId_t timer_id) {
-  osStatus_t stat;
-
-#ifndef USE_FreeRTOS_HEAP_1
   TimerHandle_t hTimer = (TimerHandle_t)timer_id;
-  #if (configSUPPORT_DYNAMIC_ALLOCATION == 1)
+  osStatus_t stat;
+#ifndef USE_FreeRTOS_HEAP_1
+#if (configSUPPORT_DYNAMIC_ALLOCATION == 1)
   TimerCallback_t *callb;
-  #endif
+#endif
 
   if (IRQ_Context() != 0U) {
     stat = osErrorISR;
@@ -1502,7 +1396,6 @@ osStatus_t osTimerDelete (osTimerId_t timer_id) {
     }
   }
 #else
-  (void)timer_id;
   stat = osError;
 #endif
 
@@ -1734,11 +1627,10 @@ uint32_t osEventFlagsWait (osEventFlagsId_t ef_id, uint32_t flags, uint32_t opti
   Delete an Event Flags object.
 */
 osStatus_t osEventFlagsDelete (osEventFlagsId_t ef_id) {
+  EventGroupHandle_t hEventGroup = (EventGroupHandle_t)ef_id;
   osStatus_t stat;
 
 #ifndef USE_FreeRTOS_HEAP_1
-  EventGroupHandle_t hEventGroup = (EventGroupHandle_t)ef_id;
-
   if (IRQ_Context() != 0U) {
     stat = osErrorISR;
   }
@@ -1750,7 +1642,6 @@ osStatus_t osEventFlagsDelete (osEventFlagsId_t ef_id) {
     vEventGroupDelete (hEventGroup);
   }
 #else
-  (void)ef_id;
   stat = osError;
 #endif
 
@@ -1967,7 +1858,6 @@ osThreadId_t osMutexGetOwner (osMutexId_t mutex_id) {
 */
 osStatus_t osMutexDelete (osMutexId_t mutex_id) {
   osStatus_t stat;
-
 #ifndef USE_FreeRTOS_HEAP_1
   SemaphoreHandle_t hMutex;
 
@@ -1987,7 +1877,6 @@ osStatus_t osMutexDelete (osMutexId_t mutex_id) {
     vSemaphoreDelete (hMutex);
   }
 #else
-  (void)mutex_id;
   stat = osError;
 #endif
 
@@ -2172,11 +2061,10 @@ uint32_t osSemaphoreGetCount (osSemaphoreId_t semaphore_id) {
   Delete a Semaphore object.
 */
 osStatus_t osSemaphoreDelete (osSemaphoreId_t semaphore_id) {
+  SemaphoreHandle_t hSemaphore = (SemaphoreHandle_t)semaphore_id;
   osStatus_t stat;
 
 #ifndef USE_FreeRTOS_HEAP_1
-  SemaphoreHandle_t hSemaphore = (SemaphoreHandle_t)semaphore_id;
-
   if (IRQ_Context() != 0U) {
     stat = osErrorISR;
   }
@@ -2192,7 +2080,6 @@ osStatus_t osSemaphoreDelete (osSemaphoreId_t semaphore_id) {
     vSemaphoreDelete (hSemaphore);
   }
 #else
-  (void)semaphore_id;
   stat = osError;
 #endif
 
@@ -2365,13 +2252,14 @@ osStatus_t osMessageQueueGet (osMessageQueueId_t mq_id, void *msg_ptr, uint8_t *
   Get maximum number of messages in a Message Queue.
 */
 uint32_t osMessageQueueGetCapacity (osMessageQueueId_t mq_id) {
-  QueueHandle_t hQueue = (QueueHandle_t)mq_id;
+  StaticQueue_t *mq = (StaticQueue_t *)mq_id;
   uint32_t capacity;
 
-  if (hQueue == NULL) {
+  if (mq == NULL) {
     capacity = 0U;
   } else {
-    capacity = uxQueueGetQueueLength (hQueue);
+    /* capacity = pxQueue->uxLength */
+    capacity = mq->uxDummy4[1];
   }
 
   /* Return maximum number of messages */
@@ -2382,13 +2270,14 @@ uint32_t osMessageQueueGetCapacity (osMessageQueueId_t mq_id) {
   Get maximum message size in a Message Queue.
 */
 uint32_t osMessageQueueGetMsgSize (osMessageQueueId_t mq_id) {
-  QueueHandle_t hQueue = (QueueHandle_t)mq_id;
+  StaticQueue_t *mq = (StaticQueue_t *)mq_id;
   uint32_t size;
 
-  if (hQueue == NULL) {
+  if (mq == NULL) {
     size = 0U;
   } else {
-    size = uxQueueGetQueueItemSize (hQueue);
+    /* size = pxQueue->uxItemSize */
+    size = mq->uxDummy4[2];
   }
 
   /* Return maximum message size */
@@ -2420,22 +2309,23 @@ uint32_t osMessageQueueGetCount (osMessageQueueId_t mq_id) {
   Get number of available slots for messages in a Message Queue.
 */
 uint32_t osMessageQueueGetSpace (osMessageQueueId_t mq_id) {
-  QueueHandle_t hQueue = (QueueHandle_t)mq_id;
+  StaticQueue_t *mq = (StaticQueue_t *)mq_id;
   uint32_t space;
   uint32_t isrm;
 
-  if (hQueue == NULL) {
+  if (mq == NULL) {
     space = 0U;
   }
   else if (IRQ_Context() != 0U) {
     isrm = taskENTER_CRITICAL_FROM_ISR();
 
-    space = uxQueueGetQueueLength (hQueue) - uxQueueMessagesWaitingFromISR (hQueue);
+    /* space = pxQueue->uxLength - pxQueue->uxMessagesWaiting; */
+    space = mq->uxDummy4[1] - mq->uxDummy4[0];
 
     taskEXIT_CRITICAL_FROM_ISR(isrm);
   }
   else {
-    space = (uint32_t)uxQueueSpacesAvailable (hQueue);
+    space = (uint32_t)uxQueueSpacesAvailable ((QueueHandle_t)mq);
   }
 
   /* Return number of available slots */
@@ -2468,11 +2358,10 @@ osStatus_t osMessageQueueReset (osMessageQueueId_t mq_id) {
   Delete a Message Queue object.
 */
 osStatus_t osMessageQueueDelete (osMessageQueueId_t mq_id) {
+  QueueHandle_t hQueue = (QueueHandle_t)mq_id;
   osStatus_t stat;
 
 #ifndef USE_FreeRTOS_HEAP_1
-  QueueHandle_t hQueue = (QueueHandle_t)mq_id;
-
   if (IRQ_Context() != 0U) {
     stat = osErrorISR;
   }
@@ -2488,7 +2377,6 @@ osStatus_t osMessageQueueDelete (osMessageQueueId_t mq_id) {
     vQueueDelete (hQueue);
   }
 #else
-  (void)mq_id;
   stat = osError;
 #endif
 
@@ -2529,8 +2417,9 @@ osMemoryPoolId_t osMemoryPoolNew (uint32_t block_count, uint32_t block_size, con
     mem_mp = -1;
 
     if (attr != NULL) {
-      /* Take the name from attributes */
-      name = attr->name;
+      if (attr->name != NULL) {
+        name = attr->name;
+      }
 
       if ((attr->cb_mem != NULL) && (attr->cb_size >= sizeof(MemPool_t))) {
         /* Static control block is provided */
@@ -2567,14 +2456,10 @@ osMemoryPoolId_t osMemoryPoolNew (uint32_t block_count, uint32_t block_size, con
     if (mem_cb == 0) {
       mp = pvPortMalloc (sizeof(MemPool_t));
     } else {
-      if(mem_cb == 1) {
-        mp = attr->cb_mem;
-      }
+      mp = attr->cb_mem;
     }
 
     if (mp != NULL) {
-      mp->mem_arr = NULL;
-
       /* Create a semaphore (max count == initial count == block_count) */
       #if (configSUPPORT_STATIC_ALLOCATION == 1)
         mp->sem = xSemaphoreCreateCountingStatic (block_count, block_count, &mp->mem_sem);
@@ -2589,9 +2474,7 @@ osMemoryPoolId_t osMemoryPoolNew (uint32_t block_count, uint32_t block_size, con
         if (mem_mp == 0) {
           mp->mem_arr = pvPortMalloc (sz);
         } else {
-          if(mem_mp == 1) {
-            mp->mem_arr = attr->mp_mem;
-          }
+          mp->mem_arr = attr->mp_mem;
         }
       }
     }
@@ -2638,11 +2521,11 @@ const char *osMemoryPoolGetName (osMemoryPoolId_t mp_id) {
   MemPool_t *mp = (osMemoryPoolId_t)mp_id;
   const char *p;
 
-  if (mp_id == NULL) {
+  if (IRQ_Context() != 0U) {
     p = NULL;
   }
-  else if (IRQ_Context() != 0U) {
-    p = mp->name;
+  else if (mp_id == NULL) {
+    p = NULL;
   }
   else {
     p = mp->name;
@@ -3039,5 +2922,36 @@ __WEAK void vApplicationStackOverflowHook (TaskHandle_t xTask, char *pcTaskName)
 
   /* Assert when stack overflow is enabled but no application defined function exists */
   configASSERT(0);
+}
+#endif
+
+/*---------------------------------------------------------------------------*/
+#if (configSUPPORT_STATIC_ALLOCATION == 1)
+/*
+  vApplicationGetIdleTaskMemory gets called when configSUPPORT_STATIC_ALLOCATION
+  equals to 1 and is required for static memory allocation support.
+*/
+__WEAK void vApplicationGetIdleTaskMemory (StaticTask_t **ppxIdleTaskTCBBuffer, StackType_t **ppxIdleTaskStackBuffer, uint32_t *pulIdleTaskStackSize) {
+  /* Idle task control block and stack */
+  static StaticTask_t Idle_TCB;
+  static StackType_t  Idle_Stack[configMINIMAL_STACK_SIZE];
+
+  *ppxIdleTaskTCBBuffer   = &Idle_TCB;
+  *ppxIdleTaskStackBuffer = &Idle_Stack[0];
+  *pulIdleTaskStackSize   = (uint32_t)configMINIMAL_STACK_SIZE;
+}
+
+/*
+  vApplicationGetTimerTaskMemory gets called when configSUPPORT_STATIC_ALLOCATION
+  equals to 1 and is required for static memory allocation support.
+*/
+__WEAK void vApplicationGetTimerTaskMemory (StaticTask_t **ppxTimerTaskTCBBuffer, StackType_t **ppxTimerTaskStackBuffer, uint32_t *pulTimerTaskStackSize) {
+  /* Timer task control block and stack */
+  static StaticTask_t Timer_TCB;
+  static StackType_t  Timer_Stack[configTIMER_TASK_STACK_DEPTH];
+
+  *ppxTimerTaskTCBBuffer   = &Timer_TCB;
+  *ppxTimerTaskStackBuffer = &Timer_Stack[0];
+  *pulTimerTaskStackSize   = (uint32_t)configTIMER_TASK_STACK_DEPTH;
 }
 #endif
