@@ -1,4 +1,5 @@
 #include "qflash_font.h"
+#include "perf_monitor.h"
 
 #include <string.h>
 
@@ -166,6 +167,7 @@ bool QFlashFont_Mount(const void *mapped_base, size_t region_size)
 {
     const uint8_t *base = mapped_base;
     const qfnt_header_t *header;
+    uint32_t perf_start;
     bool have_16 = false;
     bool have_20 = false;
     bool have_24 = false;
@@ -178,14 +180,23 @@ bool QFlashFont_Mount(const void *mapped_base, size_t region_size)
         return false;
     }
 
+    perf_start = PerfMonitor_Begin();
     header = (const qfnt_header_t *)base;
+    (void)header->magic;
+    PerfMonitor_End(PERF_MONITOR_STARTUP_FONT_HEADER, perf_start);
+
+    perf_start = PerfMonitor_Begin();
     if(header->magic != QFNT_MAGIC
        || header->version != QFNT_VERSION
        || header->header_size != QFNT_HEADER_SIZE
        || (header->flags & 1u) == 0u) {
+        PerfMonitor_End(PERF_MONITOR_STARTUP_FONT_VERSION, perf_start);
         s_last_error = "QFNT 文件头或版本不匹配";
         return false;
     }
+    PerfMonitor_End(PERF_MONITOR_STARTUP_FONT_VERSION, perf_start);
+
+    perf_start = PerfMonitor_Begin();
     if(header->total_size > region_size
        || header->total_size < sizeof(qfnt_header_t)
        || header->font_count == 0
@@ -193,6 +204,7 @@ bool QFlashFont_Mount(const void *mapped_base, size_t region_size)
        || !range_valid(header->font_table_offset,
                        header->font_count * sizeof(qfnt_font_record_t),
                        header->total_size)) {
+        PerfMonitor_End(PERF_MONITOR_STARTUP_FONT_VALIDATE, perf_start);
         s_last_error = "QFNT 文件范围非法";
         return false;
     }
@@ -217,6 +229,7 @@ bool QFlashFont_Mount(const void *mapped_base, size_t region_size)
 
         if((record->pixel_size == 16u || record->pixel_size == 20u || record->pixel_size == 24u)
            && !valid) {
+            PerfMonitor_End(PERF_MONITOR_STARTUP_FONT_VALIDATE, perf_start);
             clear_contexts();
             s_last_error = "QFNT 字号记录非法";
             return false;
@@ -224,10 +237,12 @@ bool QFlashFont_Mount(const void *mapped_base, size_t region_size)
     }
 
     if(!have_16 || !have_20 || !have_24) {
+        PerfMonitor_End(PERF_MONITOR_STARTUP_FONT_VALIDATE, perf_start);
         clear_contexts();
         s_last_error = "QFNT 缺少 16/20/24 px 字号";
         return false;
     }
+    PerfMonitor_End(PERF_MONITOR_STARTUP_FONT_VALIDATE, perf_start);
 
     s_mounted = true;
     s_last_error = "OK";

@@ -150,7 +150,10 @@ if(XHGC_MEM_OVERLAY_ENABLE)
 endif()
 
 add_library(cartdesk_common INTERFACE)
-target_compile_definitions(cartdesk_common INTERFACE ${COMMON_DEFINES})
+target_compile_definitions(cartdesk_common INTERFACE
+        ${COMMON_DEFINES}
+        $<$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>:PERF_MONITOR_ENABLE=1>
+)
 target_include_directories(cartdesk_common INTERFACE
         ${CORE_INC_DIR}
         ${DEBUG_DIR}
@@ -495,9 +498,6 @@ add_library(runtime_debug STATIC
 )
 
 target_include_directories(runtime_debug PUBLIC ${DEBUG_DIR})
-target_compile_definitions(runtime_debug PUBLIC
-        $<$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>:PERF_MONITOR_ENABLE=1>
-)
 target_link_libraries(runtime_debug PUBLIC cartdesk_common freertos_kernel lua_port)
 target_include_directories(runtime_debug PUBLIC ${TASK_DIR})
 

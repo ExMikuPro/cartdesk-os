@@ -7,6 +7,7 @@
 #include "lv_port_disp.h"
 #include "lvgl.h"
 #include "lcd.h"
+#include "perf_monitor.h"
 #include "runtime_stats.h"
 
 /*********************
@@ -33,6 +34,10 @@ static uint32_t g_current_fps = 0;              // 当前FPS
 /* 双缓冲指针 */
 static void *g_fb0 = NULL;  // 前台缓冲（显示缓冲）
 static void *g_fb1 = NULL;  // 后台缓冲（绘制缓冲）
+static bool g_first_flush_submit_pending = true;
+static bool g_first_flush_wait_pending = true;
+static bool g_first_screen_visible_pending = false;
+static uint32_t g_first_screen_visible_start = 0u;
 
 /**********************
  *   静态函数声明
@@ -125,12 +130,19 @@ static void disp_flush(lv_display_t *disp, const lv_area_t *area, uint8_t *px_ma
     /* 双缓冲模式：DIRECT 渲染下，px_map 指向 LVGL 刚刚渲染完成的整屏 buffer。
      * 直接把 LTDC Layer1 指到 px_map，避免和 LVGL 的 buffer 轮换逻辑不同步。 */
     extern LTDC_HandleTypeDef hltdc;
+    uint32_t submit_start = PerfMonitor_Begin();
 
     /* 切换到 LVGL 刚渲染完成的 buffer */
     HAL_LTDC_SetAddress(&hltdc, (uint32_t)px_map, 1);
 
     /* 等待地址重载完成 */
     HAL_LTDC_Reload(&hltdc, LTDC_RELOAD_VERTICAL_BLANKING);
+    if (g_first_flush_submit_pending) {
+        PerfMonitor_End(PERF_MONITOR_STARTUP_FIRST_FLUSH_SUBMIT, submit_start);
+        g_first_flush_submit_pending = false;
+        g_first_screen_visible_start = PerfMonitor_Begin();
+        g_first_screen_visible_pending = true;
+    }
 #else
     /* 单缓冲模式：可选的缓存一致性处理 */
     /* 如果SDRAM配置为cacheable，需要清除D-Cache */
@@ -159,6 +171,7 @@ static void disp_flush(lv_display_t *disp, const lv_area_t *area, uint8_t *px_ma
 static void disp_wait_for_vsync(void)
 {
 #if USE_VSYNC
+    uint32_t first_wait_start = PerfMonitor_Begin();
     RuntimeStats_BeginLvglFlushWait();
 
     /* 清除标志 */
@@ -176,6 +189,10 @@ static void disp_wait_for_vsync(void)
     }
 
     RuntimeStats_EndLvglFlushWait();
+    if (g_first_flush_wait_pending) {
+        PerfMonitor_End(PERF_MONITOR_STARTUP_FIRST_FLUSH_WAIT, first_wait_start);
+        g_first_flush_wait_pending = false;
+    }
 #endif
 }
 
@@ -219,6 +236,12 @@ void lv_port_disp_signal_vsync(void)
 {
 #if USE_VSYNC
     g_vsync_flag = true;
+    if (g_first_screen_visible_pending) {
+        uint32_t elapsed = PerfMonitor_Begin() - g_first_screen_visible_start;
+        PerfMonitor_Record(PERF_MONITOR_STARTUP_FIRST_PAGE_FLIP, elapsed);
+        PerfMonitor_RecordFirstScreenVisible();
+        g_first_screen_visible_pending = false;
+    }
 #endif
 }
 

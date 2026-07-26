@@ -21,21 +21,10 @@
 #define CART_INDEX_SD_DRIVE "0:"
 #endif
 
-#ifndef CART_DATA_BOUNCE_SIZE
-#define CART_DATA_BOUNCE_SIZE 4096u
-#endif
-
-#if defined(__APPLE__)
-#define CART_INDEX_RAM_RUNTIME __attribute__((aligned(32)))
-#else
-#define CART_INDEX_RAM_RUNTIME __attribute__((section(".ram_runtime"), aligned(32)))
-#endif
-
 #define CART_INDEX_HEADER_SIZE 32u
 
 static cart_res_meta_t s_meta[CART_INDEX_MAX_RESOURCES];
 static char s_paths[CART_INDEX_MAX_RESOURCES][CART_INDEX_PATH_MAX];
-static uint8_t s_bounce[CART_DATA_BOUNCE_SIZE] CART_INDEX_RAM_RUNTIME;
 static uint16_t s_count;
 static char s_cart_path[256];
 static uint64_t s_data_offset;
@@ -323,8 +312,6 @@ bool cart_read_data(uint32_t data_off, void *dst, uint32_t size)
   XHGC_CartFatFs cart_file;
   XHGC_CartFile file;
   uint64_t image_offset = 0u;
-  uint32_t copied = 0u;
-  bool ok;
 
   if (!s_loaded || !dst) return false;
   if ((uint64_t)data_off + size > s_data_size) {
@@ -344,18 +331,7 @@ bool cart_read_data(uint32_t data_off, void *dst, uint32_t size)
   file.data_offset = data_off;
   file.data_size = size;
   file.crc32 = 0u;
-  ok = true;
-  while (copied < size) {
-    uint32_t want = size - copied;
-    if (want > sizeof(s_bounce)) want = sizeof(s_bounce);
-
-    if (xhgc_cart_read_file(&cart_file.cart, &file, copied, s_bounce, want) != XHGC_CART_OK) {
-      ok = false;
-      break;
-    }
-    memcpy((uint8_t*)dst + copied, s_bounce, want);
-    copied += want;
-  }
+  bool ok = xhgc_cart_read_file(&cart_file.cart, &file, 0u, dst, size) == XHGC_CART_OK;
   xhgc_cart_close_fatfs(&cart_file);
   return ok;
 }

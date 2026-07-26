@@ -1,4 +1,5 @@
 #include "cart_bin.h"
+#include "perf_monitor.h"
 
 #include "ff.h"
 #include "fatfs.h"
@@ -65,7 +66,9 @@ static void prv_copy_fixed_string(char *dst, uint32_t dst_size, const uint8_t *s
 
 int cart_bin_fs_init(void)
 {
+    uint32_t perf_start = PerfMonitor_Begin();
     FRESULT fr = SD_FATFS_Mount();
+    PerfMonitor_End(PERF_MONITOR_STARTUP_FATFS_MOUNT, perf_start);
     return (fr == FR_OK) ? 0 : -1;
 }
 
@@ -122,22 +125,16 @@ int cart_bin_read_preview_from_sd(const char *path, uint8_t *out_buf, uint32_t b
         return -2;
     }
 
-    const UINT row_bytes = (UINT)CART_BIN_PREVIEW_STRIDE;
     /*
-     * f_read() can pass this buffer directly to SDMMC1 IDMA when it is
-     * sector-aligned. DTCMRAM is not visible to SDMMC1, so keep the row
-     * staging buffer in the dedicated AXI SRAM section.
+     * The preview is contiguous ARGB8888 data. Read it directly into the
+     * final SDRAM buffer so FatFs can coalesce aligned sectors into larger
+     * SDMMC IDMA requests. The disk layer still handles unaligned head/tail
+     * sectors through its fixed scratch buffer.
      */
-    static uint8_t row_buf[CART_BIN_PREVIEW_STRIDE]
-        __attribute__((section(".sdmmc_ram_data"), aligned(32)));
-
-    for (uint32_t row = 0; row < CART_BIN_PREVIEW_H; row++) {
-        fr = f_read(&fp, row_buf, row_bytes, &br);
-        if (fr != FR_OK || br != row_bytes) {
-            f_close(&fp);
-            return -7;
-        }
-        memcpy(out_buf + row * CART_BIN_PREVIEW_STRIDE, row_buf, row_bytes);
+    fr = f_read(&fp, out_buf, CART_BIN_PREVIEW_SIZE, &br);
+    if (fr != FR_OK || br != CART_BIN_PREVIEW_SIZE) {
+        f_close(&fp);
+        return -7;
     }
 
     f_close(&fp);
@@ -146,11 +143,15 @@ int cart_bin_read_preview_from_sd(const char *path, uint8_t *out_buf, uint32_t b
 
 int cart_bin_read_info_from_sd(const char *path, CartBinInfo *out_info)
 {
+    uint32_t perf_start = PerfMonitor_Begin();
     FIL fp;
     uint8_t buf[128];
     FRESULT fr;
 
-    if (out_info == NULL) return -10;
+    if (out_info == NULL) {
+        PerfMonitor_End(PERF_MONITOR_STARTUP_CART_HEADER, perf_start);
+        return -10;
+    }
     memset(out_info, 0, sizeof(*out_info));
 
     if (cart_bin_fs_ensure() != 0) return -11;
@@ -235,5 +236,6 @@ int cart_bin_read_info_from_sd(const char *path, CartBinInfo *out_info)
     }
 
     f_close(&fp);
+    PerfMonitor_End(PERF_MONITOR_STARTUP_CART_HEADER, perf_start);
     return 0;
 }

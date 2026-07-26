@@ -138,6 +138,7 @@ static void StartLuaTask(void *argument);
 
 #if !CARTDESK_RUN_LUA_VM_ONLY && CARTDESK_ENABLE_QFLASH_FONT
 static void QFlashFont_InitOrFallback(void) {
+  uint32_t qflash_start = PerfMonitor_Begin();
   FLASH_Status status = FLASH_Open(&g_flash, &hqspi, 64u * 1024u * 1024u);
   if (status == FLASH_OK) {
     status = FLASH_BringUp(&g_flash);
@@ -147,6 +148,7 @@ static void QFlashFont_InitOrFallback(void) {
   }
 
   if (status != FLASH_OK) {
+    PerfMonitor_End(PERF_MONITOR_STARTUP_QFLASH_INIT, qflash_start);
     const FLASH_ErrorInfo *error = FLASH_LastError(&g_flash);
     printf("QFLASH font init failed: step=%s code=%d hal=%d qspi=0x%08lx; using built-in font\r\n",
            error && error->step ? error->step : "?",
@@ -158,7 +160,12 @@ static void QFlashFont_InitOrFallback(void) {
 
   const void *font_pack =
       (const void *)(uintptr_t)(FLASH_MM_BASE + QFLASH_FONT_PACK_OFFSET);
-  if (!QFlashFont_Mount(font_pack, QFLASH_FONT_REGION_SIZE)) {
+  PerfMonitor_End(PERF_MONITOR_STARTUP_QFLASH_INIT, qflash_start);
+
+  uint32_t mount_start = PerfMonitor_Begin();
+  bool mounted = QFlashFont_Mount(font_pack, QFLASH_FONT_REGION_SIZE);
+  PerfMonitor_End(PERF_MONITOR_STARTUP_QFLASH_MOUNT, mount_start);
+  if (!mounted) {
     printf("QFLASH font mount failed: %s; using built-in font\r\n",
            QFlashFont_LastError());
     return;
@@ -253,6 +260,7 @@ void HAL_Delay(uint32_t Delay) {
 #if !CARTDESK_RUN_LUA_VM_ONLY
 static void StartLvglTask(void *argument) {
   (void) argument;
+  bool first_lv_timer_pending = true;
 
   /* LCD/UI */
   RuntimeStats_Init();
@@ -278,11 +286,18 @@ static void StartLvglTask(void *argument) {
     RuntimeStats_BeginSection(RUNTIME_STATS_SECTION_FRAME);
 
     RuntimeStats_BeginSection(RUNTIME_STATS_SECTION_LVGL);
+    uint32_t lv_timer_start = PerfMonitor_Begin();
     lvgl_task_handler();
+    if (first_lv_timer_pending) {
+      PerfMonitor_End(PERF_MONITOR_STARTUP_FIRST_LV_TIMER, lv_timer_start);
+      first_lv_timer_pending = false;
+    }
     RuntimeStats_EndSection(RUNTIME_STATS_SECTION_LVGL);
 
     RuntimeStats_BeginSection(RUNTIME_STATS_SECTION_LUA);
+    uint32_t lua_start = PerfMonitor_Begin();
     Task_LUA();
+    PerfMonitor_End(PERF_MONITOR_RUNTIME_LUA_UPDATE, lua_start);
     RuntimeStats_EndSection(RUNTIME_STATS_SECTION_LUA);
 
     RuntimeStats_BeginSection(RUNTIME_STATS_SECTION_LAUNCHER);
@@ -353,6 +368,7 @@ int main(void)
   HAL_Init();
 
   /* USER CODE BEGIN Init */
+  PerfMonitor_Init();
   extern uint8_t __sdmmc_ram_start__;
   extern uint8_t __sdmmc_ram_end__;
   memset(&__sdmmc_ram_start__, 0,
@@ -376,7 +392,9 @@ int main(void)
   MX_LTDC_Init();
   MX_FMC_Init();
   MX_USART1_UART_Init();
+  uint32_t sdmmc_init_start = PerfMonitor_Begin();
   MX_SDMMC1_SD_Init();
+  PerfMonitor_End(PERF_MONITOR_STARTUP_SDMMC_INIT, sdmmc_init_start);
   MX_FATFS_Init();
   MX_CRC_Init();
   MX_DMA2D_Init();
@@ -400,7 +418,6 @@ int main(void)
   cold_pool_init();
   xhgc_mem_layout_dump();
   xhgc_meminfo_dump();
-  PerfMonitor_Init();
 #if XHGC_MEMINFO_SELFTEST_ENABLE
   if (!app_arena_meminfo_selftest()) {
     Error_Handler();

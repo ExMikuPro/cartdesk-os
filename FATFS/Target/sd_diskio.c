@@ -27,9 +27,11 @@
 /* Includes ------------------------------------------------------------------*/
 #include "ff_gen_drv.h"
 #include "sd_diskio.h"
+#include "perf_monitor.h"
 
 #include <string.h>
 #include <stdio.h>
+#include <stdbool.h>
 
 /* Private typedef -----------------------------------------------------------*/
 /* Private define ------------------------------------------------------------*/
@@ -267,6 +269,19 @@ DSTATUS SD_status(BYTE lun)
 
 DRESULT SD_read(BYTE lun, BYTE *buff, DWORD sector, UINT count)
 {
+  uint32_t perf_start = PerfMonitor_Begin();
+  BYTE *perf_buffer = buff;
+  DWORD perf_sector = sector;
+  UINT perf_count = count;
+  bool perf_used_bounce =
+      (((uintptr_t)buff & 0x1Fu) != 0u) ||
+      !SD_IsDmaAccessibleBuffer(buff, count * BLOCKSIZE);
+  uint32_t perf_cache_addr = perf_used_bounce
+      ? (uint32_t)(uintptr_t)scratch
+      : ((uint32_t)(uintptr_t)buff & ~0x1Fu);
+  uint32_t perf_cache_length = perf_used_bounce
+      ? BLOCKSIZE
+      : count * BLOCKSIZE + ((uint32_t)(uintptr_t)buff - perf_cache_addr);
   uint8_t ret = MSD_ERROR;
   DRESULT res = RES_ERROR;
   uint32_t timer;
@@ -285,6 +300,15 @@ DRESULT SD_read(BYTE lun, BYTE *buff, DWORD sector, UINT count)
 
   if (SD_CheckStatusWithTimeout(SD_TIMEOUT) < 0)
   {
+    PerfMonitor_RecordSdRead((uint64_t)perf_sector * BLOCKSIZE,
+                             perf_count * BLOCKSIZE,
+                             perf_buffer,
+                             true,
+                             perf_used_bounce,
+                             perf_cache_addr,
+                             perf_cache_length,
+                             res,
+                             perf_start);
     return res;
   }
 
@@ -411,6 +435,15 @@ DRESULT SD_read(BYTE lun, BYTE *buff, DWORD sector, UINT count)
         res = RES_OK;
     }
 #endif
+  PerfMonitor_RecordSdRead((uint64_t)perf_sector * BLOCKSIZE,
+                           perf_count * BLOCKSIZE,
+                           perf_buffer,
+                           true,
+                           perf_used_bounce,
+                           perf_cache_addr,
+                           perf_cache_length,
+                           res,
+                           perf_start);
   return res;
 }
 

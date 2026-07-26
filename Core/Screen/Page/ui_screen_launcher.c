@@ -13,6 +13,7 @@
 #include "cartdesk_task.h"
 #include "launcher_action_hints.h"
 #include "runtime_stats.h"
+#include "perf_monitor.h"
 #include "ui_launcher_cache.h"
 #include "usart.h"
 
@@ -64,6 +65,10 @@ extern const lv_font_t lv_font_source_han_sans_sc_16_cjk;
 #define COLOR_BLACK           0x000000
 #define COLOR_CYAN            0x00FFFF
 
+#ifndef LAUNCHER_DEFER_PREVIEW
+#define LAUNCHER_DEFER_PREVIEW 1
+#endif
+
 /* ------------------------------------------------------------------ */
 /*  私有状态                                                            */
 /* ------------------------------------------------------------------ */
@@ -100,9 +105,25 @@ static lv_obj_t *s_info_popup = NULL;
 static lv_obj_t *s_launcher_screen = NULL;
 static lv_obj_t *s_runtime_screen = NULL;
 static bool s_runtime_exit_pending = false;
+static bool s_launcher_assets_initialized = false;
 static bool s_launcher_assets_loaded = false;
+static bool s_launcher_preview_pending = false;
 static LauncherActionHints s_action_hints;
 static bool s_app_launch_armed = false;
+
+#if PERF_MONITOR_ENABLE
+/*
+ * GDB/OpenOCD stress-test mailbox.  The debugger only writes these scalar
+ * values; all LVGL and Lua lifecycle work still runs in the normal task.
+ */
+volatile uint32_t g_phase3_repeat_command = 0u;
+volatile uint32_t g_phase3_repeat_target = 20u;
+volatile uint32_t g_phase3_repeat_dwell_loops = 400u;
+volatile uint32_t g_phase3_repeat_completed = 0u;
+volatile uint32_t g_phase3_repeat_failures = 0u;
+volatile uint32_t g_phase3_repeat_state = 0u;
+static uint32_t s_phase3_repeat_dwell_count = 0u;
+#endif
 
 /*
  * 每个槽独立的 LVGL 图像描述符。
@@ -435,6 +456,45 @@ static void prv_show_runtime_screen(void)
     RuntimeStats_EndLvglScreenOp();
 }
 
+static void prv_attach_launcher_preview(void)
+{
+    if (s_slots[0] == NULL || s_image_dsc[0].data == NULL) {
+        return;
+    }
+
+    lv_obj_t *img_obj = lv_image_create(s_slots[0]);
+    lv_obj_set_size(img_obj, BOX_WIDTH, BOX_HEIGHT);
+    lv_obj_center(img_obj);
+    lv_image_set_src(img_obj, &s_image_dsc[0]);
+    lv_obj_set_style_border_width(img_obj, 0, LV_PART_MAIN);
+    lv_obj_remove_flag(img_obj, LV_OBJ_FLAG_SCROLLABLE);
+}
+
+static void prv_load_launcher_preview(void)
+{
+    uint32_t dst = (uint32_t)launcher_get_big_icon(0);
+    uint32_t preview_start = PerfMonitor_Begin();
+    int ret = cart_bin_read_preview_from_sd("0:/cart.bin",
+                                            (uint8_t *)dst,
+                                            CART_BIN_PREVIEW_SIZE);
+    PerfMonitor_End(PERF_MONITOR_STARTUP_PREVIEW_READ, preview_start);
+    s_launcher_preview_pending = false;
+
+    if (ret != 0) {
+        return;
+    }
+
+    s_image_dsc[0].header.magic = LV_IMAGE_HEADER_MAGIC;
+    s_image_dsc[0].header.cf = LV_COLOR_FORMAT_ARGB8888;
+    s_image_dsc[0].header.w = CART_BIN_PREVIEW_W;
+    s_image_dsc[0].header.h = CART_BIN_PREVIEW_H;
+    s_image_dsc[0].header.stride = CART_BIN_PREVIEW_STRIDE;
+    s_image_dsc[0].data_size = CART_BIN_PREVIEW_SIZE;
+    s_image_dsc[0].data = (const uint8_t *)dst;
+    s_launcher_assets_loaded = true;
+    prv_attach_launcher_preview();
+}
+
 static void prv_start_selected_app(void)
 {
     if (!prv_selected_app_can_start()) {
@@ -741,6 +801,76 @@ void Launcher_Init(void)
 
 void Launcher_Task(void)
 {
+#if PERF_MONITOR_ENABLE
+    if (g_phase3_repeat_command == 1u) {
+        g_phase3_repeat_completed = 0u;
+        g_phase3_repeat_failures = 0u;
+        g_phase3_repeat_state = 1u;
+        s_phase3_repeat_dwell_count = 0u;
+        g_phase3_repeat_command = 0u;
+    } else if (g_phase3_repeat_command == 2u) {
+        g_phase3_repeat_state = 0u;
+        g_phase3_repeat_command = 0u;
+        if (!Task_LUA_IsIdle()) {
+            s_runtime_exit_pending = true;
+            Task_LUA_Stop();
+        }
+    }
+
+    switch (g_phase3_repeat_state) {
+    case 1u:
+        if (Task_LUA_IsIdle() && s_main_container != NULL) {
+            prv_start_selected_app();
+            if (Task_LUA_IsIdle()) {
+                g_phase3_repeat_failures++;
+                g_phase3_repeat_state = 0u;
+            } else {
+                g_phase3_repeat_state = 2u;
+            }
+        }
+        break;
+    case 2u:
+        if (Task_LUA_IsRunning()) {
+            s_phase3_repeat_dwell_count = 0u;
+            g_phase3_repeat_state = 3u;
+        } else if (Task_LUA_HasError()) {
+            g_phase3_repeat_failures++;
+            s_runtime_exit_pending = true;
+            Task_LUA_Stop();
+            g_phase3_repeat_state = 4u;
+        }
+        break;
+    case 3u:
+        if (++s_phase3_repeat_dwell_count >= g_phase3_repeat_dwell_loops) {
+            s_runtime_exit_pending = true;
+            Task_LUA_Stop();
+            g_phase3_repeat_state = 4u;
+        }
+        break;
+    case 4u:
+        if (Task_LUA_IsIdle()) {
+            g_phase3_repeat_completed++;
+            if (g_phase3_repeat_completed >= g_phase3_repeat_target) {
+                g_phase3_repeat_state = 0u;
+            } else {
+                g_phase3_repeat_state = 1u;
+            }
+        }
+        break;
+    default:
+        break;
+    }
+#endif
+
+    /*
+     * Launcher_Init() runs before the first lv_timer_handler().  Loading the
+     * 160 KiB preview here lets the base launcher reach the panel first while
+     * keeping the SD access and LVGL object creation in this same task.
+     */
+    if (s_launcher_preview_pending && s_main_container != NULL) {
+        prv_load_launcher_preview();
+    }
+
     if (!s_runtime_exit_pending) {
         return;
     }
@@ -754,6 +884,7 @@ void Launcher_Task(void)
 
 void DesignLauncher_Create(lv_display_t *disp)
 {
+    uint32_t objects_start = PerfMonitor_Begin();
     lv_obj_t *scr = (disp != NULL)
                     ? lv_display_get_screen_active(disp)
                     : lv_screen_active();
@@ -764,13 +895,15 @@ void DesignLauncher_Create(lv_display_t *disp)
 
     lv_obj_set_style_pad_all(scr, 0, 0);
 
-    if (!s_launcher_assets_loaded) {
+    if (!s_launcher_assets_initialized) {
         bool assets_loaded = false;
 
         launcher_cache_init();
         memset(s_image_dsc, 0, sizeof(s_image_dsc));
 
+        uint32_t title_start = PerfMonitor_Begin();
         int a = cart_bin_read_title_from_sd("0:/cart.bin", s_cart0_title);
+        PerfMonitor_End(PERF_MONITOR_STARTUP_TITLE_READ, title_start);
         if (a != 0) {
             strcpy(s_cart0_title, "ERR");
         }
@@ -785,25 +918,14 @@ void DesignLauncher_Create(lv_display_t *disp)
          * 从 Lua 退出回 launcher 时直接复用，避免退出后立刻再次访问 SD。
          * ----------------------------------------------------------------
          */
-        // 槽 0：从 SD 卡读取预览图片
-        {
-            uint32_t dst = (uint32_t)launcher_get_big_icon(0);
-
-            int ret = cart_bin_read_preview_from_sd("0:/cart.bin", (uint8_t*)dst, CART_BIN_PREVIEW_SIZE);
-            if (ret == 0) {
-                /* 初始化独立描述符，指向 SDRAM，magic 必须设置 */
-                s_image_dsc[0].header.magic = LV_IMAGE_HEADER_MAGIC;
-                s_image_dsc[0].header.cf    = LV_COLOR_FORMAT_ARGB8888;
-                s_image_dsc[0].header.w     = CART_BIN_PREVIEW_W;
-                s_image_dsc[0].header.h     = CART_BIN_PREVIEW_H;
-                s_image_dsc[0].header.stride = CART_BIN_PREVIEW_STRIDE;
-                s_image_dsc[0].data_size    = CART_BIN_PREVIEW_SIZE;
-                s_image_dsc[0].data         = (const uint8_t *)dst;  /* SDRAM 地址 */
-                assets_loaded = true;
-            }
-        }
+        /* 槽 0 在首屏完成后的 Launcher_Task() 中加载。 */
+        s_launcher_preview_pending = true;
+#if !LAUNCHER_DEFER_PREVIEW
+        prv_load_launcher_preview();
+#endif
 
         // 其他槽：从 Flash 读取
+        uint32_t convert_start = PerfMonitor_Begin();
         for (int i = 1; i < DESIGN_APP_COUNT; i++) {
             if (s_slot_flash_src[i] == NULL) continue;
 
@@ -822,9 +944,13 @@ void DesignLauncher_Create(lv_display_t *disp)
             s_image_dsc[i].data         = (const uint8_t *)dst;  /* SDRAM 地址 */
             assets_loaded = true;
         }
+        PerfMonitor_End(PERF_MONITOR_STARTUP_PREVIEW_CONVERT, convert_start);
 
-        /* Keep retrying on a later launcher rebuild if every image load failed. */
+        s_launcher_assets_initialized = true;
         s_launcher_assets_loaded = assets_loaded;
+    } else if (!s_launcher_assets_loaded) {
+        /* A failed SD read gets one retry on the next launcher rebuild. */
+        s_launcher_preview_pending = true;
     }
 
     /* 主容器 */
@@ -846,6 +972,7 @@ void DesignLauncher_Create(lv_display_t *disp)
     s_selected_index = 0;
     s_app_launch_armed = false;
     prv_update_action_hints();
+    PerfMonitor_End(PERF_MONITOR_STARTUP_LAUNCHER_OBJECTS, objects_start);
 }
 
 void DesignLauncher_SetSelected(int app_index)
