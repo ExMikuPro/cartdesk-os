@@ -33,6 +33,13 @@ cmake --build --preset Debug-Memory-Overlay -j8
 
 第一版文本保持短小：
 
+```text
+LCD    58.9 Hz
+RENDER  1.0 FPS
+```
+
+- `LCD`：根据 LTDC VBlank 计数和实际采样间隔计算的物理刷新率，显示到 0.1 Hz。
+- `RENDER`：LVGL display port 最近一个统计窗口内的 flush 提交帧率，显示到 0.1 FPS。
 - `MEM`：`total_used / total_sdram`，单位 MB。
 - `APP`：`APP_ARENA_REST` zone `used / peak`。
 - `DMA`：`DMA_POOL` zone `used / peak`。
@@ -47,7 +54,7 @@ cmake --build --preset Debug-Memory-Overlay -j8
 
 `xhgc_mem_overlay_update()` 默认 1000ms 刷新一次，不高于 1Hz。隐藏时直接返回，不更新 label 文本。
 
-overlay 只调用 `xhgc_meminfo_get_snapshot()` 复制现有快照，不调用 reset、dump、peak/fail 清理，也不直接读写 allocator 内部变量。文本 buffer 使用静态 `char[512]`，并通过 `lv_label_set_text_static()` 更新 label。
+overlay 使用固定 208 px 宽度、随文本内容自动调整的高度、50% 不透明的黑色背景和全不透明白色文字。它调用 `xhgc_meminfo_get_snapshot()` 复制现有快照，并通过 `disp_get_fps()` 读取 display port 已维护的帧率，不新增高频计数器。它不调用 reset、dump、peak/fail 清理，也不直接读写 allocator 内部变量。文本 buffer 使用静态 `char[512]`，并通过 `lv_label_set_text_static()` 更新 label。
 
 ## LVGL 上下文限制
 
@@ -60,24 +67,27 @@ overlay 只调用 `xhgc_meminfo_get_snapshot()` 复制现有快照，不调用 r
 ```mermaid
 flowchart TD
     MemInfo[MemInfo Snapshot] --> Overlay[Memory Overlay]
+    Display[LTDC VBlank / LVGL Flush] --> Overlay
     Overlay --> LVGL[LVGL Label]
     LVGL --> LCD[LCD]
     Input[Debug Toggle] -. 预留，未确认 .-> Overlay
 ```
 
-实线关系已由当前实现确认：`Core/Debug/xhgc_mem_overlay.c` 读取 `Core/Memory/xhgc_meminfo.c` 的 snapshot，并更新 LVGL label。输入切换入口尚未接入源码，因此使用虚线标注为预留。
+实线关系已由当前实现确认：`Core/Debug/xhgc_mem_overlay.c` 读取 `Core/Memory/xhgc_meminfo.c` 的 snapshot、LTDC VBlank 计数和 `lv_port_disp.c` 的 flush FPS，并更新 LVGL label。输入切换入口尚未接入源码，因此使用虚线标注为预留。
 
 ## 接入点
 
-- 初始化：`Core/Src/main.c` 中 `StartLvglTask()` 在 `lv_port_disp_init()`、`lv_port_indev_init()`、`LCD_DisplayON()`、`Launcher_Init()` 之后调用 `xhgc_mem_overlay_init()`。
-- 刷新：同一 LVGL task loop 中，在 `Launcher_Task()` 后调用 `xhgc_mem_overlay_update()`。
+- 初始化：`Core/APPS/TASK/app_task.c` 中 `CartdeskAppTask_Run()` 在 `lv_port_disp_init()`、`lv_port_indev_init()`、`LCD_DisplayON()`、`Launcher_Init()` 之后调用 `xhgc_mem_overlay_init()`。
+- 刷新：同一 app task loop 中，在 `Launcher_Task()` 后调用 `xhgc_mem_overlay_update()`。
 - 编译保护：上述调用均位于 `#if XHGC_MEM_OVERLAY_ENABLE` 内。
 
 ## 参考文件
 
 - `CMakeLists.txt`
-- `Core/Src/main.c`
+- `Core/APPS/TASK/app_task.c`
 - `Core/Debug/xhgc_mem_overlay.h`
 - `Core/Debug/xhgc_mem_overlay.c`
+- `Core/APPS/LVGL/port/lv_port_disp.h`
+- `Core/APPS/LVGL/port/lv_port_disp.c`
 - `Core/Memory/xhgc_meminfo.h`
 - `Core/Memory/xhgc_meminfo.c`

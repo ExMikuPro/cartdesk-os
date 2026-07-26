@@ -2,6 +2,8 @@
 
 #include <stdio.h>
 
+#include "lcd.h"
+#include "lv_port_disp.h"
 #include "lvgl.h"
 #include "xhgc_meminfo.h"
 
@@ -15,6 +17,9 @@
 static lv_obj_t *s_mem_overlay_label;
 static bool s_mem_overlay_visible;
 static uint32_t s_mem_overlay_last_update_ms;
+static uint32_t s_lcd_sample_time_ms;
+static uint32_t s_lcd_sample_vblank_count;
+static uint32_t s_lcd_hz_tenths;
 static char s_mem_overlay_text[XHGC_MEM_OVERLAY_TEXT_SIZE];
 static XHGC_MemInfoSnapshot s_mem_overlay_snapshot;
 
@@ -85,10 +90,10 @@ static void xhgc_mem_overlay_create_label(void)
     s_mem_overlay_text[0] = '\0';
     lv_label_set_text_static(s_mem_overlay_label, "MEMINFO not ready");
     lv_label_set_long_mode(s_mem_overlay_label, LV_LABEL_LONG_MODE_CLIP);
-    lv_obj_set_size(s_mem_overlay_label, 176, 118);
+    lv_obj_set_size(s_mem_overlay_label, 208, LV_SIZE_CONTENT);
     lv_obj_align(s_mem_overlay_label, LV_ALIGN_TOP_LEFT, 4, 4);
     lv_obj_set_style_bg_color(s_mem_overlay_label, lv_color_hex(0x101010), 0);
-    lv_obj_set_style_bg_opa(s_mem_overlay_label, LV_OPA_70, 0);
+    lv_obj_set_style_bg_opa(s_mem_overlay_label, LV_OPA_50, 0);
     lv_obj_set_style_text_color(s_mem_overlay_label, lv_color_hex(0xFFFFFF), 0);
     lv_obj_set_style_pad_left(s_mem_overlay_label, 5, 0);
     lv_obj_set_style_pad_right(s_mem_overlay_label, 5, 0);
@@ -140,6 +145,9 @@ void xhgc_mem_overlay_update(void)
     char lua_line[32];
     char res_line[32];
     char lvgl_line[32];
+    uint32_t lcd_vblank_count;
+    uint32_t lcd_elapsed_ms;
+    uint32_t render_fps_tenths;
     unsigned long total_used_whole;
     unsigned long total_used_frac;
     unsigned long total_whole;
@@ -160,6 +168,20 @@ void xhgc_mem_overlay_update(void)
         return;
     }
     s_mem_overlay_last_update_ms = now;
+
+    lcd_vblank_count = LCD_GetVBlankCount();
+    if (s_lcd_sample_time_ms != 0u) {
+        lcd_elapsed_ms = now - s_lcd_sample_time_ms;
+        if (lcd_elapsed_ms != 0u) {
+            uint32_t lcd_vblank_delta = lcd_vblank_count - s_lcd_sample_vblank_count;
+            s_lcd_hz_tenths =
+                (uint32_t)(((uint64_t)lcd_vblank_delta * 10000u + lcd_elapsed_ms / 2u) /
+                           lcd_elapsed_ms);
+        }
+    }
+    s_lcd_sample_time_ms = now;
+    s_lcd_sample_vblank_count = lcd_vblank_count;
+    render_fps_tenths = disp_get_fps() * 10u;
 
     xhgc_meminfo_get_snapshot(&s_mem_overlay_snapshot);
     if (s_mem_overlay_snapshot.total_sdram == 0u) {
@@ -209,6 +231,8 @@ void xhgc_mem_overlay_update(void)
 
     (void)snprintf(s_mem_overlay_text,
                    sizeof(s_mem_overlay_text),
+                   "LCD    %lu.%lu Hz\n"
+                   "RENDER  %lu.%lu FPS\n"
                    "MEM %lu.%lu/%lu.%luMB\n"
                    "%s\n"
                    "%s\n"
@@ -216,6 +240,10 @@ void xhgc_mem_overlay_update(void)
                    "%s\n"
                    "%s\n"
                    "FAIL %lu",
+                   (unsigned long)(s_lcd_hz_tenths / 10u),
+                   (unsigned long)(s_lcd_hz_tenths % 10u),
+                   (unsigned long)(render_fps_tenths / 10u),
+                   (unsigned long)(render_fps_tenths % 10u),
                    total_used_whole,
                    total_used_frac,
                    total_whole,
