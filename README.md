@@ -123,27 +123,41 @@ build/host_tools/bin/luavm --check script.lua
 ```text
 Core/Src/main.c
   -> 初始化 HAL、时钟、GPIO、LTDC、DMA2D、FMC、SDMMC、FreeRTOS 等外设
-  -> StartLvglTask()
+  -> MX_FREERTOS_Init()
+  -> StartAppTask()
+      -> MX_USB_DEVICE_Init()
+      -> CartdeskAppTask_Run()
       -> lv_init()
       -> lv_port_disp_init()
       -> lv_port_indev_init()
       -> LCD_DisplayON()
       -> Launcher_Init()
       -> 周期调用 lvgl_task_handler()
-      -> 周期调用 Task_LUA()，未点击卡带槽时不会初始化 Lua VM
+      -> 周期调用 LuaRuntimeTask_Process()，未点击卡带槽时不会初始化 Lua VM
 ```
 
-`Launcher_Init()` 会创建启动器页面，并尝试从 `0:/cart.bin` 读取第一个卡带槽的标题和预览图。开机默认不创建 Lua VM；点击卡带槽后，launcher 会先调用 `Task_LUA_StartCart("0:/cart.bin")` 提交启动请求，只有请求被接受后才切换到空白运行屏并保留系统 `EXIT` 按钮。随后 `Task_LUA()` 从 `cart.bin` 的 ENTRY 段加载 luac 并推进 `START_REQUESTED -> STARTING -> RUNNING` 生命周期状态机。点击 `EXIT` 只会请求 `Task_LUA_Stop()`，launcher 仅在 Lua task 回到 `IDLE` 后恢复 launcher 页面。
+`Launcher_Init()` 会创建启动器页面，并尝试从 `0:/cart.bin` 读取第一个卡带槽的标题和预览图。开机默认不创建 Lua VM；点击卡带槽后，launcher 会先调用 `LuaRuntimeTask_RequestStart("0:/cart.bin")` 提交启动请求，只有请求被接受后才切换到空白运行屏并保留系统 `EXIT` 按钮。随后 `LuaRuntimeTask_Process()` 从 `cart.bin` 的 ENTRY 段加载 luac 并推进 `START_REQUESTED -> STARTING -> RUNNING` 生命周期状态机。点击 `EXIT` 只会请求 `LuaRuntimeTask_RequestStop()`，launcher 仅在 Lua runtime 回到 `IDLE` 后恢复 launcher 页面。
 
-`StartLvglTask()` 同时承载 LVGL 刷新、Lua 生命周期调度和 cart 资源读取，线程栈按 32 KiB 配置，避免 Lua 初始化、FatFs 读取和 LVGL 对象创建叠加时栈空间不足。
+`StartAppTask()` 同时承载 LVGL 刷新、Lua 生命周期调度和 cart 资源读取，线程栈按 32 KiB 配置，避免 Lua 初始化、FatFs 读取和 LVGL 对象创建叠加时栈空间不足。LVGL API 只由该线程调用，避免在 GUI 与 Lua 之间额外引入跨线程锁。
+
+FreeRTOS 任务按实时性划分如下：
+
+| 执行层 | 任务 | CMSIS 优先级 | 栈 | 当前职责 |
+|---|---|---:|---:|---|
+| L1 实时服务 | `audio` | High | 8 KiB | 预留 DMA 音频缓冲处理；当前永久阻塞等待事件。 |
+| L2 交互应用 | `app` | AboveNormal | 32 KiB | LVGL、Launcher、Lua 生命周期和 UI 资源操作。 |
+| L3 外设服务 | `io` | Normal | 4 KiB | 预留阻塞式 GPIO/I2C/SPI/SD 请求串行化；当前永久阻塞。 |
+| L4 后台维护 | `background` | Low | 4 KiB | 预留日志、CRC 和维护工作；当前永久阻塞。 |
+
+L0 是 DMA、LTDC、USB、SDMMC 等 ISR，位于任务层之上，只应清除中断状态、处理少量必要数据并通知任务。简单 GPIO 寄存器更新不必强制经过 `io`；可能阻塞或需要总线互斥的操作再提交给 `io`。
 
 ## Runtime Stats
 
-固件在 `StartLvglTask()` 的主循环里按秒输出一行 `[stats]` 日志，默认走当前标准输出串口（`USART1`）。输出会包含最近一次和峰值的 `lvgl_task_handler()` / `Task_LUA()` / `Launcher_Task()` / 主循环 work time，以及独立的 loop `period`、慢帧计数、Lua state 名称、Lua heap / resource arena / queue 的 runtime global peak、当前任务栈 high-water 和 FreeRTOS heap 剩余量。当前 `lua_runtime_state` 读取的是正式的 `TaskLuaState`，不再直接映射 `lua_vm` 内部执行相位。
+固件在 `CartdeskAppTask_Run()` 的主循环里按秒输出一行 `[stats]` 日志，默认走当前标准输出串口（`USART1`）。输出会包含最近一次和峰值的 `lvgl_task_handler()` / `LuaRuntimeTask_Process()` / `Launcher_Task()` / 主循环 work time，以及独立的 loop `period`、慢帧计数、Lua state 名称、Lua heap / resource arena / queue 的 runtime global peak、当前任务栈 high-water 和 FreeRTOS heap 剩余量。当前 `lua_runtime_state` 读取的是正式的 `LuaRuntimeState`，不再直接映射 `lua_vm` 内部执行相位。
 
 当前 `[stats]` 已额外追加 LVGL breakdown 字段：`lv_timer`、`flush`、`flush_wait`、`dma2d`、`input_read`、`screen`、`flush_cnt`、`flush_px`、`input_cnt` 和 `lvgl_reason`。当最近出现新的 LVGL 慢帧时，还会额外输出一行 `[lvgl-slow]` 摘要，帮助判断慢帧主要来自 timer、flush submit、现有等待路径、输入读取还是明确的 screen 切换片段；这些统计只记录数值，不会在 flush/input callback 内打印。
 
-默认不会额外创建屏幕 overlay，也不会改变 Lua、LVGL、launcher 的调用顺序；主循环仍保持 `lvgl_task_handler() -> Task_LUA() -> Launcher_Task() -> osDelay(5)`。如需关闭 stats 串口输出，可在编译期调整 `RUNTIME_STATS_ENABLE_UART_PRINT`，或在运行时调用 `RuntimeStats_SetPrintEnabled(false)`；如需恢复 `ui.image.dump` 大段图片调试输出，可把 `LUA_UI_IMAGE_ENABLE_DUMP` 改为 `1`。
+默认不会额外创建屏幕 overlay，也不会改变 Lua、LVGL、launcher 的调用顺序；主循环保持 `lvgl_task_handler() -> LuaRuntimeTask_Process() -> Launcher_Task() -> osDelayUntil()`，基准周期为 5 ms，Lua update 期限为 10 ms。如需关闭 stats 串口输出，可在编译期调整 `RUNTIME_STATS_ENABLE_UART_PRINT`，或在运行时调用 `RuntimeStats_SetPrintEnabled(false)`；如需恢复 `ui.image.dump` 大段图片调试输出，可把 `LUA_UI_IMAGE_ENABLE_DUMP` 改为 `1`。
 
 ## cart.bin
 
@@ -211,7 +225,8 @@ tests/              host 侧解析测试和 Lua smoke test
 - `Core/Driver/LCD/lcd.c` 是当前显示提交和 page flip 的主要所有者，改 LTDC/VBlank 时优先从这里追链路。
 - `Core/APPS/LVGL/port/` 是 LVGL 与板级显示/输入之间的移植层。
 - `Core/Screen/Page/ui_screen_launcher.c` 负责 launcher 页面、卡槽和 `cart.bin` 预览图接入。
-- `Core/APPS/TASK/LUA.c` 负责 Lua 启停请求；默认卡带路径是 `0:/cart.bin`。
+- `Core/APPS/TASK/app_task.c` 负责应用任务初始化与固定顺序调度。
+- `Core/APPS/TASK/lua_runtime_task.c` 负责 Lua 启停请求；默认卡带路径是 `0:/cart.bin`。
 - `Core/Src/lua_vm.c` 负责 Lua VM、cart entry 加载和生命周期调度。
 - `Docs/memory/SDRAM_Layout_Spec_v1.0.md` 与链接脚本/`sdram_layout.h` 应保持一致。
 

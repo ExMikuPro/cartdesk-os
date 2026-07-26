@@ -439,7 +439,18 @@ if(CARTDESK_BUILD_HOST_TESTS)
 endif()
 
 # ==============================================================================
-# 目标 10: app_screen —— 应用层 UI 界面（启动器 / 缓存 / 预览）
+# 目标 10: lua_runtime —— Lua 生命周期控制器（不拥有独立 RTOS 线程）
+# ==============================================================================
+add_library(lua_runtime STATIC
+        ${TASK_DIR}/lua_runtime_task.c
+        ${TASK_DIR}/lua_runtime_task.h
+)
+
+target_include_directories(lua_runtime PUBLIC ${TASK_DIR})
+target_link_libraries(lua_runtime PUBLIC cartdesk_common lua_port)
+
+# ==============================================================================
+# 目标 11: app_screen —— 应用层 UI 界面（启动器 / 缓存 / 预览）
 # ==============================================================================
 add_library(app_screen STATIC
         ${SCREEN_PAGE_DIR}/launcher_action_hints.c
@@ -459,23 +470,37 @@ target_include_directories(app_screen PUBLIC
         ${TASK_DIR}
         ${DRIVER_DIR}/LCD
 )
-target_link_libraries(app_screen PUBLIC cartdesk_common lvgl drv_storage cart_core)
+target_link_libraries(app_screen
+        PUBLIC cartdesk_common lvgl drv_storage cart_core
+        PRIVATE lua_runtime
+)
 
 # ==============================================================================
-# 目标 11: app_task —— RTOS / 裸机任务（LED / LVGL / LUA 任务）
+# 目标 12: app_task —— 单线程应用初始化与调度循环
 # ==============================================================================
 add_library(app_task STATIC
-        ${TASK_DIR}/cartdesk_task.h
-        ${TASK_DIR}/LED.c
-        ${TASK_DIR}/LVGL.c
-        ${TASK_DIR}/LUA.c
+        ${TASK_DIR}/app_task.c
+        ${TASK_DIR}/app_task.h
+        ${TASK_DIR}/audio_task.c
+        ${TASK_DIR}/audio_task.h
+        ${TASK_DIR}/peripheral_task.c
+        ${TASK_DIR}/peripheral_task.h
+        ${TASK_DIR}/background_task.c
+        ${TASK_DIR}/background_task.h
 )
 
 target_include_directories(app_task PUBLIC ${TASK_DIR})
-target_link_libraries(app_task PUBLIC cartdesk_common lvgl lua_port)
+target_link_libraries(app_task PUBLIC
+        cartdesk_common
+        lvgl
+        lua_runtime
+        app_screen
+        drv_display
+        drv_storage
+)
 
 # ==============================================================================
-# 目标 12: board_test —— 板级 bring-up / smoke test 入口（默认不在 main 中执行）
+# 目标 13: board_test —— 板级 bring-up / smoke test 入口（默认不在 main 中执行）
 # ==============================================================================
 add_library(board_test STATIC
         ${DEBUG_DIR}/board_test.c
@@ -498,8 +523,10 @@ add_library(runtime_debug STATIC
 )
 
 target_include_directories(runtime_debug PUBLIC ${DEBUG_DIR})
-target_link_libraries(runtime_debug PUBLIC cartdesk_common freertos_kernel lua_port)
-target_include_directories(runtime_debug PUBLIC ${TASK_DIR})
+target_link_libraries(runtime_debug
+        PUBLIC cartdesk_common freertos_kernel
+        PRIVATE lua_runtime
+)
 
 set(DEBUG_OVERLAY_LIBS)
 if(XHGC_MEM_OVERLAY_ENABLE)
@@ -508,7 +535,10 @@ if(XHGC_MEM_OVERLAY_ENABLE)
             ${DEBUG_DIR}/xhgc_mem_overlay.h
     )
 
-    target_include_directories(mem_overlay PUBLIC ${DEBUG_DIR})
+    target_include_directories(mem_overlay
+            PUBLIC ${DEBUG_DIR}
+            PRIVATE ${DRIVER_DIR}/LCD
+    )
     target_link_libraries(mem_overlay PUBLIC cartdesk_common lvgl mem_layout)
     list(APPEND DEBUG_OVERLAY_LIBS mem_overlay)
 endif()

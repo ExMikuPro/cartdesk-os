@@ -10,7 +10,7 @@
 
 #include "stm32h743xx.h"
 #include "cart_bin.h"
-#include "cartdesk_task.h"
+#include "lua_runtime_task.h"
 #include "launcher_action_hints.h"
 #include "runtime_stats.h"
 #include "perf_monitor.h"
@@ -146,7 +146,7 @@ static LauncherActionHintState prv_make_action_hint_state(void)
     if (state.has_selection) {
         state.can_start = (s_selected_index == 0)
                           && (strcmp(s_cart0_title, "ERR") != 0)
-                          && Task_LUA_IsIdle();
+                          && LuaRuntimeTask_IsIdle();
         state.has_info = (s_selected_index == 0);
     }
 
@@ -289,7 +289,7 @@ static bool prv_selected_app_can_start(void)
 {
     return (s_selected_index == 0)
            && (strcmp(s_cart0_title, "ERR") != 0)
-           && Task_LUA_IsIdle();
+           && LuaRuntimeTask_IsIdle();
 }
 
 static void prv_info_popup_close_cb(lv_event_t *e)
@@ -421,7 +421,7 @@ static void prv_runtime_exit_clicked_cb(lv_event_t *e)
     if (target != NULL) {
         lv_obj_add_state(target, LV_STATE_DISABLED);
     }
-    Task_LUA_Stop();
+    LuaRuntimeTask_RequestStop();
 }
 
 static void prv_show_runtime_screen(void)
@@ -508,7 +508,7 @@ static void prv_start_selected_app(void)
     }
 
     s_app_launch_armed = false;
-    if (!Task_LUA_StartCart("0:/cart.bin")) {
+    if (!LuaRuntimeTask_RequestStart("0:/cart.bin")) {
         prv_set_status_text("App cannot start");
         return;
     }
@@ -811,17 +811,17 @@ void Launcher_Task(void)
     } else if (g_phase3_repeat_command == 2u) {
         g_phase3_repeat_state = 0u;
         g_phase3_repeat_command = 0u;
-        if (!Task_LUA_IsIdle()) {
+        if (!LuaRuntimeTask_IsIdle()) {
             s_runtime_exit_pending = true;
-            Task_LUA_Stop();
+            LuaRuntimeTask_RequestStop();
         }
     }
 
     switch (g_phase3_repeat_state) {
     case 1u:
-        if (Task_LUA_IsIdle() && s_main_container != NULL) {
+        if (LuaRuntimeTask_IsIdle() && s_main_container != NULL) {
             prv_start_selected_app();
-            if (Task_LUA_IsIdle()) {
+            if (LuaRuntimeTask_IsIdle()) {
                 g_phase3_repeat_failures++;
                 g_phase3_repeat_state = 0u;
             } else {
@@ -830,25 +830,25 @@ void Launcher_Task(void)
         }
         break;
     case 2u:
-        if (Task_LUA_IsRunning()) {
+        if (LuaRuntimeTask_IsRunning()) {
             s_phase3_repeat_dwell_count = 0u;
             g_phase3_repeat_state = 3u;
-        } else if (Task_LUA_HasError()) {
+        } else if (LuaRuntimeTask_HasError()) {
             g_phase3_repeat_failures++;
             s_runtime_exit_pending = true;
-            Task_LUA_Stop();
+            LuaRuntimeTask_RequestStop();
             g_phase3_repeat_state = 4u;
         }
         break;
     case 3u:
         if (++s_phase3_repeat_dwell_count >= g_phase3_repeat_dwell_loops) {
             s_runtime_exit_pending = true;
-            Task_LUA_Stop();
+            LuaRuntimeTask_RequestStop();
             g_phase3_repeat_state = 4u;
         }
         break;
     case 4u:
-        if (Task_LUA_IsIdle()) {
+        if (LuaRuntimeTask_IsIdle()) {
             g_phase3_repeat_completed++;
             if (g_phase3_repeat_completed >= g_phase3_repeat_target) {
                 g_phase3_repeat_state = 0u;
@@ -874,7 +874,7 @@ void Launcher_Task(void)
     if (!s_runtime_exit_pending) {
         return;
     }
-    if (!Task_LUA_IsIdle()) {
+    if (!LuaRuntimeTask_IsIdle()) {
         return;
     }
 

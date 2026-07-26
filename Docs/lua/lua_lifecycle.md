@@ -106,7 +106,8 @@ preserving each `self` table. It then calls `on_reload(self)`. Raw bytecode
 instances cannot be reloaded because their original byte buffer is not kept.
 
 `lua_shutdown()` calls `final(self)` once, releases all registry references,
-and closes the Lua state. `Task_LUA_Stop()` requests this through the Lua task.
+and closes the Lua state. `LuaRuntimeTask_RequestStop()` requests this through
+the runtime controller owned by the application task.
 
 ## Compatibility
 

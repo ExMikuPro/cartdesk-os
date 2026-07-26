@@ -4,14 +4,20 @@
 
 ## 1. 系统总览
 
-`cartdesk-os` 是面向 STM32H743 的嵌入式桌面/启动器固件。主程序入口在 `Core/Src/main.c`，启动后先完成 MPU、Cache、HAL、系统时钟和外设初始化，再启动 CMSIS-RTOS2 kernel。默认路径下创建 `StartLvglTask()`，该任务负责初始化 LVGL、显示、输入、launcher，并在循环中周期调用 LVGL、Lua task 和 launcher task。
+`cartdesk-os` 是面向 STM32H743 的嵌入式桌面/启动器固件。主程序入口在 `Core/Src/main.c`，启动后先完成 MPU、Cache、HAL、系统时钟和外设初始化，再通过 CubeMX 生成的 `MX_FREERTOS_Init()` 创建一个应用线程和三个服务线程。`app` 是 LVGL、Launcher 和 Lua runtime controller 的唯一所有者；`audio`、`io`、`background` 当前是永久阻塞的扩展骨架。
 
 程序启动路径已确认如下：
 
 1. `main()` 初始化 GPIO、MDMA、LTDC、FMC/SDRAM、USART、SDMMC/FatFs、CRC、DMA2D、QSPI、I2C、RNG、TIM 等外设，见 `Core/Src/main.c`。
-2. `main()` 调用 `osKernelInitialize()`，启动 TIM17/TIM16，然后根据 `CARTDESK_RUN_LUA_VM_ONLY` 选择创建 `StartLuaTask()` 或 `StartLvglTask()`，见 `Core/Src/main.c`。
-3. 默认 `StartLvglTask()` 中执行 `lv_init()`、`lv_port_disp_init()`、`lv_port_indev_init()`、`LCD_DisplayON()`、`Launcher_Init()`，随后循环调用 `lvgl_task_handler()`、`Task_LUA()`、`Launcher_Task()` 并 `osDelay(5)`，见 `Core/Src/main.c`。
-4. `CARTDESK_RUN_LUA_VM_ONLY` 打开时，`StartLuaTask()` 直接执行 `lua_init()`，随后循环调用 `lua_update_task()`，见 `Core/Src/main.c`。
+2. `main()` 启动 TIM17 微秒计数器，然后进入 CubeMX 生成的 `osKernelInitialize()`、`MX_FREERTOS_Init()`、`osKernelStart()`，见 `Core/Src/main.c`。
+3. `MX_FREERTOS_Init()` 按 `.ioc` 创建 `audio`、`app`、`io`、`background` 四个线程；`StartAppTask()` 初始化 USB Device 后进入用户实现 `CartdeskAppTask_Run()`，其余三个线程在尚无功能时阻塞等待事件，见 `Core/Src/freertos.c` 和 `Core/APPS/TASK/`。
+4. `CartdeskAppTask_Run()` 初始化 LVGL、显示、输入和 Launcher，随后按 5 ms 绝对周期调用 `lvgl_task_handler()`、`LuaRuntimeTask_Process()` 和 `Launcher_Task()`，见 `Core/APPS/TASK/app_task.c`。
+5. Lua update 由 runtime controller 按 10 ms deadline 调度，不再依赖 TIM16 中断递减软件计数器。
+
+RTOS 执行等级为：L0 外设 ISR、L1 `audio` 实时服务、L2 `app`
+交互应用、L3 `io` 外设服务、L4 `background` 后台维护。ISR 不执行协议
+解析、日志或阻塞调用；三个服务线程在功能接入前通过 thread flags 永久
+阻塞，因此不会产生空转或周期唤醒。
 
 cart/bin 包加载分为 launcher 快速读取和 runtime 入口加载两条路径：
 
@@ -35,9 +41,9 @@ Lua VM 位于 runtime 核心。`lua_rt_init_state()` 创建 `lua_State`，打开
 ```mermaid
 flowchart TD
     Entry["Program Entry\nCore/Src/main.c"]
-    LvglTask["Runtime Task\nStartLvglTask / StartLuaTask\nCore/Src/main.c"]
+    LvglTask["App Task\nStartAppTask\nCore/Src/freertos.c\nCore/APPS/TASK/app_task.c"]
     Launcher["Launcher\nCore/Screen/Page/ui_screen_launcher.c"]
-    LuaTask["Lua Task Gate\nCore/APPS/TASK/LUA.c"]
+    LuaTask["Lua Runtime Controller\nCore/APPS/TASK/lua_runtime_task.c"]
     LuaVM["Lua Runtime / VM\nCore/Src/lua_vm.c"]
     CartLoader["Cart / BIN Loader\nCore/Cart/xhgc_cart.c\nCore/Cart/cart_bin.c"]
     ResIndex["Resource Index\nCore/Cart/cart_index.c\nCore/LuaPort/resource_manager.c"]
@@ -82,10 +88,13 @@ flowchart TD
 
 | 模块名称 | 作用 | 关键文件 | 状态 | 备注 |
 |---|---|---|---|---|
-| Program Entry | MCU、外设、RTOS 和任务启动入口 | `Core/Src/main.c` | 已确认 | 默认创建 `StartLvglTask()`；可配置为 Lua-only task。 |
-| LVGL Runtime Task | 初始化 LVGL、显示、输入、launcher，并周期驱动 LVGL/Lua/launcher | `Core/Src/main.c` | 已确认 | 循环调用 `lvgl_task_handler()`、`Task_LUA()`、`Launcher_Task()`。 |
-| Launcher | 展示 cart 标题/预览图，处理启动和退出 | `Core/Screen/Page/ui_screen_launcher.c` | 已确认 | 点击第 0 个卡槽后调用 `Task_LUA_StartCart("0:/cart.bin")`。 |
-| Lua Task Gate | Lua 启停请求状态机 | `Core/APPS/TASK/LUA.c` | 已确认 | 默认 cart 路径为 `0:/cart.bin`；停止时调用 `lua_shutdown()`。 |
+| Program Entry | MCU、外设和 RTOS 启动入口 | `Core/Src/main.c`、`Core/Src/freertos.c` | 已确认 | CubeMX 创建 `audio`、`app`、`io`、`background` 四个线程。 |
+| Audio Task | 预留 DMA 音频缓冲提交/补充 | `Core/APPS/TASK/audio_task.c` | 骨架 | High，8 KiB；当前永久阻塞，不含音频实现。 |
+| App Task | 初始化 USB、LVGL、显示、输入、launcher，并周期驱动 LVGL/Lua/launcher | `Core/Src/freertos.c`、`Core/APPS/TASK/app_task.c` | 已确认 | 使用 `osDelayUntil()` 保持 5 ms 周期。 |
+| Peripheral Task | 预留阻塞式 GPIO/I2C/SPI/SD 请求串行化 | `Core/APPS/TASK/peripheral_task.c` | 骨架 | Normal，4 KiB；当前永久阻塞，不接管现有外设调用。 |
+| Background Task | 预留日志、完整性校验和维护操作 | `Core/APPS/TASK/background_task.c` | 骨架 | Low，4 KiB；当前永久阻塞。 |
+| Launcher | 展示 cart 标题/预览图，处理启动和退出 | `Core/Screen/Page/ui_screen_launcher.c` | 已确认 | 点击第 0 个卡槽后调用 `LuaRuntimeTask_RequestStart("0:/cart.bin")`。 |
+| Lua Runtime Controller | Lua 启停请求状态机 | `Core/APPS/TASK/lua_runtime_task.c` | 已确认 | 默认 cart 路径为 `0:/cart.bin`；停止时调用 `lua_shutdown()`。 |
 | Lua Runtime / VM | Lua state、脚本实例、生命周期调度、cart/file/embedded boot 加载 | `Core/Src/lua_vm.c`、`Core/Inc/lua_vm.h` | 已确认 | 支持最多 `LUA_RT_MAX_INSTANCES` 个实例，默认 4。 |
 | Lua Port Bindings | 绑定 GPIO/PWM/TIM/RNG/CRC/delay/UI 到 Lua 全局环境 | `Core/LuaPort/lua_port.c` | 已确认 | 创建全局 `gpio`、`pwm`、`tim`、`rng`、`crc`、`ui`、`delay`。 |
 | Lua UI Widgets | Lua 创建 LVGL button/slider/image，并向 runtime 派发输入 | `Core/LuaPort/modules/lua_ui_button.c`、`lua_ui_slider.c`、`lua_ui_image.c` | 已确认 | `ui.image` 经资源管理器加载 cart 图片。 |
@@ -113,8 +122,8 @@ launcher 快速路径：
 
 runtime 路径：
 
-1. 用户点击卡槽后，launcher 调用 `Task_LUA_StartCart("0:/cart.bin")`。
-2. `Task_LUA()` 在下一次 task tick 中调用 `lua_init_from_cart()`。
+1. 用户点击卡槽后，launcher 调用 `LuaRuntimeTask_RequestStart("0:/cart.bin")`。
+2. `LuaRuntimeTask_Process()` 在下一次 app task 循环中调用 `lua_init_from_cart()`。
 3. `lua_init_from_cart()` 调用 `lua_rt_init_state()` 初始化 VM，然后调用 `lua_run_cart_entry()` 加载入口脚本。
 
 ### 解析 manifest / index / resource table
@@ -403,8 +412,8 @@ DATA：
 
 ```mermaid
 flowchart TD
-    Start["Task_LUA_StartCart(0:/cart.bin)"]
-    Gate["Task_LUA()\nCore/APPS/TASK/LUA.c"]
+    Start["LuaRuntimeTask_RequestStart(0:/cart.bin)"]
+    Gate["LuaRuntimeTask_Process()\nCore/APPS/TASK/lua_runtime_task.c"]
     Init["lua_init_from_cart()\nCore/Src/lua_vm.c"]
     State["lua_rt_init_state()\ncreate lua_State"]
     Open["xhgc_cart_open_fatfs()\nCore/Cart/xhgc_cart.c"]
@@ -442,14 +451,14 @@ flowchart TD
     Boot["main()"]
     InitHW["Init HAL / Clock / GPIO / LTDC / FMC / SDRAM / SDMMC / FatFs / CRC / DMA2D / Timers"]
     Kernel["osKernelInitialize()\nosKernelStart()"]
-    Task["StartLvglTask()"]
+    Task["StartAppTask()"]
     LvInit["lv_init()\nlv_port_disp_init()\nlv_port_indev_init()\nLCD_DisplayON()"]
     LauncherInit["Launcher_Init()"]
     Loop["for (;;)"]
     Lvgl["lvgl_task_handler()"]
-    LuaGate["Task_LUA()"]
+    LuaGate["LuaRuntimeTask_Process()"]
     LauncherTask["Launcher_Task()"]
-    Delay["osDelay(5)"]
+    Delay["osDelayUntil()\n5 ms absolute period"]
 
     Boot --> InitHW --> Kernel --> Task --> LvInit --> LauncherInit --> Loop
     Loop --> Lvgl --> LuaGate --> LauncherTask --> Delay --> Loop
@@ -618,11 +627,13 @@ flowchart TD
 
 强依赖：
 
-- `Core/Src/main.c` 强依赖 HAL/CubeMX 初始化、CMSIS-RTOS2、LVGL task 入口。
+- `Core/Src/main.c` 负责 HAL/CubeMX 外设初始化；`Core/Src/freertos.c` 负责创建 app 线程。
+- `Core/APPS/TASK/app_task.c` 强依赖 CMSIS-RTOS2、LVGL、Launcher 和 Lua runtime controller。
+- `audio`、`io`、`background` 当前只依赖 CMSIS-RTOS2 thread flags；尚无业务模块依赖它们。
 - `Core/Src/lua_vm.c` 强依赖 Lua C API、FatFs、cart parser、resource manager、Lua port bindings。
 - `Core/Driver/SDRAM/sdram.c` 强依赖 `Core/Memory/xhgc_memory_layout.c` 的 zone table 和 `Core/Memory/xhgc_meminfo.c` 的 DMA tag 统计。
 - `ui.image` 强依赖 `resource_manager`、LVGL image、cart path 校验。
-- launcher 强依赖 LVGL、`cart_bin` 快速读取、`Task_LUA` 启停接口。
+- launcher 强依赖 LVGL、`cart_bin` 快速读取、`LuaRuntimeTask_*` 启停接口。
 
 弱依赖：
 
@@ -636,7 +647,7 @@ flowchart TD
 
 可能需要解耦的位置：
 
-- `StartLvglTask()` 同时调用 LVGL、Lua task 和 launcher task，调度权集中；如果 Lua 运行时间变长，可能影响 LVGL 响应。
+- app 线程同时调用 LVGL、Lua runtime controller 和 Launcher，保证所有 LVGL API 位于同一线程；如果 Lua 运行时间变长，仍可能影响 LVGL 响应。
 - `ui.image()` 同步读取 SD/FatFs 和分配资源，可能阻塞 LVGL task。
 - launcher preview 读取固定偏移 `0x1000`，与通用 slot parser 存在重复路径。
 - `resource_manager` 和 `lua_cart_resource_cache` 功能相近，当前职责边界需要确认。
@@ -653,8 +664,7 @@ flowchart TD
 | Lua 存档/KV storage 是否存在 | 无法说明游戏如何持久化状态 | 查找或设计 save API 与文件格式 | `Core/Src/lua_vm.c`、`Docs/display/launcher_action_hints.md` |
 | `lua_cart_resource_cache` 当前是否仍在使用 | 可能存在重复资源缓存实现 | 查调用者或编译链接符号，决定保留/删除/整合 | `Core/LuaPort/lua_cart_resource_cache.c`、`Core/LuaPort/resource_manager.c` |
 | launcher 固定 offset 预览是否必须与 slot0 保持一致 | 格式扩展时可能破坏预览显示 | 用 `xhgc_cart_get_slot(ICON)` 替代或记录约束 | `Core/Cart/cart_bin.c`、`Docs/cart/xhgc-cartbin-format-spec-v2.2.md` |
-| `Task_LUA()` tick 与 `lua_update_task()` runtime period 的组合时序 | 影响 Lua update 频率和输入延迟 | 板级测量 `TaskTicks_LUA` 和 `LUA_RT_PERIOD_MS` 实际节奏 | `Core/APPS/TASK/LUA.c`、`Core/Src/lua_vm.c` |
-| `lvgl_task_handler()` 的具体实现 | README/主循环使用该函数，但另有 `Task_LVGL()` 调 `lv_timer_handler()` | 定位 `lvgl_task_handler` 实现或宏映射 | `Core/Src/main.c`、`Core/APPS/TASK/LVGL.c` |
+| app 线程 5 ms 周期与 Lua runtime 10 ms 周期的组合时序 | 影响 Lua update 频率和输入延迟 | 板级测量 `LuaRuntimeTask_Process()` 与 `LUA_RT_PERIOD_MS` 实际节奏 | `Core/APPS/TASK/app_task.c`、`Core/APPS/TASK/lua_runtime_task.c`、`Core/Src/lua_vm.c` |
 | font resource 访问方式 | 格式定义 font，但 Lua/UI 字体加载链路未确认 | 搜索 font API 或创建资源加载设计 | `Core/Cart/xhgc_cart.h`、`Core/LuaPort/*` |
 
 ## 11. 参考文件
@@ -671,8 +681,17 @@ flowchart TD
 - `Core/Memory/xhgc_meminfo.h`
 - `Core/Memory/xhgc_dcache.c`
 - `Core/Memory/xhgc_dcache.h`
-- `Core/APPS/TASK/LUA.c`
-- `Core/APPS/TASK/LVGL.c`
+- `Core/Src/freertos.c`
+- `Core/APPS/TASK/app_task.c`
+- `Core/APPS/TASK/app_task.h`
+- `Core/APPS/TASK/lua_runtime_task.c`
+- `Core/APPS/TASK/lua_runtime_task.h`
+- `Core/APPS/TASK/audio_task.c`
+- `Core/APPS/TASK/audio_task.h`
+- `Core/APPS/TASK/peripheral_task.c`
+- `Core/APPS/TASK/peripheral_task.h`
+- `Core/APPS/TASK/background_task.c`
+- `Core/APPS/TASK/background_task.h`
 - `Core/Screen/Page/ui_screen_launcher.c`
 - `Core/Cart/xhgc_cart.h`
 - `Core/Cart/xhgc_cart.c`

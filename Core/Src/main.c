@@ -47,56 +47,19 @@
 #include "app_arena.h"
 #endif
 #include "board_test.h"
-#include "lcd.h"
-#include "runtime_stats.h"
 #include "sdram.h"
 #include "sdram_cold_pool.h"
-#include "ui_screen_launcher.h"
 #include "xhgc_meminfo.h"
 #include "xhgc_memory_layout.h"
-#if XHGC_MEM_OVERLAY_ENABLE
-#include "xhgc_mem_overlay.h"
-#endif
 
 
-/* Storage: QSPI NOR + littlefs */
-#include "lua_vm.h"
-#include "lv_port_disp.h"
-#include "lv_port_indev.h"
 #include "touch.h"
-#include "lvgl_init.h"
-#include "lvgl.h"
-#include "qflash_font.h"
-#include "cartdesk_task.h"
-#include "flash.h"
-#include "lfs_port.h"
 #include "qflash_font_programmer.h"
 
-#define CARTDESK_RUN_LUA_VM_ONLY 0
-#define CARTDESK_ENABLE_QSPI_STORAGE 0
-#define CARTDESK_ENABLE_QFLASH_FONT 1
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-
-#if !CARTDESK_RUN_LUA_VM_ONLY && (CARTDESK_ENABLE_QSPI_STORAGE || CARTDESK_ENABLE_QFLASH_FONT)
-static FLASH_Handle g_flash;
-#endif
-#if !CARTDESK_RUN_LUA_VM_ONLY
-static const osThreadAttr_t lvgl_task_attributes = {
-  .name = "lvgl",
-  .priority = osPriorityAboveNormal,
-  .stack_size = 32768
-};
-#endif
-#if CARTDESK_RUN_LUA_VM_ONLY
-static const osThreadAttr_t lua_task_attributes = {
-  .name = "lua",
-  .priority = osPriorityNormal,
-  .stack_size = 32768
-};
-#endif
 
 /* USER CODE END PTD */
 
@@ -123,102 +86,11 @@ void PeriphCommonClock_Config(void);
 static void MPU_Config(void);
 void MX_FREERTOS_Init(void);
 /* USER CODE BEGIN PFP */
-#if !CARTDESK_RUN_LUA_VM_ONLY
-static void StartLvglTask(void *argument);
-#endif
-#if CARTDESK_RUN_LUA_VM_ONLY
-static void StartLuaTask(void *argument);
-#endif
 
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-/* ============================== Storage init ============================== */
-
-#if !CARTDESK_RUN_LUA_VM_ONLY && CARTDESK_ENABLE_QFLASH_FONT
-static void QFlashFont_InitOrFallback(void) {
-  uint32_t qflash_start = PerfMonitor_Begin();
-  FLASH_Status status = FLASH_Open(&g_flash, &hqspi, 64u * 1024u * 1024u);
-  if (status == FLASH_OK) {
-    status = FLASH_BringUp(&g_flash);
-  }
-  if (status == FLASH_OK) {
-    status = FLASH_EnableMemoryMapped(&g_flash);
-  }
-
-  if (status != FLASH_OK) {
-    PerfMonitor_End(PERF_MONITOR_STARTUP_QFLASH_INIT, qflash_start);
-    const FLASH_ErrorInfo *error = FLASH_LastError(&g_flash);
-    printf("QFLASH font init failed: step=%s code=%d hal=%d qspi=0x%08lx; using built-in font\r\n",
-           error && error->step ? error->step : "?",
-           error ? error->code : -1,
-           error ? error->hal : -1,
-           error ? (unsigned long)error->qspi_error : 0ul);
-    return;
-  }
-
-  const void *font_pack =
-      (const void *)(uintptr_t)(FLASH_MM_BASE + QFLASH_FONT_PACK_OFFSET);
-  PerfMonitor_End(PERF_MONITOR_STARTUP_QFLASH_INIT, qflash_start);
-
-  uint32_t mount_start = PerfMonitor_Begin();
-  bool mounted = QFlashFont_Mount(font_pack, QFLASH_FONT_REGION_SIZE);
-  PerfMonitor_End(PERF_MONITOR_STARTUP_QFLASH_MOUNT, mount_start);
-  if (!mounted) {
-    printf("QFLASH font mount failed: %s; using built-in font\r\n",
-           QFlashFont_LastError());
-    return;
-  }
-
-  printf("QFLASH font mounted: 16/20/24 px, default=%u px\r\n",
-         (unsigned)QFLASH_FONT_DEFAULT_SIZE);
-}
-#endif
-
-#if !CARTDESK_RUN_LUA_VM_ONLY && CARTDESK_ENABLE_QSPI_STORAGE
-static void Storage_InitOrDie(void) {
-  /* 1) 绑定 QSPI 句柄（不在这里初始化 QSPI 外设） */
-  if (FLASH_Open(&g_flash, &hqspi, 64u * 1024u * 1024u) != FLASH_OK) {
-    const FLASH_ErrorInfo *e = FLASH_LastError(&g_flash);
-    printf("FLASH_Open fail step=%s line=%lu code=%d hal=%d qspi=0x%08lx\r\n",
-           e ? e->step : "?", e ? (unsigned long) e->line : 0ul,
-           e ? e->code : -1, e ? e->hal : -1, e ? (unsigned long) e->qspi_error : 0ul);
-    Error_Handler();
-  }
-
-  /* 2) 芯片 bring-up：reset/QE/4-byte 等（不是 QSPI 外设 init） */
-  if (FLASH_BringUp(&g_flash) != FLASH_OK) {
-    const FLASH_ErrorInfo *e = FLASH_LastError(&g_flash);
-    printf("FLASH_BringUp fail step=%s line=%lu code=%d hal=%d qspi=0x%08lx\r\n",
-           e ? e->step : "?", e ? (unsigned long) e->line : 0ul,
-           e ? e->code : -1, e ? e->hal : -1, e ? (unsigned long) e->qspi_error : 0ul);
-    Error_Handler();
-  }
-
-  /* 3) 读取 JEDEC（可选，但很有用） */
-  uint32_t jedec_id = 0;
-  if (FLASH_ReadJEDEC(&g_flash, &jedec_id) == FLASH_OK) {
-    printf("Flash JEDEC: 0x%06lX\r\n", (unsigned long) jedec_id);
-  }
-
-  /* 4) littlefs 绑定 & 挂载 */
-  if (LFS_PortBind(&g_flash) != 0) {
-    printf("LFS_PortBind fail\r\n");
-    Error_Handler();
-  }
-
-  int lfs_err = LFS_MountOrFormat();
-  if (lfs_err != 0) {
-    printf("LFS_MountOrFormat err=%d\r\n", lfs_err);
-    Error_Handler();
-  }
-
-  /* 如果你启用了 memory-mapped 读（XIP），可以在此打开：
-     注意：建议 MPU 把 littlefs 分区设为 Non-Cacheable，避免写后读到旧数据。 */
-  // (void)LFS_EnableMappedRead(1);
-}
-#endif
 
 static inline uint16_t tim17_us_now(void) {
   return (uint16_t) __HAL_TIM_GET_COUNTER(&htim17);
@@ -256,87 +128,6 @@ void HAL_Delay(uint32_t Delay) {
   while ((HAL_GetTick() - tickstart) < wait) {
   }
 }
-
-#if !CARTDESK_RUN_LUA_VM_ONLY
-static void StartLvglTask(void *argument) {
-  (void) argument;
-  bool first_lv_timer_pending = true;
-
-  /* LCD/UI */
-  RuntimeStats_Init();
-#if CARTDESK_ENABLE_QFLASH_FONT
-  QFlashFont_InitOrFallback();
-#endif
-  lv_init();
-
-  lv_mem_monitor_t mon;
-  lv_mem_monitor(&mon);
-
-  lv_port_disp_init(); // 显示端口初始化
-  lv_port_indev_init(); // ← 输入设备初始化
-  LCD_DisplayON();
-
-  Launcher_Init();
-#if XHGC_MEM_OVERLAY_ENABLE
-  xhgc_mem_overlay_init();
-#endif
-  // DesignLauncher_Create(lv_display_get_default());
-
-  for (;;) {
-    RuntimeStats_BeginSection(RUNTIME_STATS_SECTION_FRAME);
-
-    RuntimeStats_BeginSection(RUNTIME_STATS_SECTION_LVGL);
-    uint32_t lv_timer_start = PerfMonitor_Begin();
-    lvgl_task_handler();
-    if (first_lv_timer_pending) {
-      PerfMonitor_End(PERF_MONITOR_STARTUP_FIRST_LV_TIMER, lv_timer_start);
-      first_lv_timer_pending = false;
-    }
-    RuntimeStats_EndSection(RUNTIME_STATS_SECTION_LVGL);
-
-    RuntimeStats_BeginSection(RUNTIME_STATS_SECTION_LUA);
-    uint32_t lua_start = PerfMonitor_Begin();
-    Task_LUA();
-    PerfMonitor_End(PERF_MONITOR_RUNTIME_LUA_UPDATE, lua_start);
-    RuntimeStats_EndSection(RUNTIME_STATS_SECTION_LUA);
-
-    RuntimeStats_BeginSection(RUNTIME_STATS_SECTION_LAUNCHER);
-    Launcher_Task();
-    RuntimeStats_EndSection(RUNTIME_STATS_SECTION_LAUNCHER);
-#if XHGC_MEM_OVERLAY_ENABLE
-    xhgc_mem_overlay_update();
-#endif
-    RuntimeStats_EndSection(RUNTIME_STATS_SECTION_FRAME);
-    RuntimeStats_UpdateSnapshot();
-    RuntimeStats_PrintEveryMs(1000u);
-    osDelay(5);
-  }
-}
-#endif
-
-#if CARTDESK_RUN_LUA_VM_ONLY
-static void StartLuaTask(void *argument) {
-  (void) argument;
-
-  RuntimeStats_Init();
-  int lua_rc = lua_init();
-  if (lua_rc != 0) {
-    printf("lua_init failed: %d\r\n", lua_rc);
-    Error_Handler();
-  }
-
-  for (;;) {
-    RuntimeStats_BeginSection(RUNTIME_STATS_SECTION_FRAME);
-    RuntimeStats_BeginSection(RUNTIME_STATS_SECTION_LUA);
-    lua_update_task();
-    RuntimeStats_EndSection(RUNTIME_STATS_SECTION_LUA);
-    RuntimeStats_EndSection(RUNTIME_STATS_SECTION_FRAME);
-    RuntimeStats_UpdateSnapshot();
-    RuntimeStats_PrintEveryMs(1000u);
-    osDelay(5);
-  }
-}
-#endif
 
 /* USER CODE END 0 */
 
@@ -405,7 +196,6 @@ int main(void)
   MX_TIM2_Init();
   MX_TIM3_Init();
   MX_TIM17_Init();
-  MX_TIM16_Init();
   /* USER CODE BEGIN 2 */
   SDRAM_Init();
   sdram_layout_check();
@@ -431,28 +221,7 @@ int main(void)
 
   QFlashFont_ProgrammerReady();
 
-  if (osKernelInitialize() != osOK) {
-    Error_Handler();
-  }
-
   HAL_TIM_Base_Start(&htim17);
-  if (HAL_TIM_Base_Start_IT(&htim16) != HAL_OK) {
-    Error_Handler();
-  }
-
-#if CARTDESK_RUN_LUA_VM_ONLY
-  if (osThreadNew(StartLuaTask, NULL, &lua_task_attributes) == NULL) {
-    Error_Handler();
-  }
-#else
-  if (osThreadNew(StartLvglTask, NULL, &lvgl_task_attributes) == NULL) {
-    Error_Handler();
-  }
-#endif
-
-  if (osKernelStart() != osOK) {
-    Error_Handler();
-  }
   /* USER CODE END 2 */
 
   /* Init scheduler */
