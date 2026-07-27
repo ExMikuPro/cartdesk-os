@@ -28,6 +28,7 @@
 #include "app_task.h"
 #include "audio_task.h"
 #include "background_task.h"
+#include "crash_record.h"
 #include "peripheral_task.h"
 /* USER CODE END Includes */
 
@@ -154,6 +155,14 @@ void MX_FREERTOS_Init(void) {
 /* USER CODE END Header_StartAppTask */
 void StartAppTask(void *argument)
 {
+  /*
+   * The generated FatFs SD driver uses CMSIS-RTOS2 synchronization objects and
+   * an SDMMC completion queue. Flush only after the scheduler is running;
+   * calling it from main() leaves BASEPRI raised by pre-kernel FreeRTOS calls.
+   */
+  (void)CrashRecord_FlushPendingToSd();
+  CrashRecord_MaybeTriggerTestFault();
+
   /* init code for USB_DEVICE */
   MX_USB_DEVICE_Init();
   /* USER CODE BEGIN StartAppTask */

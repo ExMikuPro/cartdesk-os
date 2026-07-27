@@ -16,6 +16,8 @@ project(${CMAKE_PROJECT_NAME} C ASM)
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 
 option(CARTDESK_ENABLE_BOARD_TESTS "Run board-level test diagnostics at startup" OFF)
+option(CARTDESK_CRASH_TEST_ENABLE "Trigger one deliberate UDF crash at startup" OFF)
+option(CARTDESK_CRASH_BREAK_WHEN_DEBUGGED "Break after saving a crash when a debugger is attached" OFF)
 option(XHGC_MEMINFO_SELFTEST_ENABLE "Run APP_ARENA_REST meminfo selftest in Debug builds" OFF)
 option(XHGC_DMA_POOL_SELFTEST_ENABLE "Run DMA_POOL allocator meminfo selftest in Debug builds" OFF)
 option(XHGC_MEM_OVERLAY_ENABLE "Enable LCD memory debug overlay" OFF)
@@ -550,6 +552,10 @@ endif()
 # 主可执行目标：链接所有子目标
 # ==============================================================================
 add_executable(${CMAKE_PROJECT_NAME})
+target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
+        CARTDESK_CRASH_TEST_ENABLE=$<BOOL:${CARTDESK_CRASH_TEST_ENABLE}>
+        CARTDESK_CRASH_BREAK_WHEN_DEBUGGED=$<BOOL:${CARTDESK_CRASH_BREAK_WHEN_DEBUGGED}>
+)
 
 # 添加 STM32CubeMX 生成的源（main.c / 外设初始化 / 启动文件等）
 add_subdirectory(cmake/stm32cubemx)
@@ -567,6 +573,8 @@ endif()
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
         ${PROJECT_ROOT}/Core/Src/freertos_heap.c
         ${PROJECT_ROOT}/Core/Src/cmsis_os2_compat.c
+        ${PROJECT_ROOT}/Core/Debug/crash_record.c
+        ${PROJECT_ROOT}/Core/Debug/fault_entry.S
 )
 
 # 跟踪 USB/SDMMC 专用 RAM 链接片段，修改后强制重新链接固件。

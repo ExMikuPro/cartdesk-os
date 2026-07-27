@@ -20,6 +20,7 @@
 - Lua VM 运行时，支持生命周期函数和 GPIO/PWM/UI 等宿主 API。
 - FreeRTOS/CMSIS-RTOS2 任务模型，LVGL 和 Lua 在独立任务路径中调度。
 - 运行时可观测性输出：主循环每秒打印一行 runtime stats，覆盖 LVGL/Lua/Launcher 帧耗时、Lua heap、resource arena、队列长度和 FreeRTOS 基础指标，并对 LVGL slow frame 继续拆分 `lv_timer` / `flush` / `flush_wait` / `input` / `screen` 来源。
+- HardFault、MemManage、BusFault 和 UsageFault 现场使用 RTC Backup Registers 跨软件复位保存，并在下次启动时输出串口摘要、可靠追加到 SD 崩溃日志。
 - CMake/Ninja 构建，按模块拆成显示、存储、GPIO、Lua、UI、任务等静态库。
 
 ## 硬件目标
@@ -90,6 +91,9 @@ build/Debug/cartdesk-os.map
 构建结束后，如果本机能找到 Python 3，CMake 会自动解析 map 文件并打印 SDRAM 各分区的静态使用情况。
 
 CLion / CMake preset、自测构建和实验构建说明见 [Docs/CLion_Build_Presets.md](Docs/CLion_Build_Presets.md)。
+
+Fault 记录布局、SD 重试策略、受控 UDF 测试和地址解析方法见
+[Docs/debug/crash-record.md](Docs/debug/crash-record.md)。
 
 ### Host LuaVM 工具
 

@@ -29,6 +29,7 @@
 #include "mdma.h"
 #include "quadspi.h"
 #include "rng.h"
+#include "rtc.h"
 #include "sdmmc.h"
 #include "tim.h"
 #include "usart.h"
@@ -55,6 +56,7 @@
 
 #include "touch.h"
 #include "qflash_font_programmer.h"
+#include "crash_record.h"
 
 /* USER CODE END Includes */
 
@@ -182,7 +184,15 @@ int main(void)
   MX_MDMA_Init();
   MX_LTDC_Init();
   MX_FMC_Init();
+  MX_RTC_Init();
   MX_USART1_UART_Init();
+  CrashRecord_Init();
+  if (CrashRecord_HasPending()) {
+    CrashRecord record;
+    if (CrashRecord_Read(&record)) {
+      CrashRecord_Print(&record);
+    }
+  }
   uint32_t sdmmc_init_start = PerfMonitor_Begin();
   MX_SDMMC1_SD_Init();
   PerfMonitor_End(PERF_MONITOR_STARTUP_SDMMC_INIT, sdmmc_init_start);
