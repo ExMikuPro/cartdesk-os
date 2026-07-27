@@ -56,6 +56,8 @@ end
 
 加载 cart 入口脚本时，宿主会解析资源索引并生成图片资源目录。图片资源第一版采用同步懒加载：`ui.image()` 创建时才从 DATA 段读取 `XHGC_RES_IMAGE` + `XHGC_IMG_BGRA8888` 内容到 SDRAM 的 `APP_ARENA_REST` scene arena，不使用 MDMA 异步搬运、LRU 或压缩资源。
 
+FatFs 打开 cart 并校验 Header 时，如果首次遇到 I/O 错误或 Header CRC 不一致，宿主会关闭文件并重试一次；从 DATA 段读取图片时遇到 I/O 错误也会重新打开 cart 并重读一次。第二次仍失败时终止加载，并保留具体错误（例如 `cart I/O error` 或 `cart header CRC mismatch`）；格式、版本、范围等确定性错误不会重试。
+
 图片 Drawable 创建时会持有宿主侧资源 handle；相同 `src` 共享同一份 SDRAM 像素数据。Drawable 删除或 `self.children` 被宿主清理时释放引用。引用计数归零后资源只进入未使用状态，不单独释放 arena 中间块；场景结束时宿主统一 reset scene arena 并让旧 handle 失效。Lua 层不能访问资源 handle、SDRAM 地址、cart offset、size 或 CRC。
 
 ## 硬件外设与 self.state

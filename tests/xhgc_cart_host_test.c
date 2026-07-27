@@ -39,6 +39,16 @@ static uint32_t crc32_ieee(const uint8_t *data, uint32_t size)
     return crc ^ 0xFFFFFFFFu;
 }
 
+static uint32_t fnv1a32(const char *s)
+{
+    uint32_t hash = 2166136261u;
+    while (s && *s) {
+        hash ^= (uint8_t)*s++;
+        hash *= 16777619u;
+    }
+    return hash;
+}
+
 static void wr16(uint8_t *p, uint16_t v)
 {
     p[0] = (uint8_t)(v & 0xFFu);
@@ -157,22 +167,35 @@ static void build_valid_image(uint8_t *image)
     memcpy(data, main_lua, sizeof(main_lua) - 1u);
     memcpy(data + sizeof(main_lua) - 1u, readme, sizeof(readme) - 1u);
 
-    wr32(index, 2u);
-    cursor = 8u;
-    wr32(index + cursor, 0u);
-    wr32(index + cursor + 4u, (uint32_t)(sizeof(main_lua) - 1u));
-    wr32(index + cursor + 8u, crc32_ieee((const uint8_t *)main_lua, sizeof(main_lua) - 1u));
-    index[cursor + 12u] = 12u;
-    cursor += 16u;
-    memcpy(index + cursor, "app/main.lua", 12u);
-    cursor += 12u;
-    wr32(index + cursor, (uint32_t)(sizeof(main_lua) - 1u));
-    wr32(index + cursor + 4u, (uint32_t)(sizeof(readme) - 1u));
-    wr32(index + cursor + 8u, crc32_ieee((const uint8_t *)readme, sizeof(readme) - 1u));
-    index[cursor + 12u] = 10u;
-    cursor += 16u;
-    memcpy(index + cursor, "doc/readme", 10u);
-    cursor += 10u;
+    memcpy(index, XHGC_INDEX_MAGIC, XHGC_INDEX_MAGIC_SIZE);
+    wr16(index + 8u, XHGC_INDEX_VERSION);
+    wr16(index + 10u, XHGC_INDEX_ENTRY_SIZE);
+    wr32(index + 12u, 2u);
+    wr32(index + 16u, 32u);
+    wr32(index + 20u, 32u + 2u * XHGC_INDEX_ENTRY_SIZE);
+    wr32(index + 24u, 24u);
+
+    cursor = 32u;
+    wr32(index + cursor, fnv1a32("app/main.lua"));
+    wr32(index + cursor + 4u, 0u);
+    wr32(index + cursor + 8u, 0u);
+    wr32(index + cursor + 12u, (uint32_t)(sizeof(main_lua) - 1u));
+    wr32(index + cursor + 16u, crc32_ieee((const uint8_t *)main_lua, sizeof(main_lua) - 1u));
+    index[cursor + 20u] = XHGC_RES_SCRIPT;
+    cursor += XHGC_INDEX_ENTRY_SIZE;
+
+    wr32(index + cursor, fnv1a32("doc/readme"));
+    wr32(index + cursor + 4u, 13u);
+    wr32(index + cursor + 8u, (uint32_t)(sizeof(main_lua) - 1u));
+    wr32(index + cursor + 12u, (uint32_t)(sizeof(readme) - 1u));
+    wr32(index + cursor + 16u, crc32_ieee((const uint8_t *)readme, sizeof(readme) - 1u));
+    index[cursor + 20u] = XHGC_RES_SCRIPT;
+    cursor += XHGC_INDEX_ENTRY_SIZE;
+
+    memcpy(index + cursor, "app/main.lua", 13u);
+    cursor += 13u;
+    memcpy(index + cursor, "doc/readme", 11u);
+    cursor += 11u;
     index_size = cursor;
 
     put_slot(image, XHGC_CART_SLOT_MANF, TEST_MANF_OFF, manf_size, crc32_ieee(manf, manf_size));
@@ -282,12 +305,21 @@ static void test_range_protection(void)
     EXPECT_EQ_INT(rc, XHGC_CART_E_RANGE);
 }
 
+static void test_result_strings(void)
+{
+    EXPECT_STREQ(xhgc_cart_result_string(XHGC_CART_OK), "ok");
+    EXPECT_STREQ(xhgc_cart_result_string(XHGC_CART_E_IO), "cart I/O error");
+    EXPECT_STREQ(xhgc_cart_result_string(XHGC_CART_E_CRC), "cart header CRC mismatch");
+    EXPECT_STREQ(xhgc_cart_result_string(-1000), "unknown cart error");
+}
+
 int main(void)
 {
     test_valid_header_and_manf();
     test_bad_magic_and_crc();
     test_index_find_and_read();
     test_range_protection();
+    test_result_strings();
 
     if (g_failures != 0) {
         printf("%d test failure(s)\n", g_failures);

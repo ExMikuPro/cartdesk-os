@@ -22,6 +22,7 @@
 #endif
 
 #define CART_INDEX_HEADER_SIZE 32u
+#define CART_DATA_READ_ATTEMPTS 2u
 
 static cart_res_meta_t s_meta[CART_INDEX_MAX_RESOURCES];
 static char s_paths[CART_INDEX_MAX_RESOURCES][CART_INDEX_PATH_MAX];
@@ -182,7 +183,7 @@ bool cart_index_load(const char *cart_path)
   make_sd_path(fatfs_path, sizeof(fatfs_path), cart_path);
   rc = xhgc_cart_open_fatfs(&cart_file, fatfs_path);
   if (rc != XHGC_CART_OK) {
-    s_last_error = "failed to open cart";
+    s_last_error = xhgc_cart_result_string(rc);
     return false;
   }
 
@@ -309,7 +310,6 @@ const char *cart_index_last_error(void)
 bool cart_read_data(uint32_t data_off, void *dst, uint32_t size)
 {
   char fatfs_path[256];
-  XHGC_CartFatFs cart_file;
   XHGC_CartFile file;
   uint64_t image_offset = 0u;
 
@@ -323,15 +323,28 @@ bool cart_read_data(uint32_t data_off, void *dst, uint32_t size)
 
   (void)SD_FATFS_Mount();
   make_sd_path(fatfs_path, sizeof(fatfs_path), s_cart_path);
-  if (xhgc_cart_open_fatfs(&cart_file, fatfs_path) != XHGC_CART_OK) {
-    return false;
-  }
 
   file.image_offset = image_offset;
   file.data_offset = data_off;
   file.data_size = size;
   file.crc32 = 0u;
-  bool ok = xhgc_cart_read_file(&cart_file.cart, &file, 0u, dst, size) == XHGC_CART_OK;
-  xhgc_cart_close_fatfs(&cart_file);
-  return ok;
+
+  for (uint32_t attempt = 0u; attempt < CART_DATA_READ_ATTEMPTS; ++attempt) {
+    XHGC_CartFatFs cart_file;
+    int rc = xhgc_cart_open_fatfs(&cart_file, fatfs_path);
+    if (rc != XHGC_CART_OK) {
+      return false;
+    }
+
+    rc = xhgc_cart_read_file(&cart_file.cart, &file, 0u, dst, size);
+    xhgc_cart_close_fatfs(&cart_file);
+    if (rc == XHGC_CART_OK) {
+      return true;
+    }
+    if (rc != XHGC_CART_E_IO) {
+      return false;
+    }
+  }
+
+  return false;
 }

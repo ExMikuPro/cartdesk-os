@@ -20,10 +20,39 @@
 #define XHGC_MANF_FIELD_CART_ID    0x05u
 #define XHGC_MANF_FIELD_ENTRY      0x06u
 #define XHGC_MANF_FIELD_MIN_FW     0x07u
+#define XHGC_CART_FATFS_OPEN_ATTEMPTS 2u
 
 static uint16_t read_le16(const uint8_t *p)
 {
     return (uint16_t)((uint16_t)p[0] | ((uint16_t)p[1] << 8));
+}
+
+const char *xhgc_cart_result_string(int result)
+{
+    switch (result) {
+        case XHGC_CART_OK:
+            return "ok";
+        case XHGC_CART_E_PARAM:
+            return "invalid cart parameter";
+        case XHGC_CART_E_IO:
+            return "cart I/O error";
+        case XHGC_CART_E_RANGE:
+            return "cart data is out of range";
+        case XHGC_CART_E_MAGIC:
+            return "invalid cart magic";
+        case XHGC_CART_E_VERSION:
+            return "unsupported cart version";
+        case XHGC_CART_E_HEADER:
+            return "invalid cart header";
+        case XHGC_CART_E_CRC:
+            return "cart header CRC mismatch";
+        case XHGC_CART_E_NOT_FOUND:
+            return "cart entry not found";
+        case XHGC_CART_E_FORMAT:
+            return "invalid cart format";
+        default:
+            return "unknown cart error";
+    }
 }
 
 static uint32_t read_le32(const uint8_t *p)
@@ -773,26 +802,34 @@ static int fatfs_reader(void *ctx, uint64_t offset, void *buf, uint32_t size)
 
 int xhgc_cart_open_fatfs(XHGC_CartFatFs *cart_file, const char *path)
 {
-    FRESULT fr;
-    int rc;
-
     if (!cart_file || !path) return XHGC_CART_E_PARAM;
-    memset(cart_file, 0, sizeof(*cart_file));
+    int rc = XHGC_CART_E_IO;
 
-    fr = f_open(&cart_file->file, path, FA_READ);
-    if (fr != FR_OK) return XHGC_CART_E_IO;
-
-    rc = xhgc_cart_open_reader(&cart_file->cart,
-                               fatfs_reader,
-                               &cart_file->file,
-                               (uint64_t)f_size(&cart_file->file));
-    if (rc != XHGC_CART_OK) {
-        f_close(&cart_file->file);
+    for (uint32_t attempt = 0u; attempt < XHGC_CART_FATFS_OPEN_ATTEMPTS; ++attempt) {
         memset(cart_file, 0, sizeof(*cart_file));
-        return rc;
+
+        FRESULT fr = f_open(&cart_file->file, path, FA_READ);
+        if (fr == FR_OK) {
+            rc = xhgc_cart_open_reader(&cart_file->cart,
+                                       fatfs_reader,
+                                       &cart_file->file,
+                                       (uint64_t)f_size(&cart_file->file));
+            if (rc == XHGC_CART_OK) {
+                return XHGC_CART_OK;
+            }
+
+            f_close(&cart_file->file);
+            memset(cart_file, 0, sizeof(*cart_file));
+        } else {
+            rc = XHGC_CART_E_IO;
+        }
+
+        if (rc != XHGC_CART_E_IO && rc != XHGC_CART_E_CRC) {
+            return rc;
+        }
     }
 
-    return XHGC_CART_OK;
+    return rc;
 }
 
 void xhgc_cart_close_fatfs(XHGC_CartFatFs *cart_file)

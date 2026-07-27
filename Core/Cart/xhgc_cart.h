@@ -60,6 +60,8 @@ typedef enum {
 
 typedef int (*XHGC_CartReader)(void *ctx, uint64_t offset, void *buf, uint32_t size);
 
+const char *xhgc_cart_result_string(int result);
+
 typedef struct {
     uint64_t offset;
     uint32_t size;
