@@ -84,6 +84,21 @@ if(font != NULL) {
 }
 ```
 
+挂载成功后可以查询字体分区总容量和当前 QFNT 包的已使用字节数：
+
+```c
+QFlashFontStorageInfo storage;
+if(QFlashFont_GetStorageInfo(&storage)) {
+    printf("QFNT: %lu/%lu bytes\n",
+           (unsigned long)storage.used_bytes,
+           (unsigned long)storage.capacity_bytes);
+}
+```
+
+`capacity_bytes` 是传给 `QFlashFont_Mount()` 的字体分区大小，当前为 16 MiB；
+`used_bytes` 来自校验通过的 QFNT 文件头 `total_size`。未挂载或参数为空时接口
+返回 `false`，不会返回未校验的空间信息。
+
 Launcher 通过 `UiFont_GetSystem()` 统一选择 16/20 px 字体，优先使用已经挂载
 的 QFLASH 字体，挂载失败时回退到内置 Montserrat。Launcher 卡槽标题、系统
 菜单、状态文字、信息弹窗和操作提示不再各自绑定独立字体。

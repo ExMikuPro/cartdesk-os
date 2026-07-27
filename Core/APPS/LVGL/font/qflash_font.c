@@ -66,6 +66,8 @@ static qflash_font_context_t s_context_16;
 static qflash_font_context_t s_context_20;
 static qflash_font_context_t s_context_24;
 static bool s_mounted;
+static size_t s_region_size;
+static size_t s_used_size;
 static const char *s_last_error = "QFNT 尚未挂载";
 
 lv_font_t qflash_font_16 = {
@@ -173,6 +175,8 @@ bool QFlashFont_Mount(const void *mapped_base, size_t region_size)
     bool have_24 = false;
 
     s_mounted = false;
+    s_region_size = 0u;
+    s_used_size = 0u;
     clear_contexts();
 
     if(base == NULL || region_size < sizeof(qfnt_header_t)) {
@@ -245,6 +249,8 @@ bool QFlashFont_Mount(const void *mapped_base, size_t region_size)
     PerfMonitor_End(PERF_MONITOR_STARTUP_FONT_VALIDATE, perf_start);
 
     s_mounted = true;
+    s_region_size = region_size;
+    s_used_size = header->total_size;
     s_last_error = "OK";
     return true;
 }
@@ -263,6 +269,17 @@ const lv_font_t *QFlashFont_Get(uint16_t pixel_size)
 bool QFlashFont_IsMounted(void)
 {
     return s_mounted;
+}
+
+bool QFlashFont_GetStorageInfo(QFlashFontStorageInfo *info)
+{
+    if(info == NULL || !s_mounted) {
+        return false;
+    }
+
+    info->capacity_bytes = s_region_size;
+    info->used_bytes = s_used_size;
+    return true;
 }
 
 const char *QFlashFont_LastError(void)
