@@ -38,9 +38,10 @@ from starting the default-selected first cart slot on the first touch after boot
 
 ## Icon Resources
 
-The hint labels use `lv_font_source_han_sans_sc_16_cjk` because `lv_menu_font`
-only contains the launcher circle labels. The wording uses glyphs covered by the
-existing CJK font. The hint bar does not use icon assets.
+The hint labels use the shared 16 px system font selected by
+`UiFont_GetSystem()`. It prefers the mounted QFLASH A8 font and falls back to
+the built-in Montserrat font when QFLASH is unavailable. The hint bar does not
+use icon assets.
 
 ## Manual Test
 

@@ -14,11 +14,9 @@
 #include "launcher_action_hints.h"
 #include "runtime_stats.h"
 #include "perf_monitor.h"
+#include "ui_font_provider.h"
 #include "ui_launcher_cache.h"
 #include "usart.h"
-
-extern const lv_font_t lv_font_source_han_sans_sc_16_cjk;
-
 
 /* ------------------------------------------------------------------ */
 /*  SDRAM 地址布局                                                      */
@@ -372,7 +370,7 @@ static void prv_show_selected_app_info(void)
     lv_label_set_text(label, text);
     lv_obj_set_width(label, 402);
     lv_obj_set_style_text_color(label, lv_color_hex(COLOR_BLACK), 0);
-    lv_obj_set_style_text_font(label, &lv_font_source_han_sans_sc_16_cjk, 0);
+    lv_obj_set_style_text_font(label, UiFont_GetSystem(16u), 0);
     lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
     lv_obj_set_pos(label, 14, 12);
 
@@ -387,7 +385,7 @@ static void prv_show_selected_app_info(void)
     lv_obj_t *btn_label = lv_label_create(close_btn);
     lv_label_set_text(btn_label, "OK");
     lv_obj_set_style_text_color(btn_label, lv_color_hex(COLOR_BG), 0);
-    lv_obj_set_style_text_font(btn_label, &lv_font_source_han_sans_sc_16_cjk, 0);
+    lv_obj_set_style_text_font(btn_label, UiFont_GetSystem(16u), 0);
     lv_obj_center(btn_label);
 }
 
@@ -437,6 +435,9 @@ static void prv_show_runtime_screen(void)
     s_runtime_screen = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(s_runtime_screen, lv_color_hex(COLOR_BG), 0);
     lv_obj_set_style_pad_all(s_runtime_screen, 0, 0);
+    lv_obj_set_style_text_font(s_runtime_screen,
+                               UiFont_GetSystem(UI_FONT_SYSTEM_DEFAULT_SIZE),
+                               0);
 
     lv_obj_t *exit_btn = lv_button_create(s_runtime_screen);
     lv_obj_set_size(exit_btn, 96, 42);
@@ -721,7 +722,7 @@ static void prv_create_box_area(lv_obj_t *parent)
         lv_obj_t *label = lv_label_create(content_container);
         lv_label_set_text(label, (i == 0) ? s_cart0_title : app_names[i]);
         lv_obj_set_style_text_color(label, lv_color_hex(COLOR_CYAN), 0);
-        lv_obj_set_style_text_font(label, &lv_font_montserrat_20, 0);
+        lv_obj_set_style_text_font(label, UiFont_GetSystem(20u), 0);
         lv_label_set_long_mode(label, LV_LABEL_LONG_SCROLL_CIRCULAR);
         lv_obj_set_pos(label, box_x, 45);
         lv_obj_set_width(label, BOX_WIDTH);
@@ -756,7 +757,7 @@ static void prv_create_circle_area(lv_obj_t *parent)
         lv_obj_t *label = lv_label_create(parent);
         lv_label_set_text(label, circle_names[i]);
         lv_obj_set_style_text_color(label, lv_color_hex(COLOR_CYAN), 0);
-        lv_obj_set_style_text_font(label, &lv_menu_font, 0);
+        lv_obj_set_style_text_font(label, UiFont_GetSystem(20u), 0);
         lv_obj_set_pos(label, cx - 40, CIRCLE_Y + diameter + 5);
         lv_obj_set_width(label, diameter + 80);
         lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
@@ -779,7 +780,7 @@ static void prv_create_status_label(lv_obj_t *parent)
     s_status_label = lv_label_create(parent);
     lv_label_set_text(s_status_label, "");
     lv_obj_set_style_text_color(s_status_label, lv_color_hex(COLOR_CYAN), 0);
-    lv_obj_set_style_text_font(s_status_label, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_font(s_status_label, UiFont_GetSystem(20u), 0);
     lv_obj_set_style_text_align(s_status_label, LV_TEXT_ALIGN_CENTER, 0);
     lv_label_set_long_mode(s_status_label, LV_LABEL_LONG_DOT);
     lv_obj_set_width(s_status_label, SCREEN_W - 80);

@@ -5,8 +5,6 @@
 
 #include "lvgl.h"
 
-extern const lv_font_t lv_menu_font;
-
 /**
  * @brief 兼容旧入口，初始化并显示 Launcher
  */

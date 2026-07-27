@@ -6,7 +6,7 @@
 #include <stddef.h>
 #include <string.h>
 
-extern const lv_font_t lv_font_source_han_sans_sc_16_cjk;
+#include "ui_font_provider.h"
 
 #define ACTION_HINT_MARGIN_RIGHT   14
 #define ACTION_HINT_MARGIN_BOTTOM  10
@@ -239,7 +239,7 @@ void launcher_action_hints_init(LauncherActionHints *hints, lv_obj_t *parent)
         hints->labels[i] = lv_label_create(hints->items[i]);
 
         if (hints->labels[i] != NULL) {
-            lv_obj_set_style_text_font(hints->labels[i], &lv_font_source_han_sans_sc_16_cjk, 0);
+            lv_obj_set_style_text_font(hints->labels[i], UiFont_GetSystem(16u), 0);
             lv_label_set_long_mode(hints->labels[i], LV_LABEL_LONG_CLIP);
             lv_obj_remove_flag(hints->labels[i], LV_OBJ_FLAG_CLICKABLE);
             lv_obj_remove_flag(hints->labels[i], LV_OBJ_FLAG_CLICK_FOCUSABLE);

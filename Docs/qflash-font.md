@@ -84,5 +84,13 @@ if(font != NULL) {
 }
 ```
 
+Launcher 通过 `UiFont_GetSystem()` 统一选择 16/20 px 字体，优先使用已经挂载
+的 QFLASH 字体，挂载失败时回退到内置 Montserrat。Launcher 卡槽标题、系统
+菜单、状态文字、信息弹窗和操作提示不再各自绑定独立字体。
+
+运行时屏幕根对象使用同一个 20 px 系统字体。当前 BIN 字体加载器尚未实现，
+因此 Lua App 未显式绑定字体时会通过 LVGL 样式继承自动使用与 Launcher 相同
+的 QFLASH 字体；QFLASH 不可用时同样回退到内置 Montserrat。
+
 QFLASH 处于 Memory-Mapped 模式时，写入或擦除会先退出映射模式。若以后同时
 启用 littlefs 写入，需要在写操作结束后重新进入映射模式，才能继续读取字体。

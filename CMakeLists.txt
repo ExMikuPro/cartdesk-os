@@ -225,9 +225,10 @@ endif()
 
 add_library(lvgl STATIC
         ${LVGL_SOURCES}
-        ${LVGL_DIR}/font/lv_menu_font.c
         ${LVGL_DIR}/font/qflash_font.c
         ${LVGL_DIR}/font/qflash_font.h
+        ${LVGL_DIR}/font/ui_font_provider.c
+        ${LVGL_DIR}/font/ui_font_provider.h
 )
 
 # LVGL v9 内部头文件通过相对路径互相引用，只暴露根目录、src 和移植层。
