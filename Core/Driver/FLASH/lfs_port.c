@@ -75,6 +75,7 @@ static uint8_t *g_lookahead = NULL;
 
 /** Flash驱动句柄 (由外部绑定) */
 static FLASH_Handle *s_flash = NULL;
+static int s_mapped_read_enabled = 0;
 
 /* ==================== 内部辅助函数 ==================== */
 
@@ -109,8 +110,8 @@ static int lfs_bd_read(const struct lfs_config *c,
     FLASH_Handle *h = (FLASH_Handle *)c->context;
     uint32_t addr = lfs_addr(c, block, off);
 
-    /* 如果已开启Memory-Mapped模式，直接从映射地址读取 (速度更快) */
-    if (h && h->memory_mapped) {
+    /* 仅在调用方显式启用时使用 Memory-Mapped 读取。 */
+    if (s_mapped_read_enabled && h && h->memory_mapped) {
         memcpy(buffer, (const void *)(uintptr_t)(h->mm_base + addr), size);
         return 0;
     }
@@ -149,7 +150,7 @@ static int lfs_bd_prog(const struct lfs_config *c,
  * @param  c: littlefs配置
  * @param  block: 块号
  * @retval 0=成功, LFS_ERR_IO=失败
- * @note   双片模式: 擦除8KB块 = 两次4KB擦除
+ * @note   双片模式: 一次4KB命令会同时擦除两片，对应8KB线性空间
  *         单片模式: 擦除4KB块 = 一次4KB擦除
  */
 static int lfs_bd_erase(const struct lfs_config *c, lfs_block_t block)
@@ -157,15 +158,11 @@ static int lfs_bd_erase(const struct lfs_config *c, lfs_block_t block)
     FLASH_Handle *h = (FLASH_Handle *)c->context;
     uint32_t addr = lfs_addr(c, block, 0);
 
-    /* 双片模式: 线性8KB块需要两次4KB擦除 */
-#if (LFS_BLOCK_SIZE == 8192)
-    if (FLASH_Erase4K(h, addr) != FLASH_OK) return LFS_ERR_IO;
-    if (FLASH_Erase4K(h, addr + 4096u) != FLASH_OK) return LFS_ERR_IO;
-    return 0;
-#else
-    /* 单片模式: 直接擦除4KB */
+    /*
+     * Dual-Flash 模式会把同一条擦除命令发给两颗芯片。每片擦除4KB，
+     * 在线性地址空间中合计覆盖一个8KB littlefs块。
+     */
     return (FLASH_Erase4K(h, addr) == FLASH_OK) ? 0 : LFS_ERR_IO;
-#endif
 }
 
 /**
@@ -254,15 +251,16 @@ int LFS_PortBind(FLASH_Handle *flash)
 
     s_flash = flash;
     g_cfg.context = flash;
+    s_mapped_read_enabled = 0;
 
     return 0;
 }
 
 /**
- * @brief  挂载littlefs文件系统，失败时格式化后重试挂载
+ * @brief  挂载littlefs文件系统，确认分区未格式化时格式化后重试
  * @retval 0=挂载成功, 其它=littlefs错误码
  * @note   - 调用前必须先通过LFS_PortBind绑定Flash句柄
- *         - 首次挂载失败会调用lfs_format，可能擦写littlefs分区
+ *         - 仅LFS_ERR_CORRUPT会触发格式化，I/O错误不会擦写分区
  *         - 本函数不改变Flash驱动句柄本身
  */
 int LFS_MountOrFormat(void)
@@ -271,15 +269,17 @@ int LFS_MountOrFormat(void)
 
     /* 尝试挂载 */
     int err = lfs_mount(&g_lfs, &g_cfg);
-    if (err) {
-        /* 挂载失败，可能是首次使用或文件系统损坏 */
-        /* 执行格式化 */
+    if (err == LFS_ERR_CORRUPT) {
+        /* 未格式化或元数据不可识别时初始化分区。 */
         err = lfs_format(&g_lfs, &g_cfg);
         if (err) return err;
 
         /* 重新挂载 */
         err = lfs_mount(&g_lfs, &g_cfg);
         if (err) return err;
+    } else if (err) {
+        /* 瞬态总线/I/O错误必须原样返回，避免误格式化已有数据。 */
+        return err;
     }
 
     return 0;
@@ -307,8 +307,13 @@ int LFS_EnableMappedRead(int enable)
     if (!s_flash) return -1;
 
     if (enable) {
-        return (FLASH_EnableMemoryMapped(s_flash) == FLASH_OK) ? 0 : -1;
+        if (FLASH_EnableMemoryMapped(s_flash) != FLASH_OK) {
+            return -1;
+        }
+        s_mapped_read_enabled = 1;
+        return 0;
     } else {
+        s_mapped_read_enabled = 0;
         return (FLASH_DisableMemoryMapped(s_flash) == FLASH_OK) ? 0 : -1;
     }
 }

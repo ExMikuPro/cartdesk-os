@@ -30,10 +30,10 @@ extern "C" {
     int LFS_PortBind(FLASH_Handle *flash);
 
     /**
-     * @brief  挂载或格式化文件系统
+     * @brief  挂载文件系统，未格式化时初始化
      * @retval 0=成功, 其他=littlefs错误码
      * @note   - 首次使用时会自动格式化
-     *         - 如果挂载失败会尝试格式化后重新挂载
+     *         - 仅LFS_ERR_CORRUPT会格式化，I/O错误直接返回
      *         - 调用前必须先调用 LFS_PortBind
      */
     int LFS_MountOrFormat(void);
