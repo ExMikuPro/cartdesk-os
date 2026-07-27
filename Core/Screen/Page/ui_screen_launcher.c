@@ -1,6 +1,6 @@
 // ui_screen_launcher.c
 // 设计稿风格启动器实现
-// 图片数据直接定位在 SDRAM heap 区，DMA2D 搬运，不经过 Flash
+// 图标从游戏卡或 QFlash littlefs 读取到 SDRAM，LVGL 直接使用该缓冲区
 
 #include "ui_screen_launcher.h"
 
@@ -10,6 +10,8 @@
 
 #include "stm32h743xx.h"
 #include "cart_bin.h"
+#include "fatfs.h"
+#include "launcher_store.h"
 #include "lua_runtime_task.h"
 #include "launcher_action_hints.h"
 #include "runtime_stats.h"
@@ -63,39 +65,23 @@
 #define COLOR_BLACK           0x000000
 #define COLOR_CYAN            0x00FFFF
 
-#ifndef LAUNCHER_DEFER_PREVIEW
-#define LAUNCHER_DEFER_PREVIEW 1
-#endif
+#define LAUNCHER_VISIBLE_ICON_COUNT  4u
+#define CART_PROBE_START_DELAY_MS    150u
+#define CART_PROBE_PERIOD_MS         1000u
 
 /* ------------------------------------------------------------------ */
 /*  私有状态                                                            */
 /* ------------------------------------------------------------------ */
 
-static char s_cart0_title[CART_BIN_TITLE_BUFFER_SIZE] = "LOADING";
-
-/*
- * Flash 源数据指针数组（只读，用于初始化时搬运到 SDRAM）。
- * NULL 表示该槽无图片。
- */
-static const uint8_t *s_slot_flash_src[DESIGN_APP_COUNT] = {
-    NULL,  // 预览图片现在从 SD 卡读取
-    NULL, NULL, NULL, NULL, NULL,
-    NULL, NULL, NULL, NULL, NULL, NULL
-};
-
-static const char *app_names[DESIGN_APP_COUNT] = {
-    "appaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "app2",  "app3",  "app4",
-    "app5",  "app6",  "app7",  "app8",
-    "app9",  "app10", "app11", "app12"
-};
-
 static const char *circle_names[DESIGN_CIRCLE_COUNT] = {
     "相册", "手柄", "拓展", "设置", "休眠模式"
 };
 
+static LauncherStoredApp s_apps[DESIGN_APP_COUNT];
 static lv_obj_t *s_main_container = NULL;
 static lv_obj_t *s_slots[DESIGN_APP_COUNT];
 static lv_obj_t *s_slot_labels[DESIGN_APP_COUNT];
+static lv_obj_t *s_slot_images[DESIGN_APP_COUNT];
 static lv_obj_t *s_circles[DESIGN_CIRCLE_COUNT];
 static lv_obj_t *s_circle_labels[DESIGN_CIRCLE_COUNT];
 static lv_obj_t *s_status_label = NULL;
@@ -104,8 +90,10 @@ static lv_obj_t *s_launcher_screen = NULL;
 static lv_obj_t *s_runtime_screen = NULL;
 static bool s_runtime_exit_pending = false;
 static bool s_launcher_assets_initialized = false;
-static bool s_launcher_assets_loaded = false;
-static bool s_launcher_preview_pending = false;
+static uint8_t s_cached_icon_cursor = 0u;
+static bool s_cart_present = false;
+static int s_inserted_slot = -1;
+static uint32_t s_next_cart_probe_ms = 0u;
 static LauncherActionHints s_action_hints;
 static bool s_app_launch_armed = false;
 
@@ -125,11 +113,25 @@ static uint32_t s_phase3_repeat_dwell_count = 0u;
 
 /*
  * 每个槽独立的 LVGL 图像描述符。
- * .data 直接指向 SDRAM 地址，LTDC/DMA2D 原生支持，零拷贝渲染。
+ * .data 直接指向 SDRAM 地址，LVGL 渲染阶段无需再次复制。
  */
 static lv_image_dsc_t s_image_dsc[DESIGN_APP_COUNT];
 
 static int s_selected_index = 0;
+
+static const char *prv_slot_title(int index)
+{
+    if(index < 0 || index >= DESIGN_APP_COUNT || !s_apps[index].valid) {
+        return "EMPTY";
+    }
+    if(s_apps[index].title_zh[0] != '\0') {
+        return s_apps[index].title_zh;
+    }
+    if(s_apps[index].title[0] != '\0') {
+        return s_apps[index].title;
+    }
+    return "UNTITLED";
+}
 
 static LauncherActionHintState prv_make_action_hint_state(void)
 {
@@ -142,10 +144,10 @@ static LauncherActionHintState prv_make_action_hint_state(void)
     };
 
     if (state.has_selection) {
-        state.can_start = (s_selected_index == 0)
-                          && (strcmp(s_cart0_title, "ERR") != 0)
+        state.can_start = s_cart_present
+                          && (s_selected_index == s_inserted_slot)
                           && LuaRuntimeTask_IsIdle();
-        state.has_info = (s_selected_index == 0);
+        state.has_info = s_apps[s_selected_index].valid;
     }
 
     /*
@@ -214,7 +216,7 @@ static const char *prv_get_selected_app_title(void)
         return "";
     }
 
-    return (s_selected_index == 0) ? s_cart0_title : app_names[s_selected_index];
+    return prv_slot_title(s_selected_index);
 }
 
 static void prv_u64_to_dec(char *dst, uint32_t dst_size, uint64_t value)
@@ -285,8 +287,8 @@ static void prv_format_file_size(char *dst, uint32_t dst_size, uint64_t bytes)
 
 static bool prv_selected_app_can_start(void)
 {
-    return (s_selected_index == 0)
-           && (strcmp(s_cart0_title, "ERR") != 0)
+    return s_cart_present
+           && (s_selected_index == s_inserted_slot)
            && LuaRuntimeTask_IsIdle();
 }
 
@@ -302,37 +304,20 @@ static void prv_info_popup_close_cb(lv_event_t *e)
 
 static void prv_show_selected_app_info(void)
 {
-    CartBinInfo info;
     char text[512];
     const char *title = prv_get_selected_app_title();
-    const char *title_zh = "";
-    const char *publisher = "";
-    const char *version = "";
-    const char *entry = "";
-    const char *min_fw = "";
-    uint32_t cart_id_hi = 0;
-    uint32_t cart_id_lo = 0;
+    const LauncherStoredApp *app;
     char file_size_text[24] = "0";
-    int info_ret = -1;
 
-    if (s_main_container == NULL || s_selected_index < 0) {
+    if (s_main_container == NULL
+        || s_selected_index < 0
+        || s_selected_index >= DESIGN_APP_COUNT
+        || !s_apps[s_selected_index].valid) {
         return;
     }
 
-    if (s_selected_index == 0) {
-        info_ret = cart_bin_read_info_from_sd("0:/cart.bin", &info);
-        if (info_ret == 0) {
-            title = (info.title[0] != '\0') ? info.title : title;
-            title_zh = info.title_zh;
-            publisher = info.publisher;
-            version = info.version;
-            entry = info.entry;
-            min_fw = info.min_fw;
-            cart_id_hi = (uint32_t)(info.cart_id >> 32);
-            cart_id_lo = (uint32_t)(info.cart_id & 0xFFFFFFFFu);
-            prv_format_file_size(file_size_text, sizeof(file_size_text), info.file_size);
-        }
-    }
+    app = &s_apps[s_selected_index];
+    prv_format_file_size(file_size_text, sizeof(file_size_text), app->file_size);
 
     if (s_info_popup != NULL) {
         lv_obj_delete(s_info_popup);
@@ -350,21 +335,18 @@ static void prv_show_selected_app_info(void)
     lv_obj_set_style_pad_all(s_info_popup, 14, 0);
     lv_obj_remove_flag(s_info_popup, LV_OBJ_FLAG_SCROLLABLE);
 
-    if (info_ret == 0) {
-        snprintf(text, sizeof(text),
-                 "cart.bin 信息\nTitle: %s\nZH: %s\nPub: %s\nVer: %s\nEntry: %s\nFW: %s\nID: %08lX%08lX\nSIZE: %s",
-                 title,
-                 title_zh[0] != '\0' ? title_zh : "-",
-                 publisher[0] != '\0' ? publisher : "-",
-                 version[0] != '\0' ? version : "-",
-                 entry[0] != '\0' ? entry : "-",
-                 min_fw[0] != '\0' ? min_fw : "-",
-                 (unsigned long)cart_id_hi,
-                 (unsigned long)cart_id_lo,
-                 file_size_text);
-    } else {
-        snprintf(text, sizeof(text), "cart.bin 信息\nName: %s\nread err: %d", title, info_ret);
-    }
+    snprintf(text, sizeof(text),
+             "App info\nTitle: %s\nZH: %s\nPub: %s\nVer: %s\nEntry: %s\nFW: %s\nID: %08lX%08lX\nSIZE: %s\nCARD: %s",
+             title,
+             app->title_zh[0] != '\0' ? app->title_zh : "-",
+             app->publisher[0] != '\0' ? app->publisher : "-",
+             app->version[0] != '\0' ? app->version : "-",
+             app->entry[0] != '\0' ? app->entry : "-",
+             app->min_fw[0] != '\0' ? app->min_fw : "-",
+             (unsigned long)(app->cart_id >> 32),
+             (unsigned long)app->cart_id,
+             file_size_text,
+             (s_cart_present && s_inserted_slot == s_selected_index) ? "INSERTED" : "REQUIRED");
 
     lv_obj_t *label = lv_label_create(s_info_popup);
     lv_label_set_text(label, text);
@@ -457,43 +439,171 @@ static void prv_show_runtime_screen(void)
     RuntimeStats_EndLvglScreenOp();
 }
 
-static void prv_attach_launcher_preview(void)
+static void prv_configure_slot_image(int slot)
 {
-    if (s_slots[0] == NULL || s_image_dsc[0].data == NULL) {
+    if(slot < 0 || slot >= DESIGN_APP_COUNT) {
         return;
     }
 
-    lv_obj_t *img_obj = lv_image_create(s_slots[0]);
-    lv_obj_set_size(img_obj, BOX_WIDTH, BOX_HEIGHT);
-    lv_obj_center(img_obj);
-    lv_image_set_src(img_obj, &s_image_dsc[0]);
-    lv_obj_set_style_border_width(img_obj, 0, LV_PART_MAIN);
-    lv_obj_remove_flag(img_obj, LV_OBJ_FLAG_SCROLLABLE);
+    s_image_dsc[slot].header.magic = LV_IMAGE_HEADER_MAGIC;
+    s_image_dsc[slot].header.cf = LV_COLOR_FORMAT_ARGB8888;
+    s_image_dsc[slot].header.w = CART_BIN_PREVIEW_W;
+    s_image_dsc[slot].header.h = CART_BIN_PREVIEW_H;
+    s_image_dsc[slot].header.stride = CART_BIN_PREVIEW_STRIDE;
+    s_image_dsc[slot].data_size = CART_BIN_PREVIEW_SIZE;
+    s_image_dsc[slot].data = (const uint8_t *)launcher_get_big_icon((uint8_t)slot);
 }
 
-static void prv_load_launcher_preview(void)
+static void prv_attach_slot_image(int slot)
 {
-    uint32_t dst = (uint32_t)launcher_get_big_icon(0);
-    uint32_t preview_start = PerfMonitor_Begin();
-    int ret = cart_bin_read_preview_from_sd("0:/cart.bin",
-                                            (uint8_t *)dst,
-                                            CART_BIN_PREVIEW_SIZE);
-    PerfMonitor_End(PERF_MONITOR_STARTUP_PREVIEW_READ, preview_start);
-    s_launcher_preview_pending = false;
-
-    if (ret != 0) {
+    if(slot < 0
+       || slot >= DESIGN_APP_COUNT
+       || s_slots[slot] == NULL
+       || s_image_dsc[slot].data == NULL) {
         return;
     }
 
-    s_image_dsc[0].header.magic = LV_IMAGE_HEADER_MAGIC;
-    s_image_dsc[0].header.cf = LV_COLOR_FORMAT_ARGB8888;
-    s_image_dsc[0].header.w = CART_BIN_PREVIEW_W;
-    s_image_dsc[0].header.h = CART_BIN_PREVIEW_H;
-    s_image_dsc[0].header.stride = CART_BIN_PREVIEW_STRIDE;
-    s_image_dsc[0].data_size = CART_BIN_PREVIEW_SIZE;
-    s_image_dsc[0].data = (const uint8_t *)dst;
-    s_launcher_assets_loaded = true;
-    prv_attach_launcher_preview();
+    if(s_slot_images[slot] == NULL) {
+        s_slot_images[slot] = lv_image_create(s_slots[slot]);
+        lv_obj_set_size(s_slot_images[slot], BOX_WIDTH, BOX_HEIGHT);
+        lv_obj_center(s_slot_images[slot]);
+        lv_obj_set_style_border_width(s_slot_images[slot], 0, LV_PART_MAIN);
+        lv_obj_remove_flag(s_slot_images[slot], LV_OBJ_FLAG_SCROLLABLE);
+    }
+    lv_image_set_src(s_slot_images[slot], &s_image_dsc[slot]);
+}
+
+static void prv_update_slot_label(int slot)
+{
+    if(slot >= 0 && slot < DESIGN_APP_COUNT && s_slot_labels[slot] != NULL) {
+        lv_label_set_text(s_slot_labels[slot], prv_slot_title(slot));
+    }
+}
+
+static int prv_find_cart_slot(uint64_t cart_id)
+{
+    int empty_slot = -1;
+    for(int index = 0; index < DESIGN_APP_COUNT; index++) {
+        if(s_apps[index].valid && s_apps[index].cart_id == cart_id) {
+            return index;
+        }
+        if(!s_apps[index].valid && empty_slot < 0) {
+            empty_slot = index;
+        }
+    }
+    return empty_slot;
+}
+
+static void prv_copy_cart_info(LauncherStoredApp *app, const CartBinInfo *info)
+{
+    memset(app, 0, sizeof(*app));
+    app->valid = true;
+    app->cart_id = info->cart_id;
+    app->file_size = info->file_size;
+    app->icon_size = CART_BIN_PREVIEW_SIZE;
+    strncpy(app->title, info->title, sizeof(app->title) - 1u);
+    strncpy(app->title_zh, info->title_zh, sizeof(app->title_zh) - 1u);
+    strncpy(app->publisher, info->publisher, sizeof(app->publisher) - 1u);
+    strncpy(app->version, info->version, sizeof(app->version) - 1u);
+    strncpy(app->entry, info->entry, sizeof(app->entry) - 1u);
+    strncpy(app->min_fw, info->min_fw, sizeof(app->min_fw) - 1u);
+}
+
+static void prv_load_cached_icons_until(uint8_t end_slot)
+{
+    if(end_slot > DESIGN_APP_COUNT) {
+        end_slot = DESIGN_APP_COUNT;
+    }
+
+    while(s_cached_icon_cursor < end_slot) {
+        uint8_t slot = s_cached_icon_cursor++;
+        if(!s_apps[slot].valid) {
+            continue;
+        }
+
+        uint32_t *buffer = launcher_get_big_icon(slot);
+        if(LauncherStore_ReadIcon(slot, buffer, CART_BIN_PREVIEW_SIZE) == 0) {
+            prv_configure_slot_image(slot);
+            prv_attach_slot_image(slot);
+        }
+    }
+}
+
+static void prv_load_cached_icon_step(void)
+{
+    if(s_cached_icon_cursor < DESIGN_APP_COUNT) {
+        prv_load_cached_icons_until((uint8_t)(s_cached_icon_cursor + 1u));
+    }
+}
+
+static void prv_probe_game_card(void)
+{
+    CartBinInfo info;
+    int result = cart_bin_read_info_from_sd("0:/cart.bin", &info);
+    if(result != 0) {
+        SD_FATFS_InvalidateMount();
+        if(s_cart_present) {
+            s_cart_present = false;
+            s_inserted_slot = -1;
+            s_app_launch_armed = false;
+            prv_set_status_text(NULL);
+            prv_update_action_hints();
+        }
+        return;
+    }
+
+    if(s_cart_present
+       && s_inserted_slot >= 0
+       && s_inserted_slot < DESIGN_APP_COUNT
+       && s_apps[s_inserted_slot].valid
+       && s_apps[s_inserted_slot].cart_id == info.cart_id) {
+        return;
+    }
+
+    int target_slot = prv_find_cart_slot(info.cart_id);
+    if(target_slot < 0) {
+        s_cart_present = false;
+        s_inserted_slot = -1;
+        prv_set_status_text(NULL);
+        prv_update_action_hints();
+        return;
+    }
+
+    uint32_t *buffer = launcher_get_big_icon((uint8_t)target_slot);
+    uint32_t preview_start = PerfMonitor_Begin();
+    result = cart_bin_read_preview_from_sd("0:/cart.bin",
+                                           (uint8_t *)buffer,
+                                           CART_BIN_PREVIEW_SIZE);
+    PerfMonitor_End(PERF_MONITOR_STARTUP_PREVIEW_READ, preview_start);
+    if(result != 0) {
+        SD_FATFS_InvalidateMount();
+        return;
+    }
+
+    uint8_t stored_slot = (uint8_t)target_slot;
+    if(LauncherStore_IsReady()) {
+        (void)LauncherStore_Upsert(&info,
+                                   buffer,
+                                   CART_BIN_PREVIEW_SIZE,
+                                   &stored_slot);
+    }
+    if(stored_slot != (uint8_t)target_slot && stored_slot < DESIGN_APP_COUNT) {
+        memcpy(launcher_get_big_icon(stored_slot), buffer, CART_BIN_PREVIEW_SIZE);
+        target_slot = stored_slot;
+    }
+
+    if(LauncherStore_Get((uint8_t)target_slot, &s_apps[target_slot]) != 0) {
+        prv_copy_cart_info(&s_apps[target_slot], &info);
+    }
+    prv_configure_slot_image(target_slot);
+    prv_attach_slot_image(target_slot);
+    prv_update_slot_label(target_slot);
+
+    s_cart_present = true;
+    s_inserted_slot = target_slot;
+    s_app_launch_armed = false;
+    prv_set_status_text(NULL);
+    prv_update_action_hints();
 }
 
 static void prv_start_selected_app(void)
@@ -533,39 +643,6 @@ static void prv_action_hint_clicked_cb(LauncherActionHintAction action, void *us
     default:
         break;
     }
-}
-
-/* ------------------------------------------------------------------ */
-/*  内部工具：DMA2D 从内存搬运到 SDRAM                                */
-/* ------------------------------------------------------------------ */
-
-/*
- * prv_copy_img_to_sdram()
- *
- * 用 DMA2D 的 M2M 模式把图片从内存（Flash 或 RAM）
- * 搬运到 SDRAM。DMA2D 支持直接读 Flash AXI 地址，CPU 完全不参与，
- * 搬运期间 CPU 可以继续跑其他初始化逻辑。
- *
- * 这里使用同步等待方式（轮询 TC 标志），如果你想异步，
- * 改为中断模式并在回调里设置信号量即可。
- */
-static void prv_copy_img_to_sdram(uint32_t dst, const uint8_t *src)
-{
-    /* 逐行搬运，每行 CART_BIN_PREVIEW_STRIDE 字节，共 CART_BIN_PREVIEW_H 行 */
-    DMA2D->CR      = 0x00000000UL;          /* M2M 模式，无色彩转换 */
-    DMA2D->FGMAR   = (uint32_t)src;         /* 源：内存地址 */
-    DMA2D->OMAR    = dst;                    /* 目标：SDRAM 地址 */
-    DMA2D->FGOR    = 0;                      /* 源行偏移 0（连续） */
-    DMA2D->OOR     = 0;                      /* 目标行偏移 0 */
-    DMA2D->FGPFCCR = 0x00000000UL;          /* 源格式 ARGB8888 */
-    DMA2D->OPFCCR  = 0x00000000UL;          /* 目标格式 ARGB8888 */
-    /* NLR: 每行像素数 | 行数 */
-    DMA2D->NLR     = (uint32_t)(CART_BIN_PREVIEW_W) | ((uint32_t)(CART_BIN_PREVIEW_H) << 16);
-    DMA2D->CR     |= DMA2D_CR_START;        /* 启动 */
-
-    /* 等待完成（TC 标志） */
-    while (!(DMA2D->ISR & DMA2D_ISR_TCIF)) { __NOP(); }
-    DMA2D->IFCR = DMA2D_IFCR_CTCIF;        /* 清除标志 */
 }
 
 /* ------------------------------------------------------------------ */
@@ -634,9 +711,9 @@ static void prv_box_clicked_cb(lv_event_t *e)
         }
     }
 
-    should_launch = (clicked_index == 0)
-                    && s_app_launch_armed
-                    && (s_selected_index == clicked_index);
+    should_launch = s_app_launch_armed
+                    && (s_selected_index == clicked_index)
+                    && prv_selected_app_can_start();
 
     prv_set_selection(slot);
     if (clicked_index >= 0) {
@@ -644,8 +721,7 @@ static void prv_box_clicked_cb(lv_event_t *e)
     }
 
     if (clicked_index >= 0) {
-        const char *title = (clicked_index == 0) ? s_cart0_title : app_names[clicked_index];
-        prv_uart_log_clicked_app(clicked_index, title);
+        prv_uart_log_clicked_app(clicked_index, prv_slot_title(clicked_index));
     }
 
     if (should_launch) {
@@ -702,25 +778,21 @@ static void prv_create_box_area(lv_obj_t *parent)
         lv_obj_set_scrollbar_mode(slot_container, LV_SCROLLBAR_MODE_OFF);
         lv_obj_add_flag(slot_container, LV_OBJ_FLAG_CLICKABLE);
 
-        /*
-         * 如果该槽有图片，且 DMA2D 已在 DesignLauncher_Create 里完成了
-         * Flash→SDRAM 的搬运，这里直接用 SDRAM 地址作为图片数据源。
-         * LVGL 渲染时 DMA2D 读 SDRAM，带宽充足，CPU 完全不参与。
-         */
+        /* 缓存图标会在 Launcher_Task 中分步从 QFlash littlefs 恢复到 SDRAM。 */
         if (s_image_dsc[i].data != NULL) {
-            lv_obj_t *img_obj = lv_image_create(slot_container);
-            lv_obj_set_size(img_obj, BOX_WIDTH, BOX_HEIGHT);
-            lv_obj_center(img_obj);
-            lv_image_set_src(img_obj, &s_image_dsc[i]);
-            lv_obj_set_style_border_width(img_obj, 0, LV_PART_MAIN);
-            lv_obj_remove_flag(img_obj, LV_OBJ_FLAG_SCROLLABLE);
+            s_slot_images[i] = lv_image_create(slot_container);
+            lv_obj_set_size(s_slot_images[i], BOX_WIDTH, BOX_HEIGHT);
+            lv_obj_center(s_slot_images[i]);
+            lv_image_set_src(s_slot_images[i], &s_image_dsc[i]);
+            lv_obj_set_style_border_width(s_slot_images[i], 0, LV_PART_MAIN);
+            lv_obj_remove_flag(s_slot_images[i], LV_OBJ_FLAG_SCROLLABLE);
         }
 
         lv_obj_add_event_cb(slot_container, prv_box_clicked_cb, LV_EVENT_CLICKED, NULL);
         s_slots[i] = slot_container;
 
         lv_obj_t *label = lv_label_create(content_container);
-        lv_label_set_text(label, (i == 0) ? s_cart0_title : app_names[i]);
+        lv_label_set_text(label, prv_slot_title(i));
         lv_obj_set_style_text_color(label, lv_color_hex(COLOR_CYAN), 0);
         lv_obj_set_style_text_font(label, UiFont_GetSystem(20u), 0);
         lv_label_set_long_mode(label, LV_LABEL_LONG_SCROLL_CIRCULAR);
@@ -863,13 +935,18 @@ void Launcher_Task(void)
     }
 #endif
 
-    /*
-     * Launcher_Init() runs before the first lv_timer_handler().  Loading the
-     * 160 KiB preview here lets the base launcher reach the panel first while
-     * keeping the SD access and LVGL object creation in this same task.
-     */
-    if (s_launcher_preview_pending && s_main_container != NULL) {
-        prv_load_launcher_preview();
+    if (s_main_container != NULL) {
+        if(s_cached_icon_cursor < LAUNCHER_VISIBLE_ICON_COUNT) {
+            prv_load_cached_icons_until(LAUNCHER_VISIBLE_ICON_COUNT);
+        } else if(s_cached_icon_cursor < DESIGN_APP_COUNT) {
+            prv_load_cached_icon_step();
+        }
+
+        uint32_t now = HAL_GetTick();
+        if((int32_t)(now - s_next_cart_probe_ms) >= 0) {
+            s_next_cart_probe_ms = now + CART_PROBE_PERIOD_MS;
+            prv_probe_game_card();
+        }
     }
 
     if (!s_runtime_exit_pending) {
@@ -897,62 +974,17 @@ void DesignLauncher_Create(lv_display_t *disp)
     lv_obj_set_style_pad_all(scr, 0, 0);
 
     if (!s_launcher_assets_initialized) {
-        bool assets_loaded = false;
-
         launcher_cache_init();
         memset(s_image_dsc, 0, sizeof(s_image_dsc));
-
-        uint32_t title_start = PerfMonitor_Begin();
-        int a = cart_bin_read_title_from_sd("0:/cart.bin", s_cart0_title);
-        PerfMonitor_End(PERF_MONITOR_STARTUP_TITLE_READ, title_start);
-        if (a != 0) {
-            strcpy(s_cart0_title, "ERR");
+        memset(s_apps, 0, sizeof(s_apps));
+        for(uint8_t slot = 0u; slot < DESIGN_APP_COUNT; slot++) {
+            (void)LauncherStore_Get(slot, &s_apps[slot]);
         }
-
-        /*
-         * ----------------------------------------------------------------
-         * 图片预加载：
-         *   - 槽 0：从 SD 卡读取预览图片 → SDRAM
-         *   - 其他槽：从 Flash → SDRAM（DMA2D M2M，CPU 不参与数据搬运）
-         *
-         * 这些资源在 launcher cache 分区里，Lua 运行期间不会被释放。
-         * 从 Lua 退出回 launcher 时直接复用，避免退出后立刻再次访问 SD。
-         * ----------------------------------------------------------------
-         */
-        /* 槽 0 在首屏完成后的 Launcher_Task() 中加载。 */
-        s_launcher_preview_pending = true;
-#if !LAUNCHER_DEFER_PREVIEW
-        prv_load_launcher_preview();
-#endif
-
-        // 其他槽：从 Flash 读取
-        uint32_t convert_start = PerfMonitor_Begin();
-        for (int i = 1; i < DESIGN_APP_COUNT; i++) {
-            if (s_slot_flash_src[i] == NULL) continue;
-
-            uint32_t dst = (uint32_t)launcher_get_big_icon(i);
-
-            /* DMA2D 搬运：Flash → SDRAM */
-            prv_copy_img_to_sdram(dst, s_slot_flash_src[i]);
-
-            /* 初始化独立描述符，指向 SDRAM，magic 必须设置 */
-            s_image_dsc[i].header.magic = LV_IMAGE_HEADER_MAGIC;
-            s_image_dsc[i].header.cf    = LV_COLOR_FORMAT_ARGB8888;
-            s_image_dsc[i].header.w     = CART_BIN_PREVIEW_W;
-            s_image_dsc[i].header.h     = CART_BIN_PREVIEW_H;
-            s_image_dsc[i].header.stride = CART_BIN_PREVIEW_STRIDE;
-            s_image_dsc[i].data_size    = CART_BIN_PREVIEW_SIZE;
-            s_image_dsc[i].data         = (const uint8_t *)dst;  /* SDRAM 地址 */
-            assets_loaded = true;
-        }
-        PerfMonitor_End(PERF_MONITOR_STARTUP_PREVIEW_CONVERT, convert_start);
-
+        s_cached_icon_cursor = 0u;
+        s_next_cart_probe_ms = HAL_GetTick() + CART_PROBE_START_DELAY_MS;
         s_launcher_assets_initialized = true;
-        s_launcher_assets_loaded = assets_loaded;
-    } else if (!s_launcher_assets_loaded) {
-        /* A failed SD read gets one retry on the next launcher rebuild. */
-        s_launcher_preview_pending = true;
     }
+    memset(s_slot_images, 0, sizeof(s_slot_images));
 
     /* 主容器 */
     s_main_container = lv_obj_create(scr);

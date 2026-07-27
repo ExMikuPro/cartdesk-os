@@ -7,6 +7,7 @@
 #include "cmsis_os2.h"
 #include "flash.h"
 #include "lcd.h"
+#include "launcher_store.h"
 #include "lua_runtime_task.h"
 #include "lv_port_disp.h"
 #include "lv_port_indev.h"
@@ -60,15 +61,23 @@ static void qflash_font_init_or_fallback(void)
     if (!mounted) {
         printf("QFLASH font mount failed: %s; using built-in font\r\n",
                QFlashFont_LastError());
-        return;
+    } else {
+        QFlashFontStorageInfo storage_info;
+        if (QFlashFont_GetStorageInfo(&storage_info)) {
+            printf("QFLASH font mounted: 16/20/24 px, default=%u px, storage=%lu/%lu bytes\r\n",
+                   (unsigned)QFLASH_FONT_DEFAULT_SIZE,
+                   (unsigned long)storage_info.used_bytes,
+                   (unsigned long)storage_info.capacity_bytes);
+        }
     }
 
-    QFlashFontStorageInfo storage_info;
-    if (QFlashFont_GetStorageInfo(&storage_info)) {
-        printf("QFLASH font mounted: 16/20/24 px, default=%u px, storage=%lu/%lu bytes\r\n",
-               (unsigned)QFLASH_FONT_DEFAULT_SIZE,
-               (unsigned long)storage_info.used_bytes,
-               (unsigned long)storage_info.capacity_bytes);
+    int store_result = LauncherStore_Init(&s_qflash);
+    if (store_result < 0) {
+        printf("Launcher store init warning: code=%d detail=%s\r\n",
+               store_result,
+               LauncherStore_LastError());
+    } else {
+        printf("Launcher store mounted\r\n");
     }
 }
 #endif

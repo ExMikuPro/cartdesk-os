@@ -215,6 +215,7 @@ tests/              host 侧解析测试和 Lua smoke test
 - [Docs/CLion_Build_Presets.md](Docs/CLion_Build_Presets.md)：CLion / CMake preset、内存自测和实验构建入口。
 - [Docs/display/DMA2D_适配逻辑.md](Docs/display/DMA2D_适配逻辑.md)：DMA2D 与显示链路说明。
 - [Docs/display/launcher_action_hints.md](Docs/display/launcher_action_hints.md)：Launcher 操作提示栏说明和手动测试步骤。
+- [Docs/display/launcher_icon_cache.md](Docs/display/launcher_icon_cache.md)：卡带图标 QFlash 持久化与拔卡保留行为。
 - [Docs/cart/xhgc-cartbin-format-spec-v2.2.md](Docs/cart/xhgc-cartbin-format-spec-v2.2.md)：卡带镜像格式。
 - [Docs/lua/lua_runtime_contract.md](Docs/lua/lua_runtime_contract.md)：Lua 运行时约定。
 - [Core/LuaPort/LuaPort_API.md](Core/LuaPort/LuaPort_API.md)：LuaPort C 侧 API。

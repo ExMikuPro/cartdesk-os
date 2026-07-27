@@ -411,6 +411,8 @@ add_library(cart_core STATIC
         ${CART_DIR}/cart_bin.h
         ${CART_DIR}/cart_index.c
         ${CART_DIR}/cart_index.h
+        ${CART_DIR}/launcher_store.c
+        ${CART_DIR}/launcher_store.h
         ${CART_DIR}/xhgc_cart.c
         ${CART_DIR}/xhgc_cart.h
 )

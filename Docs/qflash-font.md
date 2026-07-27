@@ -9,7 +9,7 @@
 | QFLASH 偏移 | 大小 | 用途 |
 | --- | ---: | --- |
 | `0x00000000` | 最大 16 MiB | 只读 QFNT 字体包 |
-| `0x01000000` | 48 MiB | littlefs |
+| `0x01000000` | 48 MiB | littlefs（包含 Launcher 卡带图标缓存） |
 
 字体通过 QUADSPI Memory-Mapped 模式从 `0x90000000` 直接读取，不复制进
 MCU Flash 或 SDRAM。QFNT 包含文件头、各字号记录、按 Unicode 排序的字形
@@ -107,5 +107,7 @@ Launcher 通过 `UiFont_GetSystem()` 统一选择 16/20 px 字体，优先使用
 因此 Lua App 未显式绑定字体时会通过 LVGL 样式继承自动使用与 Launcher 相同
 的 QFLASH 字体；QFLASH 不可用时同样回退到内置 Montserrat。
 
-QFLASH 处于 Memory-Mapped 模式时，写入或擦除会先退出映射模式。若以后同时
-启用 littlefs 写入，需要在写操作结束后重新进入映射模式，才能继续读取字体。
+QFLASH 处于 Memory-Mapped 模式时，写入或擦除会先退出映射模式。Launcher
+图标缓存使用 littlefs 间接读写，并在每次文件系统操作结束后重新进入映射模式，
+因此不会中断系统字体读取。缓存格式和拔卡行为见
+[Launcher 卡带图标缓存](display/launcher_icon_cache.md)。
