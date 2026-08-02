@@ -347,9 +347,12 @@ add_library(lua_port STATIC
         ${CORE_SRC_DIR}/lua_vm_memory.c
         ${LUA_PORT_DIR}/app_arena.c
         ${LUA_PORT_DIR}/app_arena.h
+        ${LUA_PORT_DIR}/lua_app_instance.c
+        ${LUA_PORT_DIR}/lua_app_instance.h
         ${LUA_PORT_DIR}/lua_cart_resource_cache.c
         ${LUA_PORT_DIR}/lua_cart_resource_cache.h
         ${LUA_PORT_DIR}/lua_port.c
+        ${LUA_PORT_DIR}/lua_ui.c
         ${LUA_PORT_DIR}/resource_arena_owner.c
         ${LUA_PORT_DIR}/resource_arena_owner.h
         ${LUA_PORT_DIR}/resource_manager.c
@@ -360,8 +363,8 @@ add_library(lua_port STATIC
         ${LUA_PORT_DIR}/modules/lua_tim.c
         ${LUA_PORT_DIR}/modules/lua_rng.c
         ${LUA_PORT_DIR}/modules/lua_crc.c
+        ${LUA_PORT_DIR}/modules/lua_ui_label.c
         ${LUA_PORT_DIR}/modules/lua_ui_button.c
-        ${LUA_PORT_DIR}/modules/lua_ui_slider.c
         ${LUA_PORT_DIR}/modules/lua_ui_image.c
 )
 

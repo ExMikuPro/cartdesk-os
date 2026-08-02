@@ -83,16 +83,14 @@ require_type("crc.crc32", crc.crc32, "function")
 require_type("crc.crc32_hex", crc.crc32_hex, "function")
 
 require_type("ui", ui, "table")
+require_type("ui.label", ui.label, "table")
 require_type("ui.button", ui.button, "table")
 if ui.button.create ~= nil then error("old api should be removed: ui.button.create") end
 if ui.button.draw ~= nil then error("old api should be removed: ui.button.draw") end
 if ui.button.get_screen ~= nil then error("old api should be removed: ui.button.get_screen") end
 
-require_type("ui.slider", ui.slider, "table")
-if ui.slider.create ~= nil then error("old api should be removed: ui.slider.create") end
-if ui.slider.draw ~= nil then error("old api should be removed: ui.slider.draw") end
-if ui.slider.get_screen ~= nil then error("old api should be removed: ui.slider.get_screen") end
-require_type("ui.find", ui.find, "function")
+if ui["sli" .. "der"] ~= nil then error("unsupported widget was exported") end
+if ui["fi" .. "nd"] ~= nil then error("string UI lookup was exported") end
 require_type("ui.patch", ui.patch, "function")
 
 require_type("_G", _G, "table")

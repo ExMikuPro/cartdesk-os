@@ -193,11 +193,9 @@ local PWM_PIN = 0
 local STEP_TIME = 0.005
 
 function init(self)
-    self.state = {
-        duty = pwm.MIN,
-        direction = 1,
-        accumulator = 0,
-    }
+    self.state.duty = pwm.MIN
+    self.state.direction = 1
+    self.state.accumulator = 0
 
     pwm.setup(PWM_PIN, 1000)
     pwm.write(PWM_PIN, self.state.duty)

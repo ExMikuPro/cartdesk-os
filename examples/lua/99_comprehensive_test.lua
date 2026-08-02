@@ -89,90 +89,37 @@ local function init_random_and_crc(self)
 end
 
 local function init_ui(self)
-    self.children = {
-        ui.button({
-            id = "run",
-            text = "Run",
-            rect = { 24, 24, 120, 48 },
-            input = "run",
-            style = {
-                bg = 0x2D8CFF,
-                bg_alpha = 255,
-                text = 0xFFFFFF,
-                border = {
-                    color = 0x145DA0,
-                    width = 2,
-                },
-                radius = 8,
-            },
-        }),
-
-        ui.slider({
-            id = "duty",
-            rect = { 24, 92, 220, 24 },
-            range = { pwm.MIN, pwm.MAX },
-            value = self.state.duty,
-            input = "duty",
-            style = {
-                bg = 0x202020,
-                bg_alpha = 255,
-                indicator = 0x2D8CFF,
-                indicator_alpha = 255,
-                knob = 0xFFFFFF,
-                knob_alpha = 255,
-                border = {
-                    color = 0x145DA0,
-                    width = 1,
-                },
-                radius = 8,
-            },
-        }),
-    }
-
-    if ui.find(self, "run") then
-        print("ui find button ok")
-    else
-        print("ui find button failed")
-    end
-
-    if ui.find(self, "duty") then
-        print("ui find slider ok")
-    else
-        print("ui find slider failed")
-    end
-
-    local ok, err = ui.patch(self, "run", {
-        text = "Ready",
-        style = {
-            bg = 0x00AA00,
-        },
+    self.ui.run = ui.button({
+        id = "run",
+        text = "Run",
+        rect = { 24, 24, 120, 48 },
+        input = "run",
     })
-    report_result("ui patch button", ok, err)
+    self.ui.duty = ui.label({
+        id = "duty",
+        text = "Duty: " .. self.state.duty,
+        rect = { 24, 92, 220, 32 },
+    })
 
-    ok, err = ui.patch(self, "missing", { text = "Missing" })
-    if ok == nil and err == "ui id not found" then
-        print("ui patch missing ok")
-    else
-        print("ui patch missing unexpected", ok, err)
-    end
+    local ok, err = ui.patch(
+        self.ui.run, { text = "Ready" })
+    report_result("ui patch button", ok, err)
 end
 
 function init(self)
-    self.state = {
-        elapsed = 0,
-        fixed_count = 0,
-        update_count = 0,
-        late_count = 0,
-        log_elapsed = 0,
-        status_elapsed = 0,
-        level = gpio.LOW,
-        duty = pwm.MIN,
-        direction = 1,
-        seed = 0,
-        input_count = 0,
-        resources = {},
-        start_us = tim.us(),
-    }
+    self.state.elapsed = 0
+    self.state.fixed_count = 0
+    self.state.update_count = 0
+    self.state.late_count = 0
+    self.state.log_elapsed = 0
+    self.state.status_elapsed = 0
+    self.state.level = gpio.LOW
+    self.state.duty = pwm.MIN
+    self.state.direction = 1
+    self.state.seed = 0
+    self.state.input_count = 0
+    self.state.resources = {}
+    self.state.start_us = tim.us()
 
     print("comprehensive init")
     init_hardware(self)
@@ -233,7 +180,8 @@ function update(self, dt)
     pwm.write(PWM_PIN, s.duty)
 
     if s.update_count % 10 == 0 then
-        ui.patch(self, "duty", { value = s.duty })
+        ui.patch(
+            self.ui.duty, { text = "Duty: " .. s.duty })
     end
 end
 
@@ -247,17 +195,11 @@ function on_input(self, action_id, action)
     print("input", action_id, action.event, action.value)
 
     if action_id == "run" and action.event == "clicked" then
-        local ok, err = ui.patch(self, "run", {
+        local ok, err = ui.patch(
+            self.ui.run, {
             text = "Clicked " .. s.input_count,
-            style = {
-                bg = 0xAA5500,
-            },
         })
         report_result("ui patch clicked", ok, err)
-    elseif action_id == "duty" and action.event == "changed" then
-        s.duty = action.value
-        pwm.write(PWM_PIN, s.duty)
-        print("slider duty", s.duty)
     end
 end
 
@@ -279,5 +221,4 @@ function final(self)
     pwm.stop(PWM_PIN)
     pwm.release(PWM_PIN)
 
-    -- UI children are deleted by the host after final(self).
 end

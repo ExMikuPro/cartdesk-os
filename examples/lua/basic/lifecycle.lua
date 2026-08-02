@@ -1,9 +1,7 @@
 function init(self)
-    self.state = {
-        count = 0,
-        fixed_count = 0,
-        fixed_dt = 0,
-    }
+    self.state.count = 0
+    self.state.fixed_count = 0
+    self.state.fixed_dt = 0
     print("init")
 end
 

@@ -2,10 +2,8 @@ local LED_PIN = 3
 local BLINK_INTERVAL = 0.5
 
 function init(self)
-    self.state = {
-        elapsed = 0,
-        level = gpio.LOW,
-    }
+    self.state.elapsed = 0
+    self.state.level = gpio.LOW
 
     gpio.setup(LED_PIN, {
         mode = gpio.OUTPUT,

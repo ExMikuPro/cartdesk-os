@@ -2,11 +2,9 @@ local PWM_PIN = 0
 local STEP_INTERVAL = 0.02
 
 function init(self)
-    self.state = {
-        elapsed = 0,
-        duty = pwm.MIN,
-        direction = 1,
-    }
+    self.state.elapsed = 0
+    self.state.duty = pwm.MIN
+    self.state.direction = 1
 
     pwm.setup(PWM_PIN, {
         freq = pwm.DEFAULT_FREQ,

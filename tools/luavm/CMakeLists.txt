@@ -46,16 +46,33 @@ add_executable(luavm
         main.c
         host_platform.c
         luavm_platform.h
+        ${CMAKE_CURRENT_LIST_DIR}/../../Core/LuaPort/lua_app_instance.c
+        ${LUAVM_LUA_SOURCES}
+)
+
+add_executable(lua_ui_owner_test
+        ${CMAKE_CURRENT_LIST_DIR}/../../tests/host/lua_ui_owner_test.c
+        ${CMAKE_CURRENT_LIST_DIR}/../../Core/LuaPort/lua_ui.c
+        ${CMAKE_CURRENT_LIST_DIR}/../../Core/LuaPort/modules/lua_ui_label.c
+        ${CMAKE_CURRENT_LIST_DIR}/../../Core/LuaPort/modules/lua_ui_button.c
         ${LUAVM_LUA_SOURCES}
 )
 
 target_compile_definitions(luavm PRIVATE LUAVM_HOST=1)
 target_include_directories(luavm PRIVATE
         ${CMAKE_CURRENT_LIST_DIR}
+        ${CMAKE_CURRENT_LIST_DIR}/../../Core/LuaPort
         ${LUA_SRC_DIR}
 )
 
-set_target_properties(luavm PROPERTIES
+target_include_directories(lua_ui_owner_test PRIVATE
+        ${CMAKE_CURRENT_LIST_DIR}/../../tests/host/include
+        ${CMAKE_CURRENT_LIST_DIR}/../../Core/LuaPort
+        ${CMAKE_CURRENT_LIST_DIR}/../../Core/Inc
+        ${LUA_SRC_DIR}
+)
+
+set_target_properties(luavm lua_ui_owner_test PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
 )
 
@@ -64,4 +81,11 @@ if(MSVC)
 else()
     target_compile_options(luavm PRIVATE -Wall -Wextra -Wno-unused-parameter)
     target_link_libraries(luavm PRIVATE m)
+endif()
+
+if(MSVC)
+    target_compile_options(lua_ui_owner_test PRIVATE /W4)
+else()
+    target_compile_options(lua_ui_owner_test PRIVATE -Wall -Wextra -Werror)
+    target_link_libraries(lua_ui_owner_test PRIVATE m)
 endif()

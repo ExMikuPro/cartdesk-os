@@ -118,6 +118,8 @@ Windows 下文件名为 `luavm.exe`。
 ```sh
 build/host_tools/bin/luavm --compile input.lua output.luac
 build/host_tools/bin/luavm --check script.lua
+build/host_tools/bin/luavm --self-test
+build/host_tools/bin/lua_ui_owner_test
 ```
 
 ## 运行入口

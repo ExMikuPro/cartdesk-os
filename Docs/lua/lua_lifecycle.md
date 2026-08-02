@@ -1,7 +1,6 @@
-# Lua Script Lifecycle
+# Lua 脚本生命周期
 
-The Lua runtime uses Defold-style optional callbacks. Each loaded script gets
-its own environment and registry-owned `self` table.
+每个脚本实例拥有独立环境、独立 `self` 和独立 UI owner。宿主支持以下可选回调：
 
 ```lua
 function init(self) end
@@ -14,102 +13,27 @@ function on_input(self, action_id, action) end
 function on_reload(self) end
 ```
 
-Missing callbacks are skipped. Callback errors are logged and do not leave
-values on the main Lua stack.
+缺失的回调会被跳过。初始化顺序为 `init`；一帧内依次处理输入、零到五次
+`fixed_update`、`update`、`late_update` 和消息。`dt` 的单位是秒，固定步长默认
+为 `1 / 60` 秒。
 
-## Order
-
-When a script is loaded:
-
-```text
-init(self)
-```
-
-For each frame:
+宿主在调用 `init(self)` 前创建：
 
 ```text
-queued on_input callbacks
-fixed_update(self, 1 / 60) zero to five times
-update(self, dt)
-late_update(self, dt)
-queued on_message callbacks
+self.state
+self.ui
+self.assets
+self.timers
+self.services
 ```
 
-When the runtime is stopped:
+这五个字段都是当前实例私有的普通 Lua table。应用重新启动会得到新的 table；
+热重载保留同一实例和同一 `self`，然后调用 `on_reload(self)`。
 
-```text
-final(self)
-```
+UI 控件产生的事件只派发给控件所属应用。外部 C 输入可使用
+`lua_post_input()` 广播；控件内部使用 owner 定向队列。输入动作表包含 `event`、
+`pressed`、`released`、`repeated`、`value`、`x`、`y`、`dx` 和 `dy`。
 
-`final()` runs at most once and only for instances whose `init()` completed.
-
-## Instance State
-
-State stored in `self.state` remains available for the complete script
-lifetime. UI stored in `self.children` is deleted by the host after
-`final(self)` returns.
-
-```lua
-function init(self)
-    self.state = {
-        elapsed = 0,
-    }
-end
-
-function update(self, dt)
-    self.state.elapsed = self.state.elapsed + dt
-end
-```
-
-At the top level of `self`, new scripts should only use `self.state` and
-`self.children`. Fixed pins and constants should be file-local variables;
-temporary values should be function-local variables.
-
-The runtime supports up to four script instances by default. The limit can be
-changed with `LUA_RT_MAX_INSTANCES`.
-
-## Input
-
-C code queues input with:
-
-```c
-LuaInputAction action = {
-    .event = "pressed",
-    .pressed = true,
-    .value = 1.0f,
-};
-lua_post_input("a", &action);
-```
-
-The Lua `action` table contains `event`, `pressed`, `released`, `repeated`,
-`value`, `x`, `y`, `dx`, and `dy`. UI widgets post LVGL input events through
-this same queue. Buttons and sliders use their config `input` value as
-`action_id`, default to `"button"` / `"slider"`, and are owned by
-`self.children`. The queue has fixed capacity and the API is intended for task
-context, not direct ISR use.
-
-## Messages
-
-C code queues a lightweight message with:
-
-```c
-lua_post_message("game_over", "system");
-```
-
-The current message payload is `nil`; `message_id` and `sender` are strings.
-Messages are dispatched after `late_update()` and never recursively.
-
-## Reload And Shutdown
-
-`lua_reload()` reloads file, cartridge, and embedded script instances while
-preserving each `self` table. It then calls `on_reload(self)`. Raw bytecode
-instances cannot be reloaded because their original byte buffer is not kept.
-
-`lua_shutdown()` calls `final(self)` once, releases all registry references,
-and closes the Lua state. `LuaRuntimeTask_RequestStop()` requests this through
-the runtime controller owned by the application task.
-
-## Compatibility
-
-Legacy scripts using `start()` and `update(dt)` are detected when `init()` is
-absent. New scripts should use the Defold-style signatures.
+关闭时先停止调度和新输入，再调用一次 `final(self)`，随后按宿主 owner 删除应用
+UI 根容器、使全部 handle 失效、释放 registry 引用、重置场景资源并关闭 VM。
+`final` 只会在 `init` 成功后调用；`init` 失败时已创建的 UI 立即由 owner 清理。

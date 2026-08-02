@@ -4,49 +4,20 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "lauxlib.h"
-#include "lvgl.h"
 #include "resource_manager.h"
 #include "xhgc_cart.h"
 
-#define UI_IMAGE_MT "ui.image.mt"
-
-#ifndef LUA_UI_IMAGE_ENABLE_DUMP
-#define LUA_UI_IMAGE_ENABLE_DUMP 0
-#endif
-
 #define UI_IMAGE_VIEW_ALIGN 32u
 
-/**
- * @brief  清理图片像素缓冲对应的DCache范围
- * @param  ptr: 像素缓冲起始地址
- * @param  size: 需要清理的字节数
- * @retval None
- * @note   - 维护范围会向外扩展到32字节cache line边界
- *         - 用于CPU生成裁剪/翻转视图后交给LVGL/DMA读取
- */
-static void clean_dcache_range(const void* ptr, uint32_t size) {
-#if defined(__DCACHE_PRESENT) && (__DCACHE_PRESENT == 1U)
-  if (!ptr || size == 0u) return;
-  uintptr_t start = (uintptr_t)ptr & ~(uintptr_t)31u;
-  uintptr_t end = ((uintptr_t)ptr + size + 31u) & ~(uintptr_t)31u;
-  SCB_CleanDCache_by_Addr((uint32_t*)start, (int32_t)(end - start));
-#else
-  (void)ptr;
-  (void)size;
-#endif
-}
-
 typedef struct {
-  lv_obj_t* img;
-  lv_image_dsc_t dsc;
+  lua_ui_handle_t handle;
+  lv_image_dsc_t descriptor;
   uint8_t* source_data;
   uint8_t* view_data;
-  uint8_t* view_scratch_data;
+  uint8_t* scratch_data;
   uint32_t source_size;
-  uint32_t view_size;
-  uint32_t view_scratch_capacity;
-  res_handle_t image_res;
+  uint32_t scratch_capacity;
+  res_handle_t resource;
   uint16_t source_w;
   uint16_t source_h;
   uint16_t format;
@@ -57,646 +28,532 @@ typedef struct {
   int32_t sh;
   bool flip_x;
   bool flip_y;
-  bool has_image_res;
-  bool view_data_owned;
-  char id[LUA_UI_DRAWABLE_ID_MAX];
-} ui_image_ud_t;
+  bool has_resource;
+} lua_ui_image_t;
 
-static ui_image_ud_t* test_image(lua_State* L, int idx) {
-  return (ui_image_ud_t*)luaL_testudata(L, idx, UI_IMAGE_MT);
-}
+typedef struct {
+  res_handle_t resource;
+  uint8_t* pixels;
+  uint32_t size;
+  uint16_t width;
+  uint16_t height;
+  uint16_t format;
+  uint8_t bpp;
+} loaded_image_t;
 
-static ui_image_ud_t* check_image(lua_State* L, int idx) {
-  return (ui_image_ud_t*)luaL_checkudata(L, idx, UI_IMAGE_MT);
-}
+static const char* const k_create_properties[] = {
+    "id", "src", "rect", "hidden", "region", "style",
+};
+static const char* const k_patch_properties[] = {
+    "src", "rect", "hidden", "region", "style",
+};
+static const char* const k_style_properties[] = {
+    "alpha", "tint", "flip_x", "flip_y",
+};
 
-#if LUA_UI_IMAGE_ENABLE_DUMP
-static uint32_t debug_argb_from_bgra(const uint8_t* p) {
-  if (!p) return 0u;
-  return ((uint32_t)p[3] << 24) |
-         ((uint32_t)p[2] << 16) |
-         ((uint32_t)p[1] << 8) |
-         (uint32_t)p[0];
-}
-
-static void debug_dump_image_dsc(const ui_image_ud_t* ud) {
-  if (!ud || !ud->view_data) return;
-
-  printf("[ui.image.dump] dsc cf=%u wh=%lux%lu stride=%lu data_size=%lu data=%p region=%ld,%ld %ldx%ld\n",
-         (unsigned)ud->dsc.header.cf,
-         (unsigned long)ud->dsc.header.w,
-         (unsigned long)ud->dsc.header.h,
-         (unsigned long)ud->dsc.header.stride,
-         (unsigned long)ud->dsc.data_size,
-         (const void*)ud->dsc.data,
-         (long)ud->sx,
-         (long)ud->sy,
-         (long)ud->sw,
-         (long)ud->sh);
-
-  uint32_t rows[] = {0u, 1u, 2u, ud->dsc.header.h > 0u ? ud->dsc.header.h - 1u : 0u};
-  for (uint32_t r = 0u; r < (uint32_t)(sizeof(rows) / sizeof(rows[0])); ++r) {
-    uint32_t y = rows[r];
-    if (y >= ud->dsc.header.h) continue;
-    const uint8_t* row = ud->view_data + y * ud->dsc.header.stride;
-    printf("[ui.image.dump] y=%lu argb=%08lX,%08lX,%08lX,%08lX bgra=%02X%02X%02X%02X\n",
-           (unsigned long)y,
-           (unsigned long)debug_argb_from_bgra(row + 0u),
-           (unsigned long)debug_argb_from_bgra(row + 4u),
-           (unsigned long)debug_argb_from_bgra(row + 8u),
-           (unsigned long)debug_argb_from_bgra(row + 12u),
-           (unsigned)row[0], (unsigned)row[1], (unsigned)row[2], (unsigned)row[3]);
-  }
-}
+static void clean_dcache_range(const void* pointer, uint32_t size) {
+#if defined(__DCACHE_PRESENT) && (__DCACHE_PRESENT == 1U)
+  if (!pointer || size == 0u) return;
+  uintptr_t start = (uintptr_t)pointer & ~(uintptr_t)31u;
+  uintptr_t end = ((uintptr_t)pointer + size + 31u) & ~(uintptr_t)31u;
+  SCB_CleanDCache_by_Addr((uint32_t*)start, (int32_t)(end - start));
+#else
+  (void)pointer;
+  (void)size;
 #endif
-
-static void check_image_valid(lua_State* L, ui_image_ud_t* ud) {
-  if (!ud || !ud->img) luaL_error(L, "image has been deleted");
 }
 
-static bool table_get_int(lua_State* L, int table, const char* key, int32_t* out) {
-  table = lua_absindex(L, table);
-  lua_getfield(L, table, key);
-  if (lua_isnil(L, -1)) {
+static bool image_format_info(uint16_t format,
+                              lv_color_format_t* color_format,
+                              uint8_t* bpp) {
+  if (format != XHGC_IMG_BGRA8888) return false;
+  *color_format = LV_COLOR_FORMAT_ARGB8888;
+  *bpp = 4u;
+  return true;
+}
+
+static bool region_valid(int32_t sx,
+                         int32_t sy,
+                         int32_t sw,
+                         int32_t sh,
+                         uint16_t width,
+                         uint16_t height) {
+  if (sx < 0 || sy < 0 || sw <= 0 || sh <= 0) return false;
+  if ((uint32_t)sx > width || (uint32_t)sy > height) return false;
+  return (uint32_t)sw <= (uint32_t)width - (uint32_t)sx &&
+         (uint32_t)sh <= (uint32_t)height - (uint32_t)sy;
+}
+
+static bool read_integer(lua_State* L,
+                         int table_idx,
+                         lua_Integer key,
+                         int32_t* value,
+                         const char* property,
+                         char* error,
+                         size_t error_size) {
+  lua_geti(L, table_idx, key);
+  if (!lua_isinteger(L, -1)) {
     lua_pop(L, 1);
+    (void)snprintf(error, error_size,
+                   "property '%s' expects four integers", property);
     return false;
   }
-  *out = (int32_t)luaL_checkinteger(L, -1);
+  lua_Integer raw = lua_tointeger(L, -1);
   lua_pop(L, 1);
-  return true;
-}
-
-static bool table_get_uint(lua_State* L, int table, const char* key, uint32_t* out) {
-  int32_t value = 0;
-  if (!table_get_int(L, table, key, &value)) return false;
-  luaL_argcheck(L, value >= 0, 1, "color must be non-negative");
-  *out = (uint32_t)value;
-  return true;
-}
-
-static bool table_get_bool(lua_State* L, int table, const char* key, bool* out) {
-  table = lua_absindex(L, table);
-  lua_getfield(L, table, key);
-  if (lua_isnil(L, -1)) {
-    lua_pop(L, 1);
+  if (raw < INT32_MIN || raw > INT32_MAX) {
+    (void)snprintf(error, error_size,
+                   "property '%s' integer is out of range", property);
     return false;
   }
-  *out = lua_toboolean(L, -1);
-  lua_pop(L, 1);
+  *value = (int32_t)raw;
   return true;
 }
 
-static bool table_get_int_index(lua_State* L, int table, lua_Integer index, int32_t* out) {
-  table = lua_absindex(L, table);
-  lua_geti(L, table, index);
+static bool parse_region(lua_State* L,
+                         int properties_idx,
+                         lua_ui_image_t* image,
+                         bool reset_to_source,
+                         bool* present,
+                         char* error,
+                         size_t error_size) {
+  properties_idx = lua_absindex(L, properties_idx);
+  lua_getfield(L, properties_idx, "region");
   if (lua_isnil(L, -1)) {
     lua_pop(L, 1);
-    return false;
-  }
-  *out = (int32_t)luaL_checkinteger(L, -1);
-  lua_pop(L, 1);
-  return true;
-}
-
-static bool table_get_string(lua_State* L, int table, const char* key, const char** out) {
-  table = lua_absindex(L, table);
-  lua_getfield(L, table, key);
-  if (lua_isnil(L, -1)) {
-    lua_pop(L, 1);
-    return false;
-  }
-  *out = luaL_checkstring(L, -1);
-  lua_pop(L, 1);
-  return true;
-}
-
-static bool config_has_field(lua_State* L, int table, const char* key) {
-  table = lua_absindex(L, table);
-  lua_getfield(L, table, key);
-  bool present = !lua_isnil(L, -1);
-  lua_pop(L, 1);
-  return present;
-}
-
-static bool image_format_info(uint16_t format, lv_color_format_t* cf, uint8_t* bpp) {
-  if (format == XHGC_IMG_BGRA8888) {
-    *cf = LV_COLOR_FORMAT_ARGB8888;
-    *bpp = 4u;
+    *present = false;
+    if (reset_to_source) {
+      image->sx = 0;
+      image->sy = 0;
+      image->sw = image->source_w;
+      image->sh = image->source_h;
+    }
     return true;
   }
-  return false;
-}
-
-static bool region_in_source(int32_t sx,
-                             int32_t sy,
-                             int32_t sw,
-                             int32_t sh,
-                             uint16_t source_w,
-                             uint16_t source_h) {
-  if (sx < 0 || sy < 0 || sw <= 0 || sh <= 0) return false;
-  if ((uint32_t)sx > source_w || (uint32_t)sy > source_h) return false;
-  if ((uint32_t)sw > (uint32_t)source_w - (uint32_t)sx) return false;
-  if ((uint32_t)sh > (uint32_t)source_h - (uint32_t)sy) return false;
-  return true;
-}
-
-static bool checked_u32_mul(uint32_t a, uint32_t b, uint32_t* out) {
-  uint64_t value = (uint64_t)a * (uint64_t)b;
-  if (value > UINT32_MAX) return false;
-  *out = (uint32_t)value;
-  return true;
-}
-
-/**
- * @brief  为图片裁剪/翻转视图申请或复用scratch缓冲
- * @param  L: Lua状态机
- * @param  ud: ui.image userdata
- * @param  width: 视图宽度，用于错误日志
- * @param  height: 视图高度，用于错误日志
- * @param  bytes: 需要的缓冲字节数
- * @return 非NULL=可用scratch缓冲, NULL=分配失败且luaL_error未返回
- * @note   - 优先复用userdata中容量足够的view_scratch_data
- *         - 新缓冲来自resource_manager的图片视图arena，不使用lv_malloc
- *         - 分配失败会记录日志并抛出Lua错误
- */
-static uint8_t* image_view_scratch_alloc(lua_State* L,
-                                         ui_image_ud_t* ud,
-                                         uint32_t width,
-                                         uint32_t height,
-                                         uint32_t bytes) {
-  uint8_t* pixels;
-
-  if (ud->view_scratch_data && ud->view_scratch_capacity >= bytes) {
-    return ud->view_scratch_data;
+  if (!lua_istable(L, -1)) {
+    lua_pop(L, 1);
+    (void)snprintf(error, error_size, "property 'region' expects a table");
+    return false;
   }
-
-  pixels = (uint8_t*)res_alloc_image_view_buffer(bytes, UI_IMAGE_VIEW_ALIGN);
-  if (!pixels) {
-    const char* err = res_last_error();
-    printf("[ui.image] view buffer alloc failed width=%lu height=%lu bytes=%lu error=%s\n",
-           (unsigned long)width,
-           (unsigned long)height,
-           (unsigned long)bytes,
-           err ? err : "unknown");
-    (void)luaL_error(L,
-                     "out of app arena memory for image view buffer (%lux%lu, %lu bytes)",
-                     (unsigned long)width,
-                     (unsigned long)height,
-                     (unsigned long)bytes);
-    return NULL;
-  }
-
-  ud->view_scratch_data = pixels;
-  ud->view_scratch_capacity = bytes;
-  return pixels;
-}
-
-/**
- * @brief  解析Lua配置中的图片源区域
- * @param  L: Lua状态机
- * @param  config_idx: 配置table栈索引
- * @param  source_w: 源图片宽度
- * @param  source_h: 源图片高度
- * @param  sx: 输出源区域x
- * @param  sy: 输出源区域y
- * @param  sw: 输出源区域宽度
- * @param  sh: 输出源区域高度
- * @retval true=区域合法, false=区域越界或尺寸非法
- * @note   - 未提供region时默认使用整张源图片
- *         - 只解析数值并校验边界，不修改userdata或LVGL对象
- */
-static bool parse_image_region(lua_State* L,
-                               int config_idx,
-                               uint16_t source_w,
-                               uint16_t source_h,
-                               int32_t* sx,
-                               int32_t* sy,
-                               int32_t* sw,
-                               int32_t* sh) {
-  config_idx = lua_absindex(L, config_idx);
-  *sx = 0;
-  *sy = 0;
-  *sw = source_w;
-  *sh = source_h;
-
-  lua_getfield(L, config_idx, "region");
-  if (lua_istable(L, -1)) {
-    (void)table_get_int_index(L, -1, 1, sx);
-    (void)table_get_int_index(L, -1, 2, sy);
-    (void)table_get_int_index(L, -1, 3, sw);
-    (void)table_get_int_index(L, -1, 4, sh);
-  }
+  int region_idx = lua_gettop(L);
+  int32_t sx, sy, sw, sh;
+  bool ok = read_integer(L, region_idx, 1, &sx, "region", error, error_size) &&
+            read_integer(L, region_idx, 2, &sy, "region", error, error_size) &&
+            read_integer(L, region_idx, 3, &sw, "region", error, error_size) &&
+            read_integer(L, region_idx, 4, &sh, "region", error, error_size);
   lua_pop(L, 1);
-
-  return region_in_source(*sx, *sy, *sw, *sh, source_w, source_h);
+  if (!ok) return false;
+  if (!region_valid(sx, sy, sw, sh, image->source_w, image->source_h)) {
+    (void)snprintf(error, error_size, "property 'region' is outside the image");
+    return false;
+  }
+  image->sx = sx;
+  image->sy = sy;
+  image->sw = sw;
+  image->sh = sh;
+  *present = true;
+  return true;
 }
 
-/**
- * @brief  重建ui.image的LVGL图片描述和可选裁剪/翻转视图缓冲
- * @param  L: Lua状态机
- * @param  ud: ui.image userdata
- * @retval 0=重建成功, 其它=luaL_error抛出的错误返回值
- * @note   - 原图直接显示时复用resource_manager像素缓冲，不额外分配
- *         - 需要裁剪、翻转或stride调整时从RESOURCE_ARENA视图缓冲分配
- *         - 成功后会清理view_data对应DCache并更新lv_image src
- *         - 分配失败时通过Lua错误退出，调用方不应继续使用本次配置结果
- */
-static int rebuild_view(lua_State* L, ui_image_ud_t* ud) {
-  lv_color_format_t cf = LV_COLOR_FORMAT_UNKNOWN;
-  uint8_t bpp = 0;
-  uint32_t stride = 0;
-  uint32_t size = 0;
-  uint32_t source_stride = 0;
-  uint32_t row_bytes = 0;
-  bool needs_copy = false;
-
-  check_image_valid(L, ud);
-  if (!image_format_info(ud->format, &cf, &bpp)) {
-    return luaL_error(L, "unsupported image format");
+static bool load_image(const char* src,
+                       loaded_image_t* loaded,
+                       char* error,
+                       size_t error_size) {
+  memset(loaded, 0, sizeof(*loaded));
+  if (!src || src[0] == '\0') {
+    (void)snprintf(error, error_size, "property 'src' must not be empty");
+    return false;
   }
-  if (!region_in_source(ud->sx, ud->sy, ud->sw, ud->sh, ud->source_w, ud->source_h)) {
-    return luaL_error(L, "invalid image region");
+  if (!cart_path_is_valid(src)) {
+    (void)snprintf(error, error_size, "property 'src' is not a valid cart path");
+    return false;
   }
 
-  source_stride = (uint32_t)ud->source_w * bpp;
-  stride = lv_draw_buf_width_to_stride((uint32_t)ud->sw, cf);
-  row_bytes = (uint32_t)ud->sw * bpp;
-  if (!checked_u32_mul(stride, (uint32_t)ud->sh, &size)) {
-    return luaL_error(L, "image view buffer is too large");
+  loaded->resource = res_acquire_image(src, RES_LIFE_SCENE);
+  const image_resource_t* resource = res_get_image(loaded->resource);
+  if (!resource) {
+    const char* detail = res_last_error();
+    (void)snprintf(error, error_size, "%s",
+                   detail ? detail : "failed to load image");
+    return false;
   }
-  needs_copy = ud->flip_x || ud->flip_y ||
-               ud->sx != 0 || ud->sy != 0 ||
-               ud->sw != ud->source_w || ud->sh != ud->source_h ||
-               stride != source_stride;
+  lv_color_format_t ignored;
+  if (!image_format_info(resource->format, &ignored, &loaded->bpp)) {
+    res_release(loaded->resource);
+    (void)snprintf(error, error_size, "unsupported image format");
+    return false;
+  }
+  if (resource->width == 0u || resource->height == 0u ||
+      (uint64_t)resource->width * resource->height * loaded->bpp > resource->size) {
+    res_release(loaded->resource);
+    (void)snprintf(error, error_size, "invalid image resource");
+    return false;
+  }
+  loaded->pixels = (uint8_t*)resource->pixels;
+  loaded->size = resource->size;
+  loaded->width = resource->width;
+  loaded->height = resource->height;
+  loaded->format = resource->format;
+  return true;
+}
 
-  ud->view_data = NULL;
-  ud->view_data_owned = false;
+static bool rebuild_view(lua_ui_image_t* image,
+                         char* error,
+                         size_t error_size) {
+  lv_color_format_t color_format;
+  uint8_t bpp;
+  if (!image_format_info(image->format, &color_format, &bpp) ||
+      !region_valid(image->sx, image->sy, image->sw, image->sh,
+                    image->source_w, image->source_h)) {
+    (void)snprintf(error, error_size, "invalid image view");
+    return false;
+  }
 
-  if (needs_copy) {
-    ud->view_data = image_view_scratch_alloc(L,
-                                             ud,
-                                             (uint32_t)ud->sw,
-                                             (uint32_t)ud->sh,
-                                             size);
-    if (!ud->view_data) return luaL_error(L, "out of memory");
-    memset(ud->view_data, 0, size);
-    ud->view_data_owned = true;
-    for (int32_t y = 0; y < ud->sh; ++y) {
-      int32_t src_y = ud->flip_y ? (ud->sy + ud->sh - 1 - y) : (ud->sy + y);
-      const uint8_t* src_row = ud->source_data + (uint32_t)src_y * source_stride;
-      uint8_t* dst_row = ud->view_data + (uint32_t)y * stride;
-      if (ud->flip_x) {
-        for (int32_t x = 0; x < ud->sw; ++x) {
-          int32_t src_x = ud->sx + ud->sw - 1 - x;
-          memcpy(dst_row + (uint32_t)x * bpp,
-                 src_row + (uint32_t)src_x * bpp,
-                 bpp);
-        }
-      } else {
-        memcpy(dst_row,
-               src_row + (uint32_t)ud->sx * bpp,
-               row_bytes);
+  uint32_t source_stride = (uint32_t)image->source_w * bpp;
+  uint32_t stride = lv_draw_buf_width_to_stride((uint32_t)image->sw,
+                                                 color_format);
+  uint64_t required64 = (uint64_t)stride * (uint32_t)image->sh;
+  if (required64 > UINT32_MAX) {
+    (void)snprintf(error, error_size, "image view is too large");
+    return false;
+  }
+  uint32_t required = (uint32_t)required64;
+  bool copy = image->flip_x || image->flip_y || image->sx != 0 ||
+              image->sy != 0 || image->sw != image->source_w ||
+              image->sh != image->source_h || stride != source_stride;
+
+  if (copy) {
+    if (!image->scratch_data || image->scratch_capacity < required) {
+      uint8_t* scratch =
+          (uint8_t*)res_alloc_image_view_buffer(required, UI_IMAGE_VIEW_ALIGN);
+      if (!scratch) {
+        const char* detail = res_last_error();
+        (void)snprintf(error, error_size, "%s",
+                       detail ? detail : "image view allocation failed");
+        return false;
+      }
+      image->scratch_data = scratch;
+      image->scratch_capacity = required;
+    }
+    image->view_data = image->scratch_data;
+    memset(image->view_data, 0, required);
+    for (int32_t y = 0; y < image->sh; ++y) {
+      int32_t source_y = image->flip_y
+          ? image->sy + image->sh - 1 - y : image->sy + y;
+      const uint8_t* source_row =
+          image->source_data + (uint32_t)source_y * source_stride;
+      uint8_t* target_row = image->view_data + (uint32_t)y * stride;
+      for (int32_t x = 0; x < image->sw; ++x) {
+        int32_t source_x = image->flip_x
+            ? image->sx + image->sw - 1 - x : image->sx + x;
+        memcpy(target_row + (uint32_t)x * bpp,
+               source_row + (uint32_t)source_x * bpp, bpp);
       }
     }
   } else {
+    image->view_data = image->source_data;
     stride = source_stride;
-    size = ud->source_size;
-    ud->view_data = ud->source_data;
+    required = image->source_size;
   }
 
-  ud->view_size = size;
-  memset(&ud->dsc, 0, sizeof(ud->dsc));
-  ud->dsc.header.magic = LV_IMAGE_HEADER_MAGIC;
-  ud->dsc.header.cf = cf;
-  ud->dsc.header.flags = 0u;
-  ud->dsc.header.w = (uint32_t)ud->sw;
-  ud->dsc.header.h = (uint32_t)ud->sh;
-  ud->dsc.header.stride = stride;
-  ud->dsc.data_size = size;
-  ud->dsc.data = ud->view_data;
-  clean_dcache_range(ud->view_data, size);
-  lv_image_set_src(ud->img, &ud->dsc);
-  lv_obj_invalidate(ud->img);
-  return 0;
+  memset(&image->descriptor, 0, sizeof(image->descriptor));
+  image->descriptor.header.magic = LV_IMAGE_HEADER_MAGIC;
+  image->descriptor.header.cf = color_format;
+  image->descriptor.header.w = (uint32_t)image->sw;
+  image->descriptor.header.h = (uint32_t)image->sh;
+  image->descriptor.header.stride = stride;
+  image->descriptor.data_size = required;
+  image->descriptor.data = image->view_data;
+  clean_dcache_range(image->view_data, required);
+  lv_image_set_src(image->handle.object, &image->descriptor);
+  lv_obj_invalidate(image->handle.object);
+  return true;
 }
 
-/**
- * @brief  应用ui.image样式配置并标记是否需要重建视图
- * @param  L: Lua状态机
- * @param  ud: ui.image userdata
- * @param  style_idx: style table栈索引
- * @param  rebuild: 输出是否需要调用rebuild_view
- * @retval None
- * @note   - alpha/tint直接写入LVGL样式
- *         - flip_x/flip_y会修改userdata状态并要求重建像素视图
- */
-static void apply_image_style(lua_State* L, ui_image_ud_t* ud, int style_idx, bool* rebuild) {
-  int32_t alpha = 255;
-  uint32_t tint = 0;
-  bool flip = false;
-  style_idx = lua_absindex(L, style_idx);
-
-  if (table_get_int(L, style_idx, "alpha", &alpha)) {
-    luaL_argcheck(L, alpha >= 0 && alpha <= 255, 1, "style.alpha must be 0..255");
-    lv_obj_set_style_image_opa(ud->img, (lv_opa_t)alpha, LV_PART_MAIN | LV_STATE_DEFAULT);
+static bool read_style_integer(lua_State* L,
+                               int style_idx,
+                               const char* key,
+                               int32_t* value,
+                               bool* present,
+                               char* error,
+                               size_t error_size) {
+  lua_getfield(L, style_idx, key);
+  if (lua_isnil(L, -1)) {
+    lua_pop(L, 1);
+    *present = false;
+    return true;
   }
-  if (table_get_uint(L, style_idx, "tint", &tint)) {
-    lv_obj_set_style_image_recolor(ud->img, lv_color_hex(tint), LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_image_recolor_opa(ud->img, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
+  if (!lua_isinteger(L, -1)) {
+    lua_pop(L, 1);
+    (void)snprintf(error, error_size, "property 'style.%s' expects integer", key);
+    return false;
   }
-  if (table_get_bool(L, style_idx, "flip_x", &flip) && ud->flip_x != flip) {
-    ud->flip_x = flip;
-    *rebuild = true;
+  lua_Integer raw = lua_tointeger(L, -1);
+  lua_pop(L, 1);
+  if (raw < INT32_MIN || raw > UINT32_MAX) {
+    (void)snprintf(error, error_size, "property 'style.%s' is out of range", key);
+    return false;
   }
-  if (table_get_bool(L, style_idx, "flip_y", &flip) && ud->flip_y != flip) {
-    ud->flip_y = flip;
-    *rebuild = true;
-  }
+  *value = (int32_t)raw;
+  *present = true;
+  return true;
 }
 
-/**
- * @brief  应用Lua配置table到ui.image对象
- * @param  L: Lua状态机
- * @param  ud: ui.image userdata
- * @param  config_idx: 配置table栈索引
- * @retval 0=配置应用完成
- * @note   - 会解析位置、尺寸、region、id、hidden和style字段
- *         - region或flip变化会触发rebuild_view重新生成视图缓冲
- *         - 最后会更新LVGL对象位置、尺寸、inner align并触发invalidate
- */
-static int apply_image_config(lua_State* L, ui_image_ud_t* ud, int config_idx) {
-  const char* id = NULL;
-  int32_t x = lv_obj_get_x(ud->img);
-  int32_t y = lv_obj_get_y(ud->img);
-  int32_t w = ud->sw > 0 ? ud->sw : ud->source_w;
-  int32_t h = ud->sh > 0 ? ud->sh : ud->source_h;
-  bool rebuild = false;
-  config_idx = lua_absindex(L, config_idx);
-
-  check_image_valid(L, ud);
-  lua_getfield(L, config_idx, "rect");
-  if (lua_istable(L, -1)) {
-    (void)table_get_int_index(L, -1, 1, &x);
-    (void)table_get_int_index(L, -1, 2, &y);
-    (void)table_get_int_index(L, -1, 3, &w);
-    (void)table_get_int_index(L, -1, 4, &h);
+static bool apply_style(lua_State* L,
+                        int properties_idx,
+                        lua_ui_image_t* image,
+                        bool* rebuild,
+                        char* error,
+                        size_t error_size) {
+  properties_idx = lua_absindex(L, properties_idx);
+  lua_getfield(L, properties_idx, "style");
+  if (lua_isnil(L, -1)) {
+    lua_pop(L, 1);
+    return true;
   }
-  lua_pop(L, 1);
-
-  lua_getfield(L, config_idx, "pos");
-  if (lua_istable(L, -1)) {
-    (void)table_get_int_index(L, -1, 1, &x);
-    (void)table_get_int_index(L, -1, 2, &y);
+  if (!lua_istable(L, -1)) {
+    lua_pop(L, 1);
+    (void)snprintf(error, error_size, "property 'style' expects a table");
+    return false;
   }
-  lua_pop(L, 1);
-
-  lua_getfield(L, config_idx, "size");
-  if (lua_istable(L, -1)) {
-    (void)table_get_int_index(L, -1, 1, &w);
-    (void)table_get_int_index(L, -1, 2, &h);
+  int style_idx = lua_gettop(L);
+  if (!lua_ui_validate_properties(L, style_idx, k_style_properties,
+                                  sizeof(k_style_properties) /
+                                      sizeof(k_style_properties[0]),
+                                  &image->handle, error, error_size)) {
+    lua_pop(L, 1);
+    return false;
   }
-  lua_pop(L, 1);
 
-  (void)table_get_int(L, config_idx, "x", &x);
-  (void)table_get_int(L, config_idx, "y", &y);
-  (void)table_get_int(L, config_idx, "w", &w);
-  (void)table_get_int(L, config_idx, "h", &h);
-
-  lua_getfield(L, config_idx, "region");
-  if (lua_istable(L, -1)) {
-    int32_t sx = ud->sx;
-    int32_t sy = ud->sy;
-    int32_t sw = ud->sw;
-    int32_t sh = ud->sh;
-    (void)table_get_int_index(L, -1, 1, &sx);
-    (void)table_get_int_index(L, -1, 2, &sy);
-    (void)table_get_int_index(L, -1, 3, &sw);
-    (void)table_get_int_index(L, -1, 4, &sh);
-    if (sx != ud->sx || sy != ud->sy || sw != ud->sw || sh != ud->sh) {
-      ud->sx = sx;
-      ud->sy = sy;
-      ud->sw = sw;
-      ud->sh = sh;
-      rebuild = true;
-      if (!config_has_field(L, config_idx, "w") && !config_has_field(L, config_idx, "size") && !config_has_field(L, config_idx, "rect")) w = sw;
-      if (!config_has_field(L, config_idx, "h") && !config_has_field(L, config_idx, "size") && !config_has_field(L, config_idx, "rect")) h = sh;
+  int32_t integer;
+  bool present;
+  if (!read_style_integer(L, style_idx, "alpha", &integer, &present,
+                          error, error_size)) {
+    lua_pop(L, 1);
+    return false;
+  }
+  if (present) {
+    if (integer < 0 || integer > 255) {
+      lua_pop(L, 1);
+      (void)snprintf(error, error_size, "property 'style.alpha' expects 0..255");
+      return false;
     }
+    lv_obj_set_style_image_opa(image->handle.object, (lv_opa_t)integer, 0);
+  }
+  if (!read_style_integer(L, style_idx, "tint", &integer, &present,
+                          error, error_size)) {
+    lua_pop(L, 1);
+    return false;
+  }
+  if (present) {
+    lv_obj_set_style_image_recolor(image->handle.object,
+                                   lv_color_hex((uint32_t)integer), 0);
+    lv_obj_set_style_image_recolor_opa(image->handle.object, LV_OPA_COVER, 0);
+  }
+
+  const char* flip_keys[] = {"flip_x", "flip_y"};
+  bool* flip_values[] = {&image->flip_x, &image->flip_y};
+  for (size_t i = 0; i < 2u; ++i) {
+    lua_getfield(L, style_idx, flip_keys[i]);
+    if (!lua_isnil(L, -1)) {
+      if (!lua_isboolean(L, -1)) {
+        lua_pop(L, 2);
+        (void)snprintf(error, error_size,
+                       "property 'style.%s' expects boolean", flip_keys[i]);
+        return false;
+      }
+      bool value = lua_toboolean(L, -1);
+      if (*flip_values[i] != value) {
+        *flip_values[i] = value;
+        *rebuild = true;
+      }
+    }
+    lua_pop(L, 1);
   }
   lua_pop(L, 1);
-
-  if (table_get_string(L, config_idx, "id", &id)) {
-    snprintf(ud->id, sizeof(ud->id), "%s", id);
-  }
-  lua_getfield(L, config_idx, "hidden");
-  if (!lua_isnil(L, -1)) {
-    if (lua_toboolean(L, -1)) lv_obj_add_flag(ud->img, LV_OBJ_FLAG_HIDDEN);
-    else lv_obj_remove_flag(ud->img, LV_OBJ_FLAG_HIDDEN);
-  }
-  lua_pop(L, 1);
-
-  lua_getfield(L, config_idx, "style");
-  if (lua_istable(L, -1)) {
-    apply_image_style(L, ud, -1, &rebuild);
-  }
-  lua_pop(L, 1);
-
-  if (rebuild) (void)rebuild_view(L, ud);
-  lv_obj_set_pos(ud->img, x, y);
-  lv_obj_set_size(ud->img, w, h);
-  lv_image_set_inner_align(ud->img,
-                           (w == ud->sw && h == ud->sh)
-                               ? LV_IMAGE_ALIGN_DEFAULT
-                               : LV_IMAGE_ALIGN_STRETCH);
-  lv_obj_invalidate(ud->img);
-  return 0;
+  return true;
 }
 
-/**
- * @brief  Lua侧ui.image构造函数
- * @param  L: Lua状态机
- * @retval 1=创建成功并返回ui.image userdata
- * @retval 2=资源加载、格式校验、区域校验或LVGL对象创建失败，返回nil和错误字符串
- * @note   - src缺失/非法或视图重建失败会通过luaL_error抛出Lua错误
- *         - 会从resource_manager获取cart图片资源并持有引用
- *         - 会创建LVGL image对象并把userdata挂到user_data
- *         - 返回nil的失败路径会释放已获取的资源引用
- */
-static int l_image_call(lua_State* L) {
-  luaL_checktype(L, 2, LUA_TTABLE);
+static void image_cleanup(lua_ui_handle_t* handle) {
+  lua_ui_image_t* image = (lua_ui_image_t*)handle;
+  if (image->has_resource) {
+    res_release(image->resource);
+    image->has_resource = false;
+  }
+  image->source_data = NULL;
+  image->view_data = NULL;
+  image->scratch_data = NULL;
+  image->scratch_capacity = 0u;
+}
+
+static bool image_apply(lua_State* L,
+                        lua_ui_image_t* image,
+                        int properties_idx,
+                        bool creating,
+                        char* error,
+                        size_t error_size) {
+  lua_ui_image_t previous = *image;
+  const char* const* allowed = creating ? k_create_properties : k_patch_properties;
+  size_t allowed_count = creating
+      ? sizeof(k_create_properties) / sizeof(k_create_properties[0])
+      : sizeof(k_patch_properties) / sizeof(k_patch_properties[0]);
+  if (!lua_ui_validate_properties(L, properties_idx, allowed, allowed_count,
+                                  &image->handle, error, error_size)) {
+    return false;
+  }
+
+  const char* id = NULL;
+  bool id_present = false;
+  if (!lua_ui_read_optional_string(L, properties_idx, "id", &id, &id_present,
+                                   error, error_size)) {
+    return false;
+  }
+  if (id_present) {
+    if (id[0] == '\0' || strlen(id) >= sizeof(image->handle.debug_id)) {
+      (void)snprintf(error, error_size, "property 'id' is empty or too long");
+      return false;
+    }
+    (void)snprintf(image->handle.debug_id,
+                   sizeof(image->handle.debug_id), "%s", id);
+  }
 
   const char* src = NULL;
-  const char* err = NULL;
-  res_handle_t handle;
-  const image_resource_t* image = NULL;
-  lv_color_format_t cf = LV_COLOR_FORMAT_UNKNOWN;
-  uint8_t bpp = 0;
-  int32_t sx = 0;
-  int32_t sy = 0;
-  int32_t sw = 0;
-  int32_t sh = 0;
-
-  if (!table_get_string(L, 2, "src", &src) || !src || src[0] == '\0') {
-    luaL_error(L, "ui.image src is required");
+  bool src_present = false;
+  if (!lua_ui_read_optional_string(L, properties_idx, "src", &src,
+                                   &src_present, error, error_size)) {
+    return false;
   }
-  if (!cart_path_is_valid(src)) {
-    luaL_error(L, "invalid cart resource path");
+  if (creating && !src_present) {
+    (void)snprintf(error, error_size, "property 'src' is required");
+    return false;
   }
 
-  handle = res_acquire_image(src, RES_LIFE_SCENE);
-  image = res_get_image(handle);
-  if (!image) {
-    err = res_last_error();
-    lua_pushnil(L);
-    lua_pushstring(L, err ? err : "failed to load image");
-    return 2;
-  }
-  if (!image_format_info(image->format, &cf, &bpp)) {
-    res_release(handle);
-    lua_pushnil(L);
-    lua_pushliteral(L, "unsupported image format");
-    return 2;
-  }
-  if (image->width == 0u || image->height == 0u ||
-      (uint64_t)image->width * image->height * bpp > image->size) {
-    res_release(handle);
-    lua_pushnil(L);
-    lua_pushliteral(L, "invalid image resource");
-    return 2;
-  }
-  if (!parse_image_region(L, 2, image->width, image->height, &sx, &sy, &sw, &sh)) {
-    res_release(handle);
-    lua_pushnil(L);
-    lua_pushliteral(L, "invalid image region");
-    return 2;
+  loaded_image_t loaded;
+  bool source_changed = false;
+  if (src_present) {
+    if (!load_image(src, &loaded, error, error_size)) return false;
+    source_changed = true;
+    image->source_data = loaded.pixels;
+    image->source_size = loaded.size;
+    image->source_w = loaded.width;
+    image->source_h = loaded.height;
+    image->format = loaded.format;
+    image->bpp = loaded.bpp;
   }
 
-  ui_image_ud_t* ud = (ui_image_ud_t*)lua_newuserdatauv(L, sizeof(ui_image_ud_t), 0);
-  memset(ud, 0, sizeof(*ud));
-  ud->source_data = (uint8_t*)image->pixels;
-  ud->source_size = image->size;
-  ud->image_res = handle;
-  ud->source_w = image->width;
-  ud->source_h = image->height;
-  ud->format = image->format;
-  ud->bpp = bpp;
-  ud->has_image_res = true;
-  ud->sx = sx;
-  ud->sy = sy;
-  ud->sw = sw;
-  ud->sh = sh;
-
-  ud->img = lv_image_create(lv_screen_active());
-  if (!ud->img) {
-    res_release(handle);
-    ud->has_image_res = false;
-    lua_pushnil(L);
-    lua_pushliteral(L, "failed to create image");
-    return 2;
+  bool region_present = false;
+  if (!parse_region(L, properties_idx, image, source_changed, &region_present,
+                    error, error_size)) {
+    if (source_changed) {
+      res_release(loaded.resource);
+      image->source_data = previous.source_data;
+      image->source_size = previous.source_size;
+      image->source_w = previous.source_w;
+      image->source_h = previous.source_h;
+      image->format = previous.format;
+      image->bpp = previous.bpp;
+      image->sx = previous.sx;
+      image->sy = previous.sy;
+      image->sw = previous.sw;
+      image->sh = previous.sh;
+    }
+    return false;
+  }
+  bool rebuild = source_changed || region_present;
+  if (!apply_style(L, properties_idx, image, &rebuild, error, error_size) ||
+      (rebuild && !rebuild_view(image, error, error_size)) ||
+      !lua_ui_apply_rect(L, properties_idx, image->handle.object,
+                         0, 0,
+                         creating ? image->sw : 0,
+                         creating ? image->sh : 0,
+                         error, error_size) ||
+      !lua_ui_apply_hidden(L, properties_idx, image->handle.object,
+                           error, error_size)) {
+    if (source_changed) {
+      res_release(loaded.resource);
+      image->source_data = previous.source_data;
+      image->source_size = previous.source_size;
+      image->source_w = previous.source_w;
+      image->source_h = previous.source_h;
+      image->format = previous.format;
+      image->bpp = previous.bpp;
+      image->sx = previous.sx;
+      image->sy = previous.sy;
+      image->sw = previous.sw;
+      image->sh = previous.sh;
+      image->flip_x = previous.flip_x;
+      image->flip_y = previous.flip_y;
+      image->resource = previous.resource;
+      image->has_resource = previous.has_resource;
+      if (previous.has_resource) {
+        char ignored_error[LUA_UI_ERROR_MAX];
+        (void)rebuild_view(image, ignored_error, sizeof(ignored_error));
+      }
+    }
+    return false;
   }
 
-  lv_obj_set_user_data(ud->img, ud);
-  luaL_getmetatable(L, UI_IMAGE_MT);
-  lua_setmetatable(L, -2);
-  (void)rebuild_view(L, ud);
-  apply_image_config(L, ud, 2);
-#if LUA_UI_IMAGE_ENABLE_DUMP
-  debug_dump_image_dsc(ud);
-#endif
+  if (source_changed) {
+    if (image->has_resource) res_release(image->resource);
+    image->resource = loaded.resource;
+    image->has_resource = true;
+  }
+  int32_t width = lv_obj_get_width(image->handle.object);
+  int32_t height = lv_obj_get_height(image->handle.object);
+  lv_image_set_inner_align(image->handle.object,
+                           width == image->sw && height == image->sh
+                               ? LV_IMAGE_ALIGN_DEFAULT
+                               : LV_IMAGE_ALIGN_STRETCH);
+  return true;
+}
+
+static int image_create(lua_State* L) {
+  char error[LUA_UI_ERROR_MAX];
+  if (!lua_istable(L, 2)) {
+    return lua_ui_push_error(L, "ui.image expects a properties table");
+  }
+  lv_obj_t* root = lua_ui_owner_root(L);
+  if (!root) {
+    return lua_ui_push_error(L, "ui.image requires an active application owner");
+  }
+
+  lua_ui_image_t* image = (lua_ui_image_t*)lua_ui_handle_new(
+      L, sizeof(*image), LUA_UI_OBJECT_IMAGE);
+  if (!image) return lua_ui_push_error(L, "failed to allocate image handle");
+  int handle_idx = lua_gettop(L);
+  lv_obj_t* object = lv_image_create(root);
+  if (!object) return lua_ui_push_error(L, "failed to create image");
+  image->handle.object = object;
+
+  if (!image_apply(L, image, 2, true, error, sizeof(error))) {
+    lv_obj_delete(object);
+    image->handle.object = NULL;
+    image_cleanup(&image->handle);
+    return lua_ui_push_error(L, error);
+  }
+  if (!lua_ui_handle_register(L, handle_idx, &image->handle, object,
+                              image_cleanup)) {
+    lv_obj_delete(object);
+    image->handle.object = NULL;
+    image_cleanup(&image->handle);
+    return lua_ui_push_error(L, "failed to register image owner");
+  }
   return 1;
 }
 
-static int l_image_gc(lua_State* L) {
-  lua_ui_image_delete(L, 1);
-  return 0;
+bool lua_ui_image_patch(lua_State* L,
+                        lua_ui_handle_t* handle,
+                        int properties_idx,
+                        char* error,
+                        size_t error_size) {
+  if (!handle || handle->object_type != LUA_UI_OBJECT_IMAGE) return false;
+  return image_apply(L, (lua_ui_image_t*)handle, properties_idx, false,
+                     error, error_size);
 }
 
-/**
- * @brief  判断Lua栈位置是否为ui.image userdata
- * @param  L: Lua状态机
- * @param  idx: 待检查的Lua栈索引
- * @retval true=该位置是ui.image userdata, false=不是ui.image userdata
- */
-bool lua_ui_image_is(lua_State* L, int idx) {
-  return test_image(L, idx) != NULL;
-}
-
-/**
- * @brief  获取ui.image userdata绑定的drawable id
- * @param  L: Lua状态机
- * @param  idx: ui.image userdata栈索引
- * @return 非NULL=drawable id字符串, NULL=该位置不是ui.image userdata
- * @note   - 返回字符串归userdata内部存储所有，调用方不得释放
- */
-const char* lua_ui_image_id(lua_State* L, int idx) {
-  ui_image_ud_t* ud = test_image(L, idx);
-  return ud ? ud->id : NULL;
-}
-
-/**
- * @brief  对已有ui.image应用配置补丁
- * @param  L: Lua状态机
- * @param  drawable_idx: ui.image userdata栈索引
- * @param  patch_idx: 补丁table栈索引
- * @retval 0=应用成功, -1=补丁包含不允许修改的src字段
- * @note   - 本函数会按apply_image_config修改LVGL image对象属性
- *         - 配置非法时apply_image_config可能通过luaL_error抛出Lua错误
- *         - src字段不允许通过patch修改，需重新创建image
- */
-int lua_ui_image_patch(lua_State* L, int drawable_idx, int patch_idx) {
-  ui_image_ud_t* ud = check_image(L, drawable_idx);
-  luaL_checktype(L, patch_idx, LUA_TTABLE);
-  if (config_has_field(L, patch_idx, "src")) return -1;
-  return apply_image_config(L, ud, patch_idx);
-}
-
-/**
- * @brief  删除ui.image对应的LVGL对象并释放资源引用
- * @param  L: Lua状态机
- * @param  idx: ui.image userdata栈索引
- * @retval None
- * @note   - 非ui.image userdata时直接返回
- *         - 会调用lv_obj_delete删除LVGL image对象
- *         - 若持有resource_manager图片资源，会调用res_release释放引用
- */
-void lua_ui_image_delete(lua_State* L, int idx) {
-  ui_image_ud_t* ud = test_image(L, idx);
-  if (!ud) return;
-
-  if (ud->img) {
-    lv_obj_delete(ud->img);
-    ud->img = NULL;
-  }
-  ud->view_data = NULL;
-  ud->view_scratch_data = NULL;
-  ud->view_scratch_capacity = 0u;
-  ud->view_data_owned = false;
-  if (ud->has_image_res) {
-    res_release(ud->image_res);
-    ud->has_image_res = false;
-  }
-  ud->source_data = NULL;
-}
-
-static void create_image_metatable(lua_State* L) {
-  if (luaL_newmetatable(L, UI_IMAGE_MT)) {
-    lua_pushcfunction(L, l_image_gc);
-    lua_setfield(L, -2, "__gc");
-  }
-  lua_pop(L, 1);
-}
-
-/**
- * @brief  注册ui.image Lua模块
- * @param  L: Lua状态机
- * @retval 1=模块table已压入Lua栈顶
- * @note   - 会创建ui.image userdata metatable并设置__gc释放路径
- */
 int luaopen_ui_image(lua_State* L) {
-  create_image_metatable(L);
-
   lua_newtable(L);
   lua_newtable(L);
-  lua_pushcfunction(L, l_image_call);
+  lua_pushcfunction(L, image_create);
   lua_setfield(L, -2, "__call");
   lua_setmetatable(L, -2);
   return 1;

@@ -32,6 +32,10 @@ int  lua_run_file(const char *path);
 int  lua_reload(void);
 int  lua_shutdown(void);
 int  lua_post_input(const char *action_id, const LuaInputAction *action);
+int  lua_post_input_for_owner(uint32_t owner_id,
+                              uint32_t generation,
+                              const char *action_id,
+                              const LuaInputAction *action);
 int  lua_post_message(const char *message_id, const char *sender);
 void lua_update_task(void);
 void lua_rt_delay_ms(uint32_t delay_ms);

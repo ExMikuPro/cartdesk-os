@@ -1,8 +1,6 @@
 function init(self)
-    self.state = {
-        elapsed = 0,
-        ticks = 0,
-    }
+    self.state.elapsed = 0
+    self.state.ticks = 0
     print("lifecycle init")
 end
 

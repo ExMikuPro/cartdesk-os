@@ -11,6 +11,7 @@
 #include "ff.h"
 #include "fatfs.h"
 #include "lua_port.h"
+#include "lua_app_instance.h"
 #include "lua_ui.h"
 #include "lua_vm_memory.h"
 #include "resource_manager.h"
@@ -110,15 +111,15 @@ const char* lua_get_boot_script(size_t *out_len)
     "local LED_PIN = 3\n"
     "\n"
     "function init(self)\n"
-    "  self.pressed = false\n"
+    "  self.state.pressed = false\n"
     "  gpio.pinMode(BUTTON_PIN, gpio.INPUT_PULLUP)\n"
     "  gpio.pinMode(LED_PIN, gpio.OUTPUT)\n"
     "  gpio.digitalWrite(LED_PIN, gpio.LOW)\n"
     "end\n"
     "\n"
     "function update(self, dt)\n"
-    "  self.pressed = gpio.digitalRead(BUTTON_PIN) == gpio.LOW\n"
-    "  gpio.digitalWrite(LED_PIN, self.pressed and gpio.HIGH or gpio.LOW)\n"
+    "  self.state.pressed = gpio.digitalRead(BUTTON_PIN) == gpio.LOW\n"
+    "  gpio.digitalWrite(LED_PIN, self.state.pressed and gpio.HIGH or gpio.LOW)\n"
     "end\n"
     "\n"
     "function final(self)\n"
@@ -182,7 +183,8 @@ typedef struct {
     bool alive;
     bool initialized;
     bool finalized;
-    bool legacy_callbacks;
+    uint32_t owner_id;
+    uint32_t generation;
     int env_ref;
     int self_ref;
     lua_State *thread;
@@ -193,6 +195,8 @@ typedef struct {
 } lua_script_instance_t;
 
 typedef struct {
+    uint32_t owner_id;
+    uint32_t generation;
     char action_id[LUA_INPUT_ACTION_ID_MAX];
     LuaInputAction action;
 } lua_input_event_t;
@@ -215,6 +219,8 @@ typedef enum {
 __attribute__((section(".ram_runtime"), aligned(32)))
 static lua_script_instance_t g_instances[LUA_RT_MAX_INSTANCES];
 static size_t g_instance_count = 0;
+static uint32_t g_next_owner_id = 1u;
+static uint32_t g_next_generation = 1u;
 
 __attribute__((section(".ram_runtime"), aligned(32)))
 static lua_input_event_t g_input_queue[LUA_RT_INPUT_QUEUE_CAPACITY];
@@ -379,8 +385,7 @@ static int lua_rt_ref_env_function(lua_script_instance_t *instance, const char *
  * @brief  从实例环境表缓存Lua生命周期回调引用
  * @param  instance: 目标脚本实例
  * @retval None
- * @note   - 会按k_lifecycle_names登记init/final/fixed_update/update等回调
- *         - init缺失时会兼容旧版start回调，并标记legacy_callbacks
+ * @note   会按k_lifecycle_names登记init/final/fixed_update/update等回调
  *         - 本函数会修改Lua栈并通过luaL_ref转移函数所有权到registry
  */
 static void lua_rt_cache_callbacks(lua_script_instance_t *instance)
@@ -390,13 +395,15 @@ static void lua_rt_cache_callbacks(lua_script_instance_t *instance)
             lua_rt_ref_env_function(instance, k_lifecycle_names[i]);
     }
 
-    if (instance->callback_refs[LUA_LIFECYCLE_INIT] == LUA_NOREF) {
-        int start_ref = lua_rt_ref_env_function(instance, "start");
-        if (start_ref != LUA_NOREF) {
-            instance->callback_refs[LUA_LIFECYCLE_INIT] = start_ref;
-            instance->legacy_callbacks = true;
-        }
+}
+
+static int lua_rt_build_self(lua_State *L)
+{
+    lua_newtable(L);
+    if (!LuaAppInstance_CreateDefaultTables(L, -1)) {
+        return luaL_error(L, "failed to initialize application self");
     }
+    return 1;
 }
 
 /**
@@ -405,7 +412,7 @@ static void lua_rt_cache_callbacks(lua_script_instance_t *instance)
  * @param  source_path: 来源路径或chunk名称，可为NULL
  * @retval 0=创建成功, 负值=Lua状态非法、实例已满、_ENV缺失或chunk执行失败
  * @note   - 调用前栈顶必须是lua_load/luaL_loadbuffer得到的函数
- *         - 会创建独立_ENV、self表和协程，并缓存生命周期回调
+ *         - 会创建独立_ENV、五节点self、UI owner和协程，并缓存生命周期回调
  *         - 失败路径会释放已登记的registry引用并恢复Lua栈
  *         - 运行期新增实例且调度器空闲时会重新进入INIT阶段
  */
@@ -451,8 +458,23 @@ static int lua_rt_create_instance_from_loaded(lua_script_source_t source,
         return -4;
     }
 
-    lua_newtable(g_L);
+    lua_pushcfunction(g_L, lua_rt_build_self);
+    if (lua_rt_pcall(g_L, 0, 1) != 0) {
+        lua_rt_unref_instance(instance);
+        lua_settop(g_L, stack_base);
+        return -5;
+    }
     instance->self_ref = luaL_ref(g_L, LUA_REGISTRYINDEX);
+    instance->owner_id = g_next_owner_id++;
+    instance->generation = g_next_generation++;
+    if (instance->owner_id == 0u) instance->owner_id = g_next_owner_id++;
+    if (instance->generation == 0u) instance->generation = g_next_generation++;
+    if (!lua_ui_owner_create(g_L, instance->owner_id, instance->generation)) {
+        lua_rt_log("failed to create Lua UI owner\n");
+        lua_rt_unref_instance(instance);
+        lua_settop(g_L, stack_base);
+        return -6;
+    }
     instance->thread = lua_newthread(g_L);
     instance->thread_ref = luaL_ref(g_L, LUA_REGISTRYINDEX);
     instance->alive = true;
@@ -998,6 +1020,9 @@ static void lua_rt_finish_lifecycle(bool success)
         g_entry_instance->initialized = success;
         if (!success) {
             lua_rt_log("lua init() failed; instance disabled\n");
+            lua_ui_owner_destroy(g_L, g_entry_instance->owner_id,
+                                 g_entry_instance->generation);
+            g_entry_instance->alive = false;
         }
     }
 }
@@ -1017,7 +1042,10 @@ static int lua_rt_resume_entry(int nargs)
     int nresults = 0;
     g_entry_sleeping = false;
 
+    lua_ui_owner_enter(g_L, g_entry_instance->owner_id,
+                       g_entry_instance->generation);
     int rc = lua_resume(g_entry_thread, g_L, nargs, &nresults);
+    lua_ui_owner_leave();
     if (rc == LUA_YIELD) {
         if (nresults > 0) lua_pop(g_entry_thread, nresults);
         return 1;
@@ -1117,13 +1145,8 @@ static int lua_rt_begin_lifecycle(lua_script_instance_t *instance,
     int nargs = 0;
     lua_rawgeti(g_L, LUA_REGISTRYINDEX, callback_ref);
 
-    bool legacy_no_self =
-        instance->legacy_callbacks &&
-        (lifecycle == LUA_LIFECYCLE_INIT || lifecycle == LUA_LIFECYCLE_UPDATE);
-    if (!legacy_no_self) {
-        lua_rawgeti(g_L, LUA_REGISTRYINDEX, instance->self_ref);
-        ++nargs;
-    }
+    lua_rawgeti(g_L, LUA_REGISTRYINDEX, instance->self_ref);
+    ++nargs;
 
     switch (lifecycle) {
     case LUA_LIFECYCLE_FIXED_UPDATE:
@@ -1186,36 +1209,11 @@ static int lua_rt_call_direct(lua_script_instance_t *instance,
     const int stack_base = lua_gettop(g_L);
     lua_rawgeti(g_L, LUA_REGISTRYINDEX, callback_ref);
     lua_rawgeti(g_L, LUA_REGISTRYINDEX, instance->self_ref);
+    lua_ui_owner_enter(g_L, instance->owner_id, instance->generation);
     int rc = lua_rt_pcall(g_L, 1, 0);
+    lua_ui_owner_leave();
     lua_settop(g_L, stack_base);
     return rc;
-}
-
-/**
- * @brief  删除脚本实例self.children持有的UI子节点
- * @param  instance: 脚本实例
- * @retval None
- * @note   - 依赖全局Lua state和实例self_ref有效
- *         - 会调用lua_ui_delete_children并将self.children置为nil
- *         - 调用前后会恢复主Lua栈高度
- */
-static void lua_rt_delete_instance_children(lua_script_instance_t *instance)
-{
-    if (!g_L || !instance || instance->self_ref == LUA_NOREF) return;
-
-    const int stack_base = lua_gettop(g_L);
-    lua_rawgeti(g_L, LUA_REGISTRYINDEX, instance->self_ref);
-    if (lua_istable(g_L, -1)) {
-        lua_getfield(g_L, -1, "children");
-        if (!lua_isnil(g_L, -1)) {
-            lua_ui_delete_children(g_L, -1);
-        }
-        lua_pop(g_L, 1);
-
-        lua_pushnil(g_L);
-        lua_setfield(g_L, -2, "children");
-    }
-    lua_settop(g_L, stack_base);
 }
 
 static bool lua_rt_pop_input(lua_input_event_t *event)
@@ -1248,6 +1246,14 @@ static bool lua_rt_pop_message(lua_message_event_t *event)
  */
 int lua_post_input(const char *action_id, const LuaInputAction *action)
 {
+    return lua_post_input_for_owner(0u, 0u, action_id, action);
+}
+
+int lua_post_input_for_owner(uint32_t owner_id,
+                             uint32_t generation,
+                             const char *action_id,
+                             const LuaInputAction *action)
+{
     if (!action_id || !action || action_id[0] == '\0') return -1;
     if (g_input_count >= LUA_RT_INPUT_QUEUE_CAPACITY) {
         lua_rt_log("lua input queue full\n");
@@ -1255,6 +1261,8 @@ int lua_post_input(const char *action_id, const LuaInputAction *action)
     }
 
     lua_input_event_t *event = &g_input_queue[g_input_tail];
+    event->owner_id = owner_id;
+    event->generation = generation;
     snprintf(event->action_id, sizeof(event->action_id), "%s", action_id);
     event->action = *action;
     g_input_tail = (uint8_t)((g_input_tail + 1u) % LUA_RT_INPUT_QUEUE_CAPACITY);
@@ -1335,6 +1343,11 @@ static void lua_rt_drive_scheduler(void)
             }
             instance = &g_instances[g_scheduler_instance++];
             if (!instance->alive || !instance->initialized) continue;
+            if (g_current_input.owner_id != 0u &&
+                (instance->owner_id != g_current_input.owner_id ||
+                 instance->generation != g_current_input.generation)) {
+                continue;
+            }
             rc = lua_rt_begin_lifecycle(instance, LUA_LIFECYCLE_INPUT, 0.0f);
             if (rc == 1) return;
             continue;
@@ -1428,6 +1441,7 @@ static int lua_rt_init_state(void)
 
     lua_rt_openlibs(g_L);
     lua_port_bind(g_L, NULL);
+    lua_ui_registry_init();
     res_manager_init();
 
     memset(g_instances, 0, sizeof(g_instances));
@@ -1569,7 +1583,7 @@ static void lua_rt_unref_callbacks(lua_script_instance_t *instance)
  * @brief  清除脚本环境表中的生命周期回调字段
  * @param  instance: 脚本实例
  * @retval None
- * @note   - 会把init/final/update等生命周期字段以及兼容start字段置为nil
+ * @note   会把init/final/update等生命周期字段置为nil
  *         - 调用方需保证instance->env_ref有效并在调用后维护Lua栈平衡
  */
 static void lua_rt_clear_env_callbacks(lua_script_instance_t *instance)
@@ -1580,9 +1594,6 @@ static void lua_rt_clear_env_callbacks(lua_script_instance_t *instance)
         lua_pushnil(g_L);
         lua_rawset(g_L, -3);
     }
-    lua_pushliteral(g_L, "start");
-    lua_pushnil(g_L);
-    lua_rawset(g_L, -3);
     lua_pop(g_L, 1);
 }
 
@@ -1604,8 +1615,6 @@ static int lua_rt_reload_instance_from_loaded(lua_script_instance_t *instance)
 
     lua_rt_unref_callbacks(instance);
     lua_rt_clear_env_callbacks(instance);
-    instance->legacy_callbacks = false;
-
     lua_rawgeti(g_L, LUA_REGISTRYINDEX, instance->env_ref);
     if (lua_setupvalue(g_L, chunk_index, 1) == NULL) {
         lua_rt_log("reload chunk has no _ENV upvalue\n");
@@ -1669,7 +1678,7 @@ int lua_reload(void)
 /**
  * @brief  关闭 Lua runtime 并释放场景资源
  * @retval 0=关闭完成或 runtime 原本未初始化
- * @note   - 对已初始化且未 finalized 的实例会调用 final，然后删除其 UI 子节点
+ * @note   - 对已初始化且未 finalized 的实例会调用 final，然后按owner清理UI
  * @note   - 本函数会 res_scene_reset、lua_close，并清空输入/消息队列和 runtime 状态
  */
 int lua_shutdown(void)
@@ -1680,14 +1689,19 @@ int lua_shutdown(void)
         lua_rt_clear_entry();
     }
     g_scheduler_phase = LUA_SCHED_IDLE;
+    g_runtime_started = false;
+    g_input_head = g_input_tail = g_input_count = 0;
+    g_message_head = g_message_tail = g_message_count = 0;
+    g_has_current_input = false;
+    g_has_current_message = false;
 
     for (size_t i = 0; i < g_instance_count; ++i) {
         lua_script_instance_t *instance = &g_instances[i];
         if (instance->alive && instance->initialized && !instance->finalized) {
             instance->finalized = true;
             (void)lua_rt_call_direct(instance, LUA_LIFECYCLE_FINAL);
-            lua_rt_delete_instance_children(instance);
         }
+        lua_ui_owner_destroy(g_L, instance->owner_id, instance->generation);
         instance->alive = false;
         lua_rt_unref_instance(instance);
     }
@@ -1697,11 +1711,7 @@ int lua_shutdown(void)
     g_L = NULL;
     lua_vm_memory_print_stats();
     g_instance_count = 0;
-    g_runtime_started = false;
-    g_input_head = g_input_tail = g_input_count = 0;
-    g_message_head = g_message_tail = g_message_count = 0;
-    g_has_current_input = false;
-    g_has_current_message = false;
+    lua_ui_registry_init();
     return 0;
 }
 

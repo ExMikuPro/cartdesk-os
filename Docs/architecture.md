@@ -25,14 +25,14 @@ cart/bin 包加载分为 launcher 快速读取和 runtime 入口加载两条路�
 - Lua runtime 通过 `Core/Src/lua_vm.c` 打开 cart，调用 `xhgc_cart_open_fatfs()` 解析 `XHGC_PAC` Header，再优先读取 `ENTRY` slot；如果没有 `ENTRY` slot，则使用 Header 中的 `entry` 字段，必要时退回 MANF field `0x06`，再通过 INDEX/DATA 找到入口文件。
 - 资源系统通过 `Core/LuaPort/resource_manager.c` 挂载 cart index，并按需从 DATA 段读取 BGRA8888 图片到 `RESOURCE_ARENA`。
 
-Lua VM 位于 runtime 核心。`lua_rt_init_state()` 创建 `lua_State`，打开一组 Lua 标准库，绑定宿主 API，并初始化资源管理器。每个加载脚本被创建为 `lua_script_instance_t`，拥有独立 `_ENV`、registry-owned `self` 表、协程 thread 和生命周期回调引用，见 `Core/Src/lua_vm.c`。
+Lua VM 位于 runtime 核心。`lua_rt_init_state()` 创建 `lua_State`，打开一组 Lua 标准库，绑定宿主 API，并初始化资源管理器。每个加载脚本被创建为 `lua_script_instance_t`，拥有独立 `_ENV`、带五个默认节点的 registry-owned `self`、协程 thread、UI owner 和生命周期回调引用，见 `Core/Src/lua_vm.c`。
 
 游戏逻辑以 Lua 生命周期函数运行。脚本 chunk 被加载并执行后，runtime 缓存 `init`、`final`、`fixed_update`、`update`、`late_update`、`on_message`、`on_input`、`on_reload` 等函数引用。`lua_update_task()` 根据 10ms runtime period、固定步长 accumulator、输入队列和消息队列推进调度。
 
 输入、渲染、音频、存档与 Lua/runtime 的关系如下：
 
-- 输入：GT911 触摸由 `Core/APPS/LVGL/port/lv_port_indev.c` 注册为 LVGL pointer indev。Lua UI 控件的 LVGL 事件回调会调用 `lua_post_input()` 入队，例如 `ui.button` 和 `ui.slider`，然后 runtime 在 `LUA_SCHED_INPUT` 阶段调用 `on_input(self, action_id, action)`。
-- 渲染：LVGL 显示移植在 `Core/APPS/LVGL/port/lv_port_disp.c`，使用 LTDC + 双缓冲 + VBlank flush。Lua 通过 `lua_port.c` 暴露的 `ui.button`、`ui.slider`、`ui.image` 创建 LVGL 对象，渲染由 LVGL/LTDC 链路完成。
+- 输入：GT911 触摸由 `Core/APPS/LVGL/port/lv_port_indev.c` 注册为 LVGL pointer indev。Lua button 的 LVGL 事件回调通过 owner 定向输入队列投递，然后 runtime 在 `LUA_SCHED_INPUT` 阶段调用对应实例的 `on_input(self, action_id, action)`。
+- 渲染：LVGL 显示移植在 `Core/APPS/LVGL/port/lv_port_disp.c`，使用 LTDC + 双缓冲 + VBlank flush。Lua 通过 `lua_port.c` 暴露的 `ui.label`、`ui.button`、`ui.image` 在应用专属根容器创建 LVGL 对象，渲染由 LVGL/LTDC 链路完成。
 - 音频：`Core/Cart/xhgc_cart.h` 定义了 `XHGC_RES_SOUND` 资源类型，但当前未找到 Lua 音频模块、音频调度器或 runtime 音频 API。音频系统与 Lua 层的交互为“未确认”。
 - 存档：当前确认的持久化路径是 SD/FatFs 读取 cart 和 Lua bytecode 文件。未找到 Lua 层 save/KV/storage API；`Docs/display/launcher_action_hints.md` 和 launcher 注释提到 favorite/KV 为未来存储层。Lua 存档能力为“未确认”。
 
@@ -97,7 +97,7 @@ flowchart TD
 | Lua Runtime Controller | Lua 启停请求状态机 | `Core/APPS/TASK/lua_runtime_task.c` | 已确认 | 默认 cart 路径为 `0:/cart.bin`；停止时调用 `lua_shutdown()`。 |
 | Lua Runtime / VM | Lua state、脚本实例、生命周期调度、cart/file/embedded boot 加载 | `Core/Src/lua_vm.c`、`Core/Inc/lua_vm.h` | 已确认 | 支持最多 `LUA_RT_MAX_INSTANCES` 个实例，默认 4。 |
 | Lua Port Bindings | 绑定 GPIO/PWM/TIM/RNG/CRC/delay/UI 到 Lua 全局环境 | `Core/LuaPort/lua_port.c` | 已确认 | 创建全局 `gpio`、`pwm`、`tim`、`rng`、`crc`、`ui`、`delay`。 |
-| Lua UI Widgets | Lua 创建 LVGL button/slider/image，并向 runtime 派发输入 | `Core/LuaPort/modules/lua_ui_button.c`、`lua_ui_slider.c`、`lua_ui_image.c` | 已确认 | `ui.image` 经资源管理器加载 cart 图片。 |
+| Lua UI Widgets | Lua 创建 LVGL label/button/image，统一返回 owner 约束的 full userdata handle | `Core/LuaPort/lua_ui.c`、`Core/LuaPort/modules/lua_ui_label.c`、`lua_ui_button.c`、`lua_ui_image.c` | 已确认 | `ui.image` 经资源管理器加载 cart 图片。 |
 | Cart Header Loader | 解析 XHGC Header、slot table、MANF、INDEX/DATA 文件 | `Core/Cart/xhgc_cart.c`、`Core/Cart/xhgc_cart.h` | 已确认 | 校验 magic、header version、header size、header CRC。 |
 | Launcher BIN Reader | 快速读取标题、预览图和 Header 概要 | `Core/Cart/cart_bin.c`、`Core/Cart/cart_bin.h` | 已确认 | 预览图从固定 `0x1000` 读取，而非通过 slot0 查找。 |
 | Resource Index | 加载 XHGCIDX2，建立路径到 DATA 偏移的元数据表 | `Core/Cart/cart_index.c`、`Core/Cart/cart_index.h` | 已确认 | 线性查找 path_hash + path 字符串。 |
@@ -170,14 +170,14 @@ cart entry 选择：
 ### 输入进入游戏逻辑
 
 1. LVGL 触摸输入由 `lv_port_indev.c` 从 GT911 读取，送入 LVGL。
-2. Lua UI button/slider 在 LVGL 事件回调中构造 `LuaInputAction` 并调用 `lua_post_input()`。
-3. `lua_post_input()` 将事件写入固定容量环形队列。
-4. `lua_rt_drive_scheduler()` 在 `LUA_SCHED_INPUT` 阶段逐个 input event 派发给已初始化实例的 `on_input(self, action_id, action)`。
+2. Lua button 在 LVGL 事件回调中构造 `LuaInputAction` 并调用 `lua_post_input_for_owner()`。
+3. 事件连同 owner ID 和 generation 写入固定容量环形队列。
+4. `lua_rt_drive_scheduler()` 在 `LUA_SCHED_INPUT` 阶段只向匹配 owner 的实例派发 `on_input(self, action_id, action)`。
 
 ### 游戏逻辑驱动渲染
 
-1. Lua 脚本通过 `ui.button()`、`ui.slider()`、`ui.image()` 创建 LVGL 对象。
-2. 脚本通过 `ui.patch(self, id, patch)` 修改已有 UI 对象。
+1. Lua 脚本通过 `ui.label()`、`ui.button()`、`ui.image()` 创建 LVGL 对象并得到安全 handle。
+2. 脚本通过 `ui.patch(handle, properties)` 修改已有 UI 对象。
 3. LVGL 对象绘制由 `lvgl_task_handler()`/LVGL timer 机制推进。
 4. `lv_port_disp.c` 的 `disp_flush()` 等待 VSync 后将 LTDC Layer1 地址切到当前 LVGL render buffer，并调用 `lv_display_flush_ready()`。
 
@@ -257,11 +257,10 @@ static const char *const k_lifecycle_names[LUA_LIFECYCLE_COUNT] = {
 | `on_input(self, action_id, action)` | 已确认 | 已确认 | 已确认 | `lua_post_input()` 入队，`LUA_SCHED_INPUT` 派发。 |
 | `on_reload(self)` | 已确认 | 已确认 | 已确认 | `lua_reload()` 重新加载实例后调用 `LUA_LIFECYCLE_RELOAD`；要求当前无 entry thread 且 scheduler idle。 |
 
-兼容性说明：
+回调规则：
 
-- 如果没有 `init`，但存在 `start`，`lua_rt_cache_callbacks()` 会把 `start` 作为 init，并设置 `legacy_callbacks = true`。
-- legacy 模式下，`init/start` 和 `update` 不传 `self`，见 `lua_rt_begin_lifecycle()` 中的 `legacy_no_self` 判断。
 - 缺失回调会被跳过。`init` 缺失时实例会被标记为 initialized。
+- 所有已注册生命周期回调都接收同一个实例 `self`。
 - `final` 使用 `lua_rt_call_direct()` 直接调用，不走协程 scheduler。
 
 已确认生命周期顺序图：
@@ -546,8 +545,8 @@ flowchart TD
 
 ### 释放机制
 
-- `ui.image` userdata `__gc` 或 `lua_ui_delete_children()` 会调用 `lua_ui_image_delete()`。
-- `lua_ui_image_delete()` 删除 LVGL image 对象，并对持有的 resource handle 调用 `res_release()`。
+- 应用 owner 删除根容器或对象单独收到 `LV_EVENT_DELETE` 时，统一 handle 回调立即使 userdata 失效。
+- image handle 的模块清理回调对持有的 resource handle 调用 `res_release()`。
 - `res_release()` refcount 归零后把状态设为 `RES_READY_UNUSED`。
 - `lua_shutdown()` 最后调用 `res_scene_reset()`，重置 scene lifetime 资源和 app arena。
 
@@ -574,7 +573,7 @@ local img, err = ui.image({
 
 - `src` 必须是合法 cart 相对路径。
 - 当前只支持 BGRA8888 图片。
-- `ui.patch()` 不支持修改 image `src`；如果 patch table 包含 `src`，返回错误。
+- `ui.patch(image_handle, properties)` 支持替换 image `src`，并保持同一个 Lua handle。
 
 未确认点：
 
@@ -704,8 +703,9 @@ flowchart TD
 - `Core/LuaPort/resource_manager.c`
 - `Core/LuaPort/lua_cart_resource_cache.h`
 - `Core/LuaPort/lua_cart_resource_cache.c`
+- `Core/LuaPort/lua_ui.c`
+- `Core/LuaPort/modules/lua_ui_label.c`
 - `Core/LuaPort/modules/lua_ui_button.c`
-- `Core/LuaPort/modules/lua_ui_slider.c`
 - `Core/LuaPort/modules/lua_ui_image.c`
 - `Core/APPS/LVGL/port/lv_port_disp.c`
 - `Core/APPS/LVGL/port/lv_port_indev.c`

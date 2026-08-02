@@ -195,7 +195,7 @@ Lua cart 图片资源使用 `APP_ARENA_REST` 中的资源区作为 scene 资源 
 -   第一版不启用 MDMA、LRU、eviction、异步加载、压缩资源或 tile streaming。
 -   `ui.image()` Drawable 引用对应资源块，并维护引用计数。
 -   Drawable 销毁后释放引用；引用计数归零只标记为未使用，不释放 arena 中间块。
--   场景结束时，宿主先销毁 `self.children`，再统一 reset scene arena 并让旧资源 handle 失效。
+-   场景结束时，宿主按应用 owner 销毁专属 UI 根容器，再统一 reset scene arena 并让旧资源 handle 失效；该过程不依赖 Lua table 内容。
 
 ------------------------------------------------------------------------
 

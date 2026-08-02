@@ -5,6 +5,7 @@
 #include "lua.h"
 #include "lauxlib.h"
 #include "lualib.h"
+#include "lua_app_instance.h"
 #include "luavm_platform.h"
 
 typedef struct {
@@ -17,8 +18,9 @@ static void print_usage(const char *argv0)
     fprintf(stderr,
             "Usage:\n"
             "  %s --compile input.lua output.luac\n"
-            "  %s --check script.lua\n",
-            argv0, argv0);
+            "  %s --check script.lua\n"
+            "  %s --self-test\n",
+            argv0, argv0, argv0);
 }
 
 static int dump_writer(lua_State *L, const void *data, size_t size, void *ud)
@@ -161,6 +163,11 @@ static int check_lua(const char *script_path)
     }
 
     lua_newtable(L);
+    if (!LuaAppInstance_CreateDefaultTables(L, -1)) {
+        fprintf(stderr, "luavm: failed to initialize self\n");
+        lua_close(L);
+        return 1;
+    }
     int self_ref = luaL_ref(L, LUA_REGISTRYINDEX);
 
     int failed = 0;
@@ -176,6 +183,64 @@ static int check_lua(const char *script_path)
     return failed ? 1 : 0;
 }
 
+static int self_tables_test(void)
+{
+    static const char *const fields[] = {
+        "state", "ui", "assets", "timers", "services", NULL
+    };
+    lua_State *L = luavm_newstate();
+    if (L == NULL) return 1;
+
+    lua_newtable(L);
+    if (!LuaAppInstance_CreateDefaultTables(L, -1)) {
+        lua_close(L);
+        return 1;
+    }
+    int first = lua_gettop(L);
+    lua_newtable(L);
+    if (!LuaAppInstance_CreateDefaultTables(L, -1)) {
+        lua_close(L);
+        return 1;
+    }
+    int second = lua_gettop(L);
+
+    for (const char *const *field = fields; *field != NULL; ++field) {
+        lua_getfield(L, first, *field);
+        lua_getfield(L, second, *field);
+        if (!lua_istable(L, -1) || !lua_istable(L, -2) ||
+            lua_rawequal(L, -1, -2)) {
+            fprintf(stderr, "luavm: self table test failed for '%s'\n", *field);
+            lua_close(L);
+            return 1;
+        }
+        lua_pop(L, 2);
+
+        for (const char *const *other = field + 1; *other != NULL; ++other) {
+            lua_getfield(L, first, *field);
+            lua_getfield(L, first, *other);
+            if (lua_rawequal(L, -1, -2)) {
+                fprintf(stderr,
+                        "luavm: self fields '%s' and '%s' share a table\n",
+                        *field, *other);
+                lua_close(L);
+                return 1;
+            }
+            lua_pop(L, 2);
+        }
+    }
+
+    lua_getfield(L, first, "children");
+    int has_unexpected_field = !lua_isnil(L, -1);
+    lua_pop(L, 1);
+    lua_close(L);
+    if (has_unexpected_field) {
+        fprintf(stderr, "luavm: unexpected self field\n");
+        return 1;
+    }
+    puts("luavm: self table test passed");
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     if (argc == 4 && strcmp(argv[1], "--compile") == 0) {
@@ -184,6 +249,10 @@ int main(int argc, char **argv)
 
     if (argc == 3 && strcmp(argv[1], "--check") == 0) {
         return check_lua(argv[2]);
+    }
+
+    if (argc == 2 && strcmp(argv[1], "--self-test") == 0) {
+        return self_tables_test();
     }
 
     print_usage(argv[0]);
