@@ -12,10 +12,11 @@ typedef struct {
 } lua_ui_button_t;
 
 static const char* const k_create_properties[] = {
-    "id", "text", "rect", "hidden", "input", "style",
+    "id", "parent", "text", "rect", "hidden", "input", "style",
+    "enabled", "selected", "opacity",
 };
 static const char* const k_patch_properties[] = {
-    "text", "rect", "hidden", "style",
+    "text", "rect", "hidden", "style", "enabled", "selected", "opacity",
 };
 static const char* const k_style_properties[] = {
     "bg", "bg_alpha", "text", "border", "radius",
@@ -207,7 +208,9 @@ static bool button_apply(lua_State* L,
   if (!lua_ui_apply_rect(L, properties_idx, button->handle.object,
                          0, 0, default_w, default_h, error, error_size) ||
       !lua_ui_apply_hidden(L, properties_idx, button->handle.object,
-                           error, error_size)) {
+                           error, error_size) ||
+      !lua_ui_apply_common_state(L, properties_idx, button->handle.object,
+                                 error, error_size)) {
     return false;
   }
   if (!button_apply_style(L, button, properties_idx, error, error_size)) {
@@ -243,7 +246,7 @@ static void button_event_cb(lv_event_t* event) {
                     lv_event_get_code(event) == LV_EVENT_CLICKED;
   action.value = action.pressed ? 1.0f : 0.0f;
   (void)lua_post_input_for_owner(button->handle.owner_id,
-                                 button->handle.generation,
+                                 button->handle.owner_generation,
                                  button->input_id, &action);
 }
 
@@ -252,10 +255,8 @@ static int button_create(lua_State* L) {
   if (!lua_istable(L, 2)) {
     return lua_ui_push_error(L, "ui.button expects a properties table");
   }
-  lv_obj_t* root = lua_ui_owner_root(L);
-  if (!root) {
-    return lua_ui_push_error(L, "ui.button requires an active application owner");
-  }
+  lv_obj_t* root = lua_ui_resolve_parent(L, 2, error, sizeof(error));
+  if (!root) return lua_ui_push_error(L, error);
 
   lua_ui_button_t* button = (lua_ui_button_t*)lua_ui_handle_new(
       L, sizeof(*button), LUA_UI_OBJECT_BUTTON);

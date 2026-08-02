@@ -24,6 +24,7 @@
 #endif
 
 #include "ff.h"
+#include <stdbool.h>
 #include "ff_gen_drv.h"
 #include "sd_diskio.h" /* defines SD_Driver as external */
 
@@ -41,6 +42,7 @@ void MX_FATFS_Init(void);
 /* USER CODE BEGIN Prototypes */
 FRESULT SD_FATFS_Mount(void);
 void SD_FATFS_InvalidateMount(void);
+bool SD_FATFS_IsMounted(void);
 
 /* USER CODE END Prototypes */
 #ifdef __cplusplus

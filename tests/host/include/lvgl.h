@@ -23,6 +23,8 @@ typedef uint32_t lv_color_t;
 #define LV_PCT(value) (value)
 #define LV_PART_MAIN 0
 #define LV_STATE_DEFAULT 0
+#define LV_STATE_DISABLED (1u << 0)
+#define LV_STATE_CHECKED (1u << 1)
 
 struct lv_event_dsc_t {
   lv_event_cb_t callback;
@@ -68,6 +70,9 @@ void lv_obj_set_style_text_color(lv_obj_t* object, lv_color_t color, int32_t sel
 void lv_obj_set_style_radius(lv_obj_t* object, int32_t radius, int32_t selector);
 void lv_obj_set_style_border_color(lv_obj_t* object, lv_color_t color, int32_t selector);
 void lv_obj_set_style_border_width(lv_obj_t* object, int32_t width, int32_t selector);
+void lv_obj_set_style_opa(lv_obj_t* object, lv_opa_t opacity, int32_t selector);
+void lv_obj_add_state(lv_obj_t* object, uint32_t state);
+void lv_obj_remove_state(lv_obj_t* object, uint32_t state);
 lv_color_t lv_color_hex(uint32_t color);
 lv_event_dsc_t* lv_obj_add_event_cb(lv_obj_t* object,
                                     lv_event_cb_t callback,

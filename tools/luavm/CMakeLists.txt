@@ -55,7 +55,37 @@ add_executable(lua_ui_owner_test
         ${CMAKE_CURRENT_LIST_DIR}/../../Core/LuaPort/lua_ui.c
         ${CMAKE_CURRENT_LIST_DIR}/../../Core/LuaPort/modules/lua_ui_label.c
         ${CMAKE_CURRENT_LIST_DIR}/../../Core/LuaPort/modules/lua_ui_button.c
+        ${CMAKE_CURRENT_LIST_DIR}/../../Core/LuaPort/modules/lua_ui_container.c
         ${LUAVM_LUA_SOURCES}
+)
+
+add_executable(lua_crc_test
+        ${CMAKE_CURRENT_LIST_DIR}/../../tests/host/lua_crc_test.c
+        ${CMAKE_CURRENT_LIST_DIR}/../../Core/LuaPort/modules/lua_crc.c
+        ${LUAVM_LUA_SOURCES}
+)
+add_executable(lua_foundation_owner_test
+        ${CMAKE_CURRENT_LIST_DIR}/../../tests/host/lua_foundation_owner_test.c
+        ${CMAKE_CURRENT_LIST_DIR}/../../Core/LuaPort/lua_foundation.c
+        ${LUAVM_LUA_SOURCES}
+)
+add_executable(lua_runtime_task_test
+        ${CMAKE_CURRENT_LIST_DIR}/../../tests/lua_runtime_task_test.c
+        ${CMAKE_CURRENT_LIST_DIR}/../../Core/APPS/TASK/lua_runtime_task.c
+)
+target_include_directories(lua_runtime_task_test PRIVATE
+        ${CMAKE_CURRENT_LIST_DIR}/../../Core/APPS/TASK
+        ${CMAKE_CURRENT_LIST_DIR}/../../Core/LuaPort
+        ${CMAKE_CURRENT_LIST_DIR}/../../Core/Inc
+)
+target_include_directories(lua_crc_test PRIVATE
+        ${CMAKE_CURRENT_LIST_DIR}/../../tests/stubs
+        ${CMAKE_CURRENT_LIST_DIR}/../../Core/Inc
+        ${LUA_SRC_DIR}
+)
+target_include_directories(lua_foundation_owner_test PRIVATE
+        ${CMAKE_CURRENT_LIST_DIR}/../../Core/LuaPort
+        ${LUA_SRC_DIR}
 )
 
 target_compile_definitions(luavm PRIVATE LUAVM_HOST=1)
@@ -72,7 +102,7 @@ target_include_directories(lua_ui_owner_test PRIVATE
         ${LUA_SRC_DIR}
 )
 
-set_target_properties(luavm lua_ui_owner_test PROPERTIES
+set_target_properties(luavm lua_ui_owner_test lua_crc_test lua_foundation_owner_test lua_runtime_task_test PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
 )
 
@@ -88,4 +118,9 @@ if(MSVC)
 else()
     target_compile_options(lua_ui_owner_test PRIVATE -Wall -Wextra -Werror)
     target_link_libraries(lua_ui_owner_test PRIVATE m)
+    target_compile_options(lua_crc_test PRIVATE -Wall -Wextra -Werror)
+    target_link_libraries(lua_crc_test PRIVATE m)
+    target_compile_options(lua_foundation_owner_test PRIVATE -Wall -Wextra -Werror)
+    target_link_libraries(lua_foundation_owner_test PRIVATE m)
+    target_compile_options(lua_runtime_task_test PRIVATE -Wall -Wextra -Werror)
 endif()

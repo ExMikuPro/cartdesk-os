@@ -15,6 +15,7 @@ typedef struct {
   uint32_t owner_id;
   uint32_t generation;
   lv_obj_t* root;
+  lua_ui_handle_t* root_handle;
   lua_ui_handle_t* handles;
   bool active;
   bool destroying;
@@ -54,7 +55,7 @@ static lua_ui_owner_t* find_free_owner(void) {
 static void detach_handle(lua_ui_handle_t* handle) {
   if (!handle || !handle->registered) return;
   lua_ui_owner_t* owner =
-      find_owner(handle->vm, handle->owner_id, handle->generation);
+      find_owner(handle->vm, handle->owner_id, handle->owner_generation);
   if (owner) {
     lua_ui_handle_t** cursor = &owner->handles;
     while (*cursor) {
@@ -93,7 +94,10 @@ static void handle_delete_event_cb(lv_event_t* event) {
 
 static void owner_root_delete_event_cb(lv_event_t* event) {
   lua_ui_owner_t* owner = (lua_ui_owner_t*)lv_event_get_user_data(event);
-  if (owner) owner->root = NULL;
+  if (owner) {
+    owner->root = NULL;
+    owner->root_handle = NULL;
+  }
 }
 
 static int handle_gc(lua_State* L) {
@@ -204,7 +208,8 @@ lua_ui_handle_t* lua_ui_handle_new(lua_State* L,
   memset(handle, 0, userdata_size);
   handle->vm = g_current_owner->vm;
   handle->owner_id = g_current_owner->owner_id;
-  handle->generation = g_current_owner->generation;
+  handle->owner_generation = g_current_owner->generation;
+  handle->generation = 1u;
   handle->object_type = (uint16_t)object_type;
   handle->lua_ref = LUA_NOREF;
   luaL_getmetatable(L, LUA_UI_HANDLE_MT);
@@ -220,7 +225,7 @@ bool lua_ui_handle_register(lua_State* L,
   if (!L || !handle || !object || !g_current_owner ||
       handle->vm != g_current_owner->vm ||
       handle->owner_id != g_current_owner->owner_id ||
-      handle->generation != g_current_owner->generation) {
+      handle->owner_generation != g_current_owner->generation) {
     return false;
   }
 
@@ -267,8 +272,8 @@ lua_ui_handle_t* lua_ui_handle_validate(lua_State* L,
   }
   if (!g_current_owner || handle->vm != g_current_owner->vm ||
       handle->owner_id != g_current_owner->owner_id ||
-      handle->generation != g_current_owner->generation ||
-      !find_owner(handle->vm, handle->owner_id, handle->generation)) {
+      handle->owner_generation != g_current_owner->generation ||
+      !find_owner(handle->vm, handle->owner_id, handle->owner_generation)) {
     set_error(error, error_size, "UI handle belongs to another application");
     return NULL;
   }
@@ -277,11 +282,39 @@ lua_ui_handle_t* lua_ui_handle_validate(lua_State* L,
 
 const char* lua_ui_object_type_name(uint16_t object_type) {
   switch ((lua_ui_object_type_t)object_type) {
+    case LUA_UI_OBJECT_ROOT: return "root";
+    case LUA_UI_OBJECT_CONTAINER: return "container";
     case LUA_UI_OBJECT_LABEL: return "label";
     case LUA_UI_OBJECT_BUTTON: return "button";
     case LUA_UI_OBJECT_IMAGE: return "image";
     default: return "unknown";
   }
+}
+
+lv_obj_t* lua_ui_resolve_parent(lua_State* L,
+                                int table_idx,
+                                char* error,
+                                size_t error_size) {
+  table_idx = lua_absindex(L, table_idx);
+  lua_getfield(L, table_idx, "parent");
+  if (lua_isnil(L, -1)) {
+    lua_pop(L, 1);
+    lv_obj_t* root = lua_ui_owner_root(L);
+    if (!root) set_error(error, error_size,
+                         "UI creation requires an active application owner");
+    return root;
+  }
+  lua_ui_handle_t* parent = lua_ui_handle_validate(L, -1, error, error_size);
+  lua_pop(L, 1);
+  if (!parent) return NULL;
+  if (parent->object_type != LUA_UI_OBJECT_ROOT &&
+      parent->object_type != LUA_UI_OBJECT_CONTAINER &&
+      parent->object_type != LUA_UI_OBJECT_BUTTON) {
+    set_error(error, error_size,
+              "property 'parent' must be a root, container, or button handle");
+    return NULL;
+  }
+  return parent->object;
 }
 
 static bool property_allowed(const char* property,
@@ -413,6 +446,51 @@ bool lua_ui_apply_hidden(lua_State* L,
   return true;
 }
 
+bool lua_ui_apply_common_state(lua_State* L,
+                               int table_idx,
+                               lv_obj_t* object,
+                               char* error,
+                               size_t error_size) {
+  table_idx = lua_absindex(L, table_idx);
+  const char* keys[] = {"enabled", "selected"};
+  for (size_t i = 0; i < 2u; ++i) {
+    lua_getfield(L, table_idx, keys[i]);
+    if (!lua_isnil(L, -1)) {
+      if (!lua_isboolean(L, -1)) {
+        lua_pop(L, 1);
+        set_error(error, error_size, "property '%s' expects boolean", keys[i]);
+        return false;
+      }
+      bool value = lua_toboolean(L, -1);
+      if (i == 0u) {
+        if (value) lv_obj_remove_state(object, LV_STATE_DISABLED);
+        else lv_obj_add_state(object, LV_STATE_DISABLED);
+      } else {
+        if (value) lv_obj_add_state(object, LV_STATE_CHECKED);
+        else lv_obj_remove_state(object, LV_STATE_CHECKED);
+      }
+    }
+    lua_pop(L, 1);
+  }
+  lua_getfield(L, table_idx, "opacity");
+  if (!lua_isnil(L, -1)) {
+    if (!lua_isinteger(L, -1)) {
+      lua_pop(L, 1);
+      set_error(error, error_size, "property 'opacity' expects integer");
+      return false;
+    }
+    lua_Integer opacity = lua_tointeger(L, -1);
+    if (opacity < 0 || opacity > 255) {
+      lua_pop(L, 1);
+      set_error(error, error_size, "property 'opacity' expects 0..255");
+      return false;
+    }
+    lv_obj_set_style_opa(object, (lv_opa_t)opacity, 0);
+  }
+  lua_pop(L, 1);
+  return true;
+}
+
 bool lua_ui_read_optional_string(lua_State* L,
                                  int table_idx,
                                  const char* key,
@@ -472,6 +550,9 @@ int lua_ui_patch(lua_State* L) {
 
   bool ok = false;
   switch ((lua_ui_object_type_t)handle->object_type) {
+    case LUA_UI_OBJECT_CONTAINER:
+      ok = lua_ui_container_patch(L, handle, 2, error, sizeof(error));
+      break;
     case LUA_UI_OBJECT_LABEL:
       ok = lua_ui_label_patch(L, handle, 2, error, sizeof(error));
       break;
@@ -486,6 +567,39 @@ int lua_ui_patch(lua_State* L) {
       break;
   }
   if (!ok) return lua_ui_push_error(L, error);
+  lua_pushboolean(L, 1);
+  return 1;
+}
+
+int lua_ui_root(lua_State* L) {
+  if (lua_gettop(L) != 0)
+    return lua_ui_push_error(L, "ui.root expects no arguments");
+  if (!g_current_owner || !g_current_owner->root)
+    return lua_ui_push_error(L, "ui.root requires an active application owner");
+  if (g_current_owner->root_handle) {
+    lua_rawgeti(L, LUA_REGISTRYINDEX, g_current_owner->root_handle->lua_ref);
+    return 1;
+  }
+  lua_ui_handle_t* handle = lua_ui_handle_new(
+      L, sizeof(*handle), LUA_UI_OBJECT_ROOT);
+  if (!handle) return lua_ui_push_error(L, "failed to allocate root handle");
+  int index = lua_gettop(L);
+  (void)snprintf(handle->debug_id, sizeof(handle->debug_id), "root");
+  if (!lua_ui_handle_register(L, index, handle, g_current_owner->root, NULL))
+    return lua_ui_push_error(L, "failed to register root handle");
+  g_current_owner->root_handle = handle;
+  return 1;
+}
+
+int lua_ui_delete(lua_State* L) {
+  char error[LUA_UI_ERROR_MAX];
+  if (lua_gettop(L) != 1)
+    return lua_ui_push_error(L, "ui.delete expects a handle");
+  lua_ui_handle_t* handle = lua_ui_handle_validate(L, 1, error, sizeof(error));
+  if (!handle) return lua_ui_push_error(L, error);
+  if (handle->object_type == LUA_UI_OBJECT_ROOT)
+    return lua_ui_push_error(L, "application root cannot be deleted");
+  lua_ui_handle_delete(handle);
   lua_pushboolean(L, 1);
   return 1;
 }

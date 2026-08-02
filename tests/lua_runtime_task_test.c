@@ -12,6 +12,8 @@ static int s_stub_shutdown_calls = 0;
 static int s_stub_update_calls = 0;
 static char s_stub_last_init_path[256];
 
+void CartLog_Process(void) {}
+
 int lua_init_from_cart(const char *cart_path)
 {
     s_stub_init_calls += 1;
@@ -98,10 +100,16 @@ int main(void)
     assert(s_stub_update_calls == 1);
     LuaRuntimeTask_Process(110u);
     assert(s_stub_update_calls == 2);
+    assert(LuaRuntimeTask_RequestRestart());
+    assert(LuaRuntimeTask_GetState() == LUA_RUNTIME_STATE_RESTART_REQUESTED);
+    LuaRuntimeTask_Process(111u);
+    assert(LuaRuntimeTask_IsRunning());
+    assert(s_stub_shutdown_calls == 1);
+    assert(s_stub_init_calls == 2);
     LuaRuntimeTask_RequestStop();
     assert(LuaRuntimeTask_GetState() == LUA_RUNTIME_STATE_STOP_REQUESTED);
     drive_task_until_idle(115u);
-    assert(s_stub_shutdown_calls == 1);
+    assert(s_stub_shutdown_calls == 2);
     assert(LuaRuntimeTask_IsIdle());
 
     reset_stub_state();

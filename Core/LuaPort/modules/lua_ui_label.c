@@ -8,10 +8,10 @@ typedef struct {
 } lua_ui_label_t;
 
 static const char* const k_create_properties[] = {
-    "id", "text", "rect", "hidden",
+    "id", "parent", "text", "rect", "hidden", "enabled", "selected", "opacity",
 };
 static const char* const k_patch_properties[] = {
-    "text", "rect", "hidden",
+    "text", "rect", "hidden", "enabled", "selected", "opacity",
 };
 
 static bool label_apply(lua_State* L,
@@ -54,7 +54,9 @@ static bool label_apply(lua_State* L,
   return lua_ui_apply_rect(L, properties_idx, label->handle.object,
                            0, 0, default_w, default_h, error, error_size) &&
          lua_ui_apply_hidden(L, properties_idx, label->handle.object,
-                             error, error_size);
+                             error, error_size) &&
+         lua_ui_apply_common_state(L, properties_idx, label->handle.object,
+                                   error, error_size);
 }
 
 static int label_create(lua_State* L) {
@@ -62,10 +64,8 @@ static int label_create(lua_State* L) {
   if (!lua_istable(L, 2)) {
     return lua_ui_push_error(L, "ui.label expects a properties table");
   }
-  lv_obj_t* root = lua_ui_owner_root(L);
-  if (!root) {
-    return lua_ui_push_error(L, "ui.label requires an active application owner");
-  }
+  lv_obj_t* root = lua_ui_resolve_parent(L, 2, error, sizeof(error));
+  if (!root) return lua_ui_push_error(L, error);
 
   lua_ui_label_t* label = (lua_ui_label_t*)lua_ui_handle_new(
       L, sizeof(*label), LUA_UI_OBJECT_LABEL);

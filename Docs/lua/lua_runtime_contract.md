@@ -17,7 +17,7 @@
 | `self.state` | 应用业务状态 |
 | `self.ui` | UI handle 引用 |
 | `self.assets` | 资源路径和资源 handle |
-| `self.timers` | 计时器 handle；当前只提供空 table |
+| `self.timers` | 保存 `timer.after/every` 返回的 timer handle |
 | `self.services` | 异步服务状态；当前只提供空 table |
 
 应用不需要初始化这些 table。`self.ui` 仅保存 Lua 引用，不决定底层对象所有权；

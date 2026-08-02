@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "lua_vm.h"
+#include "cart_log.h"
 
 #define LUA_RUNTIME_CART_PATH_MAX 256u
 #define LUA_RUNTIME_UPDATE_PERIOD_MS 10u
@@ -92,6 +93,8 @@ void LuaRuntimeTask_RequestStop(void)
 
         case LUA_RUNTIME_STATE_STARTING:
         case LUA_RUNTIME_STATE_RUNNING:
+        case LUA_RUNTIME_STATE_RESTART_REQUESTED:
+        case LUA_RUNTIME_STATE_RESTARTING:
         case LUA_RUNTIME_STATE_ERROR:
             s_state = LUA_RUNTIME_STATE_STOP_REQUESTED;
             return;
@@ -103,13 +106,25 @@ void LuaRuntimeTask_RequestStop(void)
     }
 }
 
+bool LuaRuntimeTask_RequestRestart(void)
+{
+    if (s_state != LUA_RUNTIME_STATE_RUNNING || s_cart_path[0] == '\0') {
+        record_error(LUA_RUNTIME_ERROR_BUSY, "restart rejected");
+        return false;
+    }
+    s_state = LUA_RUNTIME_STATE_RESTART_REQUESTED;
+    return true;
+}
+
 void LuaRuntimeTask_Process(uint32_t now_ms)
 {
     int init_rc;
+    CartLog_Process();
 
     switch (s_state) {
         case LUA_RUNTIME_STATE_IDLE:
         case LUA_RUNTIME_STATE_STARTING:
+        case LUA_RUNTIME_STATE_RESTARTING:
         case LUA_RUNTIME_STATE_STOPPING:
         case LUA_RUNTIME_STATE_ERROR:
             return;
@@ -132,6 +147,19 @@ void LuaRuntimeTask_Process(uint32_t now_ms)
                 lua_update_task();
                 s_next_update_ms = now_ms + LUA_RUNTIME_UPDATE_PERIOD_MS;
             }
+            return;
+
+        case LUA_RUNTIME_STATE_RESTART_REQUESTED:
+            s_state = LUA_RUNTIME_STATE_RESTARTING;
+            (void)lua_shutdown();
+            init_rc = lua_init_from_cart(s_cart_path);
+            if (init_rc != 0) {
+                record_error(LUA_RUNTIME_ERROR_INIT_FAILED, "restart failed");
+                s_state = LUA_RUNTIME_STATE_ERROR;
+                return;
+            }
+            s_next_update_ms = now_ms;
+            s_state = LUA_RUNTIME_STATE_RUNNING;
             return;
 
         case LUA_RUNTIME_STATE_STOP_REQUESTED:
@@ -185,6 +213,10 @@ const char *LuaRuntimeTask_GetStateName(LuaRuntimeState state)
             return "STARTING";
         case LUA_RUNTIME_STATE_RUNNING:
             return "RUNNING";
+        case LUA_RUNTIME_STATE_RESTART_REQUESTED:
+            return "RESTART_REQUESTED";
+        case LUA_RUNTIME_STATE_RESTARTING:
+            return "RESTARTING";
         case LUA_RUNTIME_STATE_STOP_REQUESTED:
             return "STOP_REQUESTED";
         case LUA_RUNTIME_STATE_STOPPING:

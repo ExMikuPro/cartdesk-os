@@ -96,7 +96,7 @@ flowchart TD
 | Launcher | 展示 cart 标题/预览图，处理启动和退出 | `Core/Screen/Page/ui_screen_launcher.c` | 已确认 | 点击第 0 个卡槽后调用 `LuaRuntimeTask_RequestStart("0:/cart.bin")`。 |
 | Lua Runtime Controller | Lua 启停请求状态机 | `Core/APPS/TASK/lua_runtime_task.c` | 已确认 | 默认 cart 路径为 `0:/cart.bin`；停止时调用 `lua_shutdown()`。 |
 | Lua Runtime / VM | Lua state、脚本实例、生命周期调度、cart/file/embedded boot 加载 | `Core/Src/lua_vm.c`、`Core/Inc/lua_vm.h` | 已确认 | 支持最多 `LUA_RT_MAX_INSTANCES` 个实例，默认 4。 |
-| Lua Port Bindings | 绑定 GPIO/PWM/TIM/RNG/CRC/delay/UI 到 Lua 全局环境 | `Core/LuaPort/lua_port.c` | 已确认 | 创建全局 `gpio`、`pwm`、`tim`、`rng`、`crc`、`ui`、`delay`。 |
+| Lua Foundation Bindings | 绑定八个正式模块并发布只读代理 | `Core/LuaPort/lua_port.c` | 已确认 | 创建全局 `ui`、`assets`、`storage`、`timer`、`system`、`random`、`log`、`crc`。 |
 | Lua UI Widgets | Lua 创建 LVGL label/button/image，统一返回 owner 约束的 full userdata handle | `Core/LuaPort/lua_ui.c`、`Core/LuaPort/modules/lua_ui_label.c`、`lua_ui_button.c`、`lua_ui_image.c` | 已确认 | `ui.image` 经资源管理器加载 cart 图片。 |
 | Cart Header Loader | 解析 XHGC Header、slot table、MANF、INDEX/DATA 文件 | `Core/Cart/xhgc_cart.c`、`Core/Cart/xhgc_cart.h` | 已确认 | 校验 magic、header version、header size、header CRC。 |
 | Launcher BIN Reader | 快速读取标题、预览图和 Header 概要 | `Core/Cart/cart_bin.c`、`Core/Cart/cart_bin.h` | 已确认 | 预览图从固定 `0x1000` 读取，而非通过 slot0 查找。 |
@@ -224,7 +224,7 @@ sequenceDiagram
 
 未确认：
 
-- 未找到 Lua 层保存 API、KV storage API、save file 格式或 runtime 存档回调。
+- Lua `storage` 已提供按 cart ID 隔离的 pending KV，并用带 CRC 的临时文件提交到 QFlash littlefs；尚无独立存档生命周期回调。
 - launcher 注释和文档提到 favorite/KV 为未来存储层，当前未实现。
 
 ## 5. Lua VM 生命周期
@@ -491,7 +491,7 @@ flowchart TD
 - input、fixed_update、update、late_update、message 的顺序可从 `lua_rt_drive_scheduler()` 确认。
 - render/audio 不在 `lua_rt_drive_scheduler()` 内直接作为生命周期阶段出现。渲染由 Lua 创建/修改 LVGL 对象后交给 LVGL task 和 display flush；音频阶段未确认。
 - `final` 只在 `lua_shutdown()` 中确认调用，非普通帧循环的一部分。
-- cleanup 包括 `lua_rt_delete_instance_children()`、`res_scene_reset()`、registry unref、`lua_close()`。
+- cleanup 包括 Foundation/UI owner registry 清理、`res_scene_reset()`、registry unref、`lua_close()`。
 
 ## 8. 资源系统
 

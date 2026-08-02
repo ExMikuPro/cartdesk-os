@@ -353,16 +353,24 @@ add_library(lua_port STATIC
         ${LUA_PORT_DIR}/lua_cart_resource_cache.h
         ${LUA_PORT_DIR}/lua_port.c
         ${LUA_PORT_DIR}/lua_ui.c
+        ${LUA_PORT_DIR}/lua_foundation.c
+        ${LUA_PORT_DIR}/lua_foundation.h
+        ${LUA_PORT_DIR}/lua_foundation_platform.h
+        ${LUA_PORT_DIR}/lua_assets.h
+        ${LUA_PORT_DIR}/cart_log.c
+        ${LUA_PORT_DIR}/cart_log.h
         ${LUA_PORT_DIR}/resource_arena_owner.c
         ${LUA_PORT_DIR}/resource_arena_owner.h
         ${LUA_PORT_DIR}/resource_manager.c
         ${LUA_PORT_DIR}/resource_manager.h
-        ${LUA_PORT_DIR}/modules/lua_gpio.c
-        ${LUA_PORT_DIR}/modules/lua_pwm.c
-        ${LUA_PORT_DIR}/modules/lua_delay.c
-        ${LUA_PORT_DIR}/modules/lua_tim.c
-        ${LUA_PORT_DIR}/modules/lua_rng.c
+        ${LUA_PORT_DIR}/modules/lua_assets.c
         ${LUA_PORT_DIR}/modules/lua_crc.c
+        ${LUA_PORT_DIR}/modules/lua_log.c
+        ${LUA_PORT_DIR}/modules/lua_random.c
+        ${LUA_PORT_DIR}/modules/lua_storage.c
+        ${LUA_PORT_DIR}/modules/lua_system.c
+        ${LUA_PORT_DIR}/modules/lua_timer.c
+        ${LUA_PORT_DIR}/modules/lua_ui_container.c
         ${LUA_PORT_DIR}/modules/lua_ui_label.c
         ${LUA_PORT_DIR}/modules/lua_ui_button.c
         ${LUA_PORT_DIR}/modules/lua_ui_image.c
@@ -375,7 +383,7 @@ target_include_directories(lua_port PUBLIC
         ${DRIVER_DIR}/SDRAM
         ${FATFS_INCLUDES}
 )
-target_link_libraries(lua_port PUBLIC cartdesk_common lua lvgl cart_core drv_gpio mem_layout)
+target_link_libraries(lua_port PUBLIC cartdesk_common lua lvgl cart_core drv_misc drv_storage mem_layout)
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     target_compile_definitions(lua_port PRIVATE XHGC_RESOURCE_ARENA_OWNER_DEBUG_LOG=1)
@@ -453,10 +461,18 @@ endif()
 add_library(lua_runtime STATIC
         ${TASK_DIR}/lua_runtime_task.c
         ${TASK_DIR}/lua_runtime_task.h
+        ${TASK_DIR}/lua_foundation_platform.c
 )
 
 target_include_directories(lua_runtime PUBLIC ${TASK_DIR})
+target_include_directories(lua_runtime PRIVATE
+        ${PROJECT_ROOT}/USB_DEVICE/App
+        ${PROJECT_ROOT}/USB_DEVICE/Target
+        ${PROJECT_ROOT}/Middlewares/ST/STM32_USB_Device_Library/Core/Inc
+        ${PROJECT_ROOT}/Middlewares/ST/STM32_USB_Device_Library/Class/CDC/Inc
+)
 target_link_libraries(lua_runtime PUBLIC cartdesk_common lua_port)
+target_compile_definitions(lua_runtime PRIVATE CARTDESK_FIRMWARE_VERSION="0.1.0")
 
 # ==============================================================================
 # 目标 11: app_screen —— 应用层 UI 界面（启动器 / 缓存 / 预览）

@@ -1,10 +1,12 @@
 #include "lua_ui.h"
+#include "lauxlib.h"
 
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
 #include "resource_manager.h"
+#include "lua_assets.h"
 #include "xhgc_cart.h"
 
 #define UI_IMAGE_VIEW_ALIGN 32u
@@ -42,10 +44,11 @@ typedef struct {
 } loaded_image_t;
 
 static const char* const k_create_properties[] = {
-    "id", "src", "rect", "hidden", "region", "style",
+    "id", "parent", "src", "rect", "hidden", "region", "style",
+    "enabled", "selected", "opacity",
 };
 static const char* const k_patch_properties[] = {
-    "src", "rect", "hidden", "region", "style",
+    "src", "rect", "hidden", "region", "style", "enabled", "selected", "opacity",
 };
 static const char* const k_style_properties[] = {
     "alpha", "tint", "flip_x", "flip_y",
@@ -186,6 +189,36 @@ static bool load_image(const char* src,
       (uint64_t)resource->width * resource->height * loaded->bpp > resource->size) {
     res_release(loaded->resource);
     (void)snprintf(error, error_size, "invalid image resource");
+    return false;
+  }
+  loaded->pixels = (uint8_t*)resource->pixels;
+  loaded->size = resource->size;
+  loaded->width = resource->width;
+  loaded->height = resource->height;
+  loaded->format = resource->format;
+  return true;
+}
+
+static bool load_image_handle(lua_State* L, int index, loaded_image_t* loaded,
+                              char* error, size_t error_size) {
+  memset(loaded, 0, sizeof(*loaded));
+  const image_resource_t* resource = NULL;
+  const char* detail = NULL;
+  if (!lua_asset_image_acquire(L, index, &loaded->resource, &resource, &detail)) {
+    (void)snprintf(error, error_size, "%s", detail ? detail : "image asset failed");
+    return false;
+  }
+  lv_color_format_t ignored;
+  if (!image_format_info(resource->format, &ignored, &loaded->bpp)) {
+    res_release(loaded->resource);
+    (void)snprintf(error, error_size, "unsupported image format");
+    return false;
+  }
+  if (resource->width == 0u || resource->height == 0u ||
+      (uint64_t)resource->width * resource->height * loaded->bpp >
+          resource->size) {
+    res_release(loaded->resource);
+    (void)snprintf(error, error_size, "invalid image asset");
     return false;
   }
   loaded->pixels = (uint8_t*)resource->pixels;
@@ -418,11 +451,21 @@ static bool image_apply(lua_State* L,
 
   const char* src = NULL;
   bool src_present = false;
-  if (!lua_ui_read_optional_string(L, properties_idx, "src", &src,
-                                   &src_present, error, error_size)) {
-    return false;
+  properties_idx = lua_absindex(L, properties_idx);
+  lua_getfield(L, properties_idx, "src");
+  int src_index = lua_gettop(L);
+  if (!lua_isnil(L, src_index)) {
+    src_present = true;
+    if (lua_type(L, src_index) == LUA_TSTRING) src = lua_tostring(L, src_index);
+    else if (!luaL_testudata(L, src_index, LUA_ASSET_HANDLE_MT)) {
+      lua_pop(L, 1);
+      (void)snprintf(error, error_size,
+                     "property 'src' expects a path or image asset handle");
+      return false;
+    }
   }
   if (creating && !src_present) {
+    lua_pop(L, 1);
     (void)snprintf(error, error_size, "property 'src' is required");
     return false;
   }
@@ -430,7 +473,10 @@ static bool image_apply(lua_State* L,
   loaded_image_t loaded;
   bool source_changed = false;
   if (src_present) {
-    if (!load_image(src, &loaded, error, error_size)) return false;
+    bool loaded_ok = src ? load_image(src, &loaded, error, error_size)
+                         : load_image_handle(L, src_index, &loaded,
+                                             error, error_size);
+    if (!loaded_ok) { lua_pop(L, 1); return false; }
     source_changed = true;
     image->source_data = loaded.pixels;
     image->source_size = loaded.size;
@@ -439,6 +485,7 @@ static bool image_apply(lua_State* L,
     image->format = loaded.format;
     image->bpp = loaded.bpp;
   }
+  lua_pop(L, 1);
 
   bool region_present = false;
   if (!parse_region(L, properties_idx, image, source_changed, &region_present,
@@ -467,7 +514,9 @@ static bool image_apply(lua_State* L,
                          creating ? image->sh : 0,
                          error, error_size) ||
       !lua_ui_apply_hidden(L, properties_idx, image->handle.object,
-                           error, error_size)) {
+                           error, error_size) ||
+      !lua_ui_apply_common_state(L, properties_idx, image->handle.object,
+                                 error, error_size)) {
     if (source_changed) {
       res_release(loaded.resource);
       image->source_data = previous.source_data;
@@ -511,10 +560,8 @@ static int image_create(lua_State* L) {
   if (!lua_istable(L, 2)) {
     return lua_ui_push_error(L, "ui.image expects a properties table");
   }
-  lv_obj_t* root = lua_ui_owner_root(L);
-  if (!root) {
-    return lua_ui_push_error(L, "ui.image requires an active application owner");
-  }
+  lv_obj_t* root = lua_ui_resolve_parent(L, 2, error, sizeof(error));
+  if (!root) return lua_ui_push_error(L, error);
 
   lua_ui_image_t* image = (lua_ui_image_t*)lua_ui_handle_new(
       L, sizeof(*image), LUA_UI_OBJECT_IMAGE);

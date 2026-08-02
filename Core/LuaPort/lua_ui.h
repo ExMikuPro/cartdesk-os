@@ -17,7 +17,9 @@ extern "C" {
 #define LUA_UI_HANDLE_MT "cartdesk.ui_handle"
 
 typedef enum {
-  LUA_UI_OBJECT_LABEL = 1,
+  LUA_UI_OBJECT_ROOT = 1,
+  LUA_UI_OBJECT_CONTAINER,
+  LUA_UI_OBJECT_LABEL,
   LUA_UI_OBJECT_BUTTON,
   LUA_UI_OBJECT_IMAGE,
 } lua_ui_object_type_t;
@@ -33,6 +35,7 @@ struct lua_ui_handle {
   lv_obj_t* object;
   lua_State* vm;
   uint32_t owner_id;
+  uint32_t owner_generation;
   uint32_t generation;
   uint16_t object_type;
   bool alive;
@@ -46,6 +49,9 @@ struct lua_ui_handle {
 int luaopen_ui_label(lua_State* L);
 int luaopen_ui_button(lua_State* L);
 int luaopen_ui_image(lua_State* L);
+int luaopen_ui_container(lua_State* L);
+int lua_ui_root(lua_State* L);
+int lua_ui_delete(lua_State* L);
 
 void lua_ui_registry_init(void);
 bool lua_ui_owner_create(lua_State* L, uint32_t owner_id, uint32_t generation);
@@ -53,6 +59,10 @@ void lua_ui_owner_destroy(lua_State* L, uint32_t owner_id, uint32_t generation);
 void lua_ui_owner_enter(lua_State* L, uint32_t owner_id, uint32_t generation);
 void lua_ui_owner_leave(void);
 lv_obj_t* lua_ui_owner_root(lua_State* L);
+lv_obj_t* lua_ui_resolve_parent(lua_State* L,
+                                int table_idx,
+                                char* error,
+                                size_t error_size);
 
 lua_ui_handle_t* lua_ui_handle_new(lua_State* L,
                                    size_t userdata_size,
@@ -91,6 +101,11 @@ bool lua_ui_apply_hidden(lua_State* L,
                          lv_obj_t* object,
                          char* error,
                          size_t error_size);
+bool lua_ui_apply_common_state(lua_State* L,
+                               int table_idx,
+                               lv_obj_t* object,
+                               char* error,
+                               size_t error_size);
 bool lua_ui_read_optional_string(lua_State* L,
                                  int table_idx,
                                  const char* key,
@@ -119,6 +134,11 @@ bool lua_ui_image_patch(lua_State* L,
                         int properties_idx,
                         char* error,
                         size_t error_size);
+bool lua_ui_container_patch(lua_State* L,
+                            lua_ui_handle_t* handle,
+                            int properties_idx,
+                            char* error,
+                            size_t error_size);
 
 #ifdef __cplusplus
 }

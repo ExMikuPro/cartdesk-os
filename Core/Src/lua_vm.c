@@ -10,8 +10,11 @@
 #include "lualib.h"
 #include "ff.h"
 #include "fatfs.h"
+#include "cart_log.h"
 #include "lua_port.h"
 #include "lua_app_instance.h"
+#include "lua_foundation.h"
+#include "lua_foundation_platform.h"
 #include "lua_ui.h"
 #include "lua_vm_memory.h"
 #include "resource_manager.h"
@@ -106,25 +109,12 @@ __attribute__((weak))
 const char* lua_get_boot_script(size_t *out_len)
 {
     static const char kScript[] =
-    "-- PA0 input controls the onboard LED on PB1\n"
-    "local BUTTON_PIN = 5\n"
-    "local LED_PIN = 3\n"
-    "\n"
     "function init(self)\n"
-    "  self.state.pressed = false\n"
-    "  gpio.pinMode(BUTTON_PIN, gpio.INPUT_PULLUP)\n"
-    "  gpio.pinMode(LED_PIN, gpio.OUTPUT)\n"
-    "  gpio.digitalWrite(LED_PIN, gpio.LOW)\n"
+    "  self.state.started = true\n"
+    "  log.info('embedded application initialized')\n"
     "end\n"
-    "\n"
-    "function update(self, dt)\n"
-    "  self.state.pressed = gpio.digitalRead(BUTTON_PIN) == gpio.LOW\n"
-    "  gpio.digitalWrite(LED_PIN, self.state.pressed and gpio.HIGH or gpio.LOW)\n"
-    "end\n"
-    "\n"
-    "function final(self)\n"
-    "  gpio.digitalWrite(LED_PIN, gpio.LOW)\n"
-    "end\n";
+    "function update(self, dt) end\n"
+    "function final(self) log.info('embedded application final') end\n";
 
     if(out_len) *out_len = sizeof(kScript) - 1;
     return kScript;
@@ -185,6 +175,8 @@ typedef struct {
     bool finalized;
     uint32_t owner_id;
     uint32_t generation;
+    uint64_t cart_id;
+    char app_id[LUA_FOUNDATION_APP_ID_MAX + 1u];
     int env_ref;
     int self_ref;
     lua_State *thread;
@@ -221,6 +213,7 @@ static lua_script_instance_t g_instances[LUA_RT_MAX_INSTANCES];
 static size_t g_instance_count = 0;
 static uint32_t g_next_owner_id = 1u;
 static uint32_t g_next_generation = 1u;
+static uint64_t g_pending_cart_id = 0u;
 
 __attribute__((section(".ram_runtime"), aligned(32)))
 static lua_input_event_t g_input_queue[LUA_RT_INPUT_QUEUE_CAPACITY];
@@ -297,8 +290,13 @@ static int lua_rt_pcall(lua_State *L, int nargs, int nrets)
     if (rc != LUA_OK) {
         const char *err = lua_tostring(L, -1);
         if (!err) err = "(lua error: null)";
-        lua_rt_log(err);
-        lua_rt_log("\n");
+        lua_foundation_owner_view_t owner;
+        if (lua_foundation_current(L, &owner)) {
+            CartLog_Write(CART_LOG_ERROR, owner.app_id, err);
+        } else {
+            lua_rt_log(err);
+            lua_rt_log("\n");
+        }
         lua_pop(L, 1);
         return -1;
     }
@@ -474,6 +472,24 @@ static int lua_rt_create_instance_from_loaded(lua_script_source_t source,
         lua_rt_unref_instance(instance);
         lua_settop(g_L, stack_base);
         return -6;
+    }
+    instance->cart_id = source == LUA_SCRIPT_SOURCE_CART ? g_pending_cart_id : 0u;
+    if (instance->cart_id != 0u) {
+        (void)snprintf(instance->app_id, sizeof(instance->app_id),
+                       "%08lX%08lX", (unsigned long)(instance->cart_id >> 32),
+                       (unsigned long)instance->cart_id);
+    } else {
+        (void)snprintf(instance->app_id, sizeof(instance->app_id), "%s",
+                       source_path ? source_path : "local");
+    }
+    if (!lua_foundation_owner_create(g_L, instance->owner_id,
+                                     instance->generation, instance->cart_id,
+                                     instance->app_id)) {
+        lua_rt_log("failed to create Lua foundation owner\n");
+        lua_ui_owner_destroy(g_L, instance->owner_id, instance->generation);
+        lua_rt_unref_instance(instance);
+        lua_settop(g_L, stack_base);
+        return -7;
     }
     instance->thread = lua_newthread(g_L);
     instance->thread_ref = luaL_ref(g_L, LUA_REGISTRYINDEX);
@@ -918,6 +934,8 @@ static int lua_rt_load_cart_entry(lua_State *L, const char *cart_path)
         return -4;
     }
 
+    g_pending_cart_id = reader.cart_file.cart.header.cart_id;
+
     int load_rc = lua_load(L, lua_rt_cart_reader, &reader, chunk_name, "b");
     xhgc_cart_close_fatfs(&reader.cart_file);
 
@@ -1020,6 +1038,8 @@ static void lua_rt_finish_lifecycle(bool success)
         g_entry_instance->initialized = success;
         if (!success) {
             lua_rt_log("lua init() failed; instance disabled\n");
+            lua_foundation_owner_destroy(g_L, g_entry_instance->owner_id,
+                                         g_entry_instance->generation);
             lua_ui_owner_destroy(g_L, g_entry_instance->owner_id,
                                  g_entry_instance->generation);
             g_entry_instance->alive = false;
@@ -1044,7 +1064,10 @@ static int lua_rt_resume_entry(int nargs)
 
     lua_ui_owner_enter(g_L, g_entry_instance->owner_id,
                        g_entry_instance->generation);
+    lua_foundation_owner_enter(g_L, g_entry_instance->owner_id,
+                               g_entry_instance->generation);
     int rc = lua_resume(g_entry_thread, g_L, nargs, &nresults);
+    lua_foundation_owner_leave();
     lua_ui_owner_leave();
     if (rc == LUA_YIELD) {
         if (nresults > 0) lua_pop(g_entry_thread, nresults);
@@ -1061,8 +1084,8 @@ static int lua_rt_resume_entry(int nargs)
     const char *err = lua_tostring(g_entry_thread, -1);
     luaL_traceback(g_L, g_entry_thread,
                    err ? err : "(lua coroutine error)", 1);
-    lua_rt_log(lua_tostring(g_L, -1));
-    lua_rt_log("\n");
+    CartLog_Write(CART_LOG_ERROR, g_entry_instance->app_id,
+                  lua_tostring(g_L, -1));
     lua_pop(g_L, 1);
     lua_rt_finish_lifecycle(false);
     lua_rt_clear_entry();
@@ -1210,7 +1233,9 @@ static int lua_rt_call_direct(lua_script_instance_t *instance,
     lua_rawgeti(g_L, LUA_REGISTRYINDEX, callback_ref);
     lua_rawgeti(g_L, LUA_REGISTRYINDEX, instance->self_ref);
     lua_ui_owner_enter(g_L, instance->owner_id, instance->generation);
+    lua_foundation_owner_enter(g_L, instance->owner_id, instance->generation);
     int rc = lua_rt_pcall(g_L, 1, 0);
+    lua_foundation_owner_leave();
     lua_ui_owner_leave();
     lua_settop(g_L, stack_base);
     return rc;
@@ -1442,6 +1467,7 @@ static int lua_rt_init_state(void)
     lua_rt_openlibs(g_L);
     lua_port_bind(g_L, NULL);
     lua_ui_registry_init();
+    lua_foundation_registry_init();
     res_manager_init();
 
     memset(g_instances, 0, sizeof(g_instances));
@@ -1701,6 +1727,8 @@ int lua_shutdown(void)
             instance->finalized = true;
             (void)lua_rt_call_direct(instance, LUA_LIFECYCLE_FINAL);
         }
+        lua_foundation_owner_destroy(g_L, instance->owner_id,
+                                     instance->generation);
         lua_ui_owner_destroy(g_L, instance->owner_id, instance->generation);
         instance->alive = false;
         lua_rt_unref_instance(instance);
@@ -1712,6 +1740,7 @@ int lua_shutdown(void)
     lua_vm_memory_print_stats();
     g_instance_count = 0;
     lua_ui_registry_init();
+    lua_foundation_registry_init();
     return 0;
 }
 
@@ -1727,6 +1756,7 @@ void lua_update_task(void)
     if (!g_L || !g_runtime_started) return;
 
     const uint32_t now = lua_rt_time_ms();
+    lua_foundation_process(g_L, lua_foundation_platform_uptime_ms());
     if (g_entry_thread) {
         if (lua_rt_poll_entry(now) == 1) {
             return;

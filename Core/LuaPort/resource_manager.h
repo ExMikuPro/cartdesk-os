@@ -51,6 +51,7 @@ bool res_manager_mount_cart(const char *cart_path);
 res_handle_t res_acquire_image(const char *path, res_lifetime_t life);
 void *res_alloc_image_view_buffer(size_t size, size_t align);
 void res_release(res_handle_t h);
+bool res_retain(res_handle_t h);
 const image_resource_t *res_get_image(res_handle_t h);
 void res_scene_reset(void);
 bool res_handle_valid(res_handle_t h);

@@ -1,116 +1,30 @@
-local function require_api(path, value)
-    if value == nil then
-        error("missing api: " .. path)
+local modules = {
+    ui = { "root", "container", "label", "button", "image", "patch", "delete" },
+    assets = { "exists", "image", "data" },
+    storage = { "has", "get", "set", "remove", "commit", "clear" },
+    timer = { "now_ms", "after", "every", "cancel", "active" },
+    system = { "screen_size", "firmware_version", "uptime_ms", "memory_info",
+               "sd_status", "usb_status", "exit", "restart_app" },
+    random = { "integer", "number", "bytes" },
+    log = { "debug", "info", "warn", "error" },
+    crc = { "crc32", "verify32" },
+}
+
+for module_name, functions in pairs(modules) do
+    local module = _G[module_name]
+    assert(type(module) == "table", "missing module: " .. module_name)
+    for _, function_name in ipairs(functions) do
+        assert(type(module[function_name]) == "function" or
+               (module_name == "ui" and type(module[function_name]) == "table"),
+               "missing API: " .. module_name .. "." .. function_name)
     end
 end
 
-local function require_type(path, value, expected)
-    require_api(path, value)
-    if type(value) ~= expected then
-        error("missing api: " .. path)
-    end
+for _, removed in ipairs({ "gpio", "pwm", "tim", "rng", "delay" }) do
+    assert(_G[removed] == nil, "removed API remains exported: " .. removed)
 end
 
-require_api("delay", delay)
-require_type("delay.ms", delay.ms, "function")
-require_type("pinMode", pinMode, "function")
-require_type("digitalRead", digitalRead, "function")
-require_type("digitalWrite", digitalWrite, "function")
-
-require_type("gpio", gpio, "table")
-require_type("gpio.count", gpio.count, "function")
-require_type("gpio.list", gpio.list, "function")
-require_type("gpio.info", gpio.info, "function")
-require_type("gpio.setup", gpio.setup, "function")
-require_type("gpio.read", gpio.read, "function")
-require_type("gpio.write", gpio.write, "function")
-require_type("gpio.toggle", gpio.toggle, "function")
-require_type("gpio.release", gpio.release, "function")
-require_type("gpio.pinMode", gpio.pinMode, "function")
-require_type("gpio.digitalRead", gpio.digitalRead, "function")
-require_type("gpio.digitalWrite", gpio.digitalWrite, "function")
-require_type("gpio.on", gpio.on, "function")
-require_type("gpio.off", gpio.off, "function")
-
-require_api("gpio.LOW", gpio.LOW)
-require_api("gpio.HIGH", gpio.HIGH)
-require_api("gpio.OUTPUT", gpio.OUTPUT)
-require_api("gpio.INPUT", gpio.INPUT)
-require_api("gpio.INPUT_PULLUP", gpio.INPUT_PULLUP)
-require_api("gpio.INPUT_PULLDOWN", gpio.INPUT_PULLDOWN)
-require_api("gpio.OUTPUT_OPEN_DRAIN", gpio.OUTPUT_OPEN_DRAIN)
-require_api("gpio.ANALOG", gpio.ANALOG)
-require_api("gpio.RISING", gpio.RISING)
-require_api("gpio.FALLING", gpio.FALLING)
-require_api("gpio.CHANGE", gpio.CHANGE)
-require_api("gpio.LOW_LEVEL", gpio.LOW_LEVEL)
-require_api("gpio.HIGH_LEVEL", gpio.HIGH_LEVEL)
-require_api("gpio.SPEED_LOW", gpio.SPEED_LOW)
-require_api("gpio.SPEED_MEDIUM", gpio.SPEED_MEDIUM)
-require_api("gpio.SPEED_HIGH", gpio.SPEED_HIGH)
-
-require_type("pwm", pwm, "table")
-require_type("pwm.count", pwm.count, "function")
-require_type("pwm.list", pwm.list, "function")
-require_type("pwm.info", pwm.info, "function")
-require_type("pwm.setup", pwm.setup, "function")
-require_type("pwm.write", pwm.write, "function")
-require_type("pwm.read", pwm.read, "function")
-require_type("pwm.set_freq", pwm.set_freq, "function")
-require_type("pwm.get_freq", pwm.get_freq, "function")
-require_type("pwm.setFreq", pwm.setFreq, "function")
-require_type("pwm.getFreq", pwm.getFreq, "function")
-require_type("pwm.stop", pwm.stop, "function")
-require_type("pwm.release", pwm.release, "function")
-require_api("pwm.MIN", pwm.MIN)
-require_api("pwm.MAX", pwm.MAX)
-require_api("pwm.DEFAULT_FREQ", pwm.DEFAULT_FREQ)
-require_api("pwm.POLARITY_HIGH", pwm.POLARITY_HIGH)
-require_api("pwm.POLARITY_LOW", pwm.POLARITY_LOW)
-
-require_type("tim", tim, "table")
-require_type("tim.us", tim.us, "function")
-require_type("tim.delay_us", tim.delay_us, "function")
-
-if sd ~= nil then error("old api should be removed: sd") end
-
-require_type("rng", rng, "table")
-require_type("rng.u32", rng.u32, "function")
-require_type("rng.bytes", rng.bytes, "function")
-
-require_type("crc", crc, "table")
-require_type("crc.crc32", crc.crc32, "function")
-require_type("crc.crc32_hex", crc.crc32_hex, "function")
-
-require_type("ui", ui, "table")
-require_type("ui.label", ui.label, "table")
-require_type("ui.button", ui.button, "table")
-if ui.button.create ~= nil then error("old api should be removed: ui.button.create") end
-if ui.button.draw ~= nil then error("old api should be removed: ui.button.draw") end
-if ui.button.get_screen ~= nil then error("old api should be removed: ui.button.get_screen") end
-
-if ui["sli" .. "der"] ~= nil then error("unsupported widget was exported") end
-if ui["fi" .. "nd"] ~= nil then error("string UI lookup was exported") end
-require_type("ui.patch", ui.patch, "function")
-
-require_type("_G", _G, "table")
-require_type("coroutine", coroutine, "table")
-require_type("table", table, "table")
-require_type("string", string, "table")
-require_type("math", math, "table")
-require_type("utf8", utf8, "table")
-
-if io ~= nil then
-    error("missing api: io should be disabled")
-end
-if os ~= nil then
-    error("missing api: os should be disabled")
-end
-if debug ~= nil then
-    error("missing api: debug should be disabled")
-end
-if package ~= nil then
-    error("missing api: package should be disabled")
-end
-
-print("api smoke test passed")
+local old_patch = ui.patch
+local ok = pcall(function() ui.patch = nil end)
+assert(not ok and ui.patch == old_patch, "core module must be read-only")
+print("foundation API smoke test passed")

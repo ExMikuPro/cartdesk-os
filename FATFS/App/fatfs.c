@@ -74,4 +74,9 @@ void SD_FATFS_InvalidateMount(void)
   s_sd_fatfs_mounted = 0;
 }
 
+bool SD_FATFS_IsMounted(void)
+{
+  return s_sd_fatfs_mounted != 0U;
+}
+
 /* USER CODE END Application */

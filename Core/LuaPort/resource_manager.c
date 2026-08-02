@@ -314,6 +314,16 @@ void res_release(res_handle_t h)
   if (rec->refcount == 0u) rec->state = RES_READY_UNUSED;
 }
 
+bool res_retain(res_handle_t h)
+{
+  if (!res_handle_valid(h)) return false;
+  res_record_t *rec = &s_records[h.index];
+  if (rec->refcount == UINT16_MAX) return false;
+  ++rec->refcount;
+  rec->state = RES_READY;
+  return true;
+}
+
 /**
  * @brief  重置场景资源并释放RESOURCE_ARENA所有权
  * @retval None

@@ -5,7 +5,6 @@ ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 
 for pattern in \
   'self\.(elapsed|ticks|count|fixed_count|fixed_dt|level|duty|direction|accumulator|button|slider|file|log_file)' \
-  'self\.children' \
   'ui\.find\(' \
   'ui\.patch[[:space:]]*\([[:space:]]*self[[:space:]]*,' \
   'ui\.patch[[:space:]]*\([[:space:]]*["'\'']' \

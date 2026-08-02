@@ -13,6 +13,8 @@ typedef enum {
     LUA_RUNTIME_STATE_START_REQUESTED,
     LUA_RUNTIME_STATE_STARTING,
     LUA_RUNTIME_STATE_RUNNING,
+    LUA_RUNTIME_STATE_RESTART_REQUESTED,
+    LUA_RUNTIME_STATE_RESTARTING,
     LUA_RUNTIME_STATE_STOP_REQUESTED,
     LUA_RUNTIME_STATE_STOPPING,
     LUA_RUNTIME_STATE_ERROR
@@ -34,6 +36,7 @@ typedef enum {
  */
 bool LuaRuntimeTask_RequestStart(const char *cart_path);
 void LuaRuntimeTask_RequestStop(void);
+bool LuaRuntimeTask_RequestRestart(void);
 void LuaRuntimeTask_Process(uint32_t now_ms);
 
 bool LuaRuntimeTask_IsRunning(void);

@@ -107,6 +107,15 @@ void lv_obj_set_style_border_color(lv_obj_t* object, lv_color_t color, int32_t s
 void lv_obj_set_style_border_width(lv_obj_t* object, int32_t width, int32_t selector) {
   (void)object; (void)width; (void)selector;
 }
+void lv_obj_set_style_opa(lv_obj_t* object, lv_opa_t opacity, int32_t selector) {
+  (void)object; (void)opacity; (void)selector;
+}
+void lv_obj_add_state(lv_obj_t* object, uint32_t state) {
+  (void)object; (void)state;
+}
+void lv_obj_remove_state(lv_obj_t* object, uint32_t state) {
+  (void)object; (void)state;
+}
 lv_color_t lv_color_hex(uint32_t color) { return color; }
 
 lv_event_dsc_t* lv_obj_add_event_cb(lv_obj_t* object,
@@ -185,6 +194,23 @@ int main(void) {
   assert(lua_ui_owner_create(L, 1u, 10u));
   assert(lua_ui_owner_create(L, 2u, 20u));
   lua_ui_owner_enter(L, 1u, 10u);
+
+  assert(lua_ui_root(L) == 1);
+  lua_ui_handle_t* root_handle = lua_ui_handle_test(L, -1);
+  assert(root_handle && root_handle->object_type == LUA_UI_OBJECT_ROOT);
+  assert(lua_ui_delete(L) == 2);
+  assert(lua_isnil(L, -2));
+  assert(strstr(lua_tostring(L, -1), "cannot be deleted") != NULL);
+  lua_settop(L, 0);
+
+  luaopen_ui_container(L);
+  lua_newtable(L);
+  lua_call(L, 1, 1);
+  lua_ui_handle_t* container = lua_ui_handle_test(L, -1);
+  assert(container && container->object_type == LUA_UI_OBJECT_CONTAINER);
+  assert(lua_ui_delete(L) == 1 && lua_toboolean(L, -1));
+  assert(!container->alive);
+  lua_settop(L, 0);
 
   luaopen_ui_label(L);
   lua_newtable(L);

@@ -1,5 +1,5 @@
 // Lua_xxx.c.template
-// 复制此文件 -> 改名成 lua_gpio.c / lua_tim.c / lua_ltdc.c ...
+// 新增 Foundation 模块时复制此文件，并使用 lua_<module>.c 命名。
 // 并把所有 "xxx" 替换成你的模块名（建议全小写）
 
 #include "lua.h"

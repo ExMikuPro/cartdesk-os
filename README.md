@@ -17,7 +17,7 @@
 - 64 MiB 外部 SDRAM 固定分区，用于 framebuffer、保留的 SDRAM_LVGL_HEAP、DMA pool、launcher cache 和应用资源区；LVGL runtime heap 当前位于片内 RAM。
 - SD 卡 `cart.bin` 读取，launcher 可显示卡带标题和 200x200 ARGB8888 预览图。
 - Launcher 原生右下角操作提示栏，用字母和中文显示当前选中项操作。
-- Lua VM 运行时，支持生命周期函数和 GPIO/PWM/UI 等宿主 API。
+- Lua VM 运行时，支持生命周期函数和 `ui/assets/storage/timer/system/random/log/crc` Foundation API。
 - FreeRTOS/CMSIS-RTOS2 任务模型，LVGL 和 Lua 在独立任务路径中调度。
 - 运行时可观测性输出：主循环每秒打印一行 runtime stats，覆盖 LVGL/Lua/Launcher 帧耗时、Lua heap、resource arena、队列长度和 FreeRTOS 基础指标，并对 LVGL slow frame 继续拆分 `lv_timer` / `flush` / `flush_wait` / `input` / `screen` 来源。
 - HardFault、MemManage、BusFault 和 UsageFault 现场使用 RTC Backup Registers 跨软件复位保存，并在下次启动时输出串口摘要、可靠追加到 SD 崩溃日志。
@@ -120,6 +120,7 @@ build/host_tools/bin/luavm --compile input.lua output.luac
 build/host_tools/bin/luavm --check script.lua
 build/host_tools/bin/luavm --self-test
 build/host_tools/bin/lua_ui_owner_test
+build/host_tools/bin/lua_crc_test
 ```
 
 ## 运行入口
@@ -190,7 +191,7 @@ function final(self)
 end
 ```
 
-当前宿主环境暴露了 GPIO、PWM、delay、声明式 UI children（button / slider / image）等 API。`ui.image()` 使用 cart 内部相对路径从 INDEX/DATA 资源区同步懒加载 BGRA8888 图片，并在同一场景内共享相同 `src` 的像素数据。脚本示例在 [examples/lua](examples/lua)，完整 API 文档在 [Docs/lua/lua_api.md](Docs/lua/lua_api.md)。
+当前宿主仅暴露八个正式 Foundation 模块。UI 通过 owner 受控的 full userdata handle 创建和修改；资源通过 Cart INDEX/DATA 与 `resource_manager` 加载；KV 存储使用按 cart ID 隔离的 QFlash littlefs 文件；timer 仅在 app 任务安全点执行 Lua。脚本示例在 [examples/lua](examples/lua)，完整 API 文档在 [Docs/LUA_FOUNDATION_API.md](Docs/LUA_FOUNDATION_API.md)。
 
 ## 目录结构
 
