@@ -5,11 +5,13 @@
 #include "ui_screen_launcher.h"
 
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
 #include "stm32h743xx.h"
 #include "cart_bin.h"
+#include "cart_system_icons.h"
 #include "fatfs.h"
 #include "launcher_store.h"
 #include "lua_runtime_task.h"
@@ -53,6 +55,7 @@
 #define CIRCLE_RADIUS         28
 #define CIRCLE_SPACING        24
 #define CIRCLE_Y              330
+#define SYSTEM_ICON_SIZE      40
 
 #define LINE_Y                420
 #define LINE_X                40
@@ -73,9 +76,24 @@
 /*  私有状态                                                            */
 /* ------------------------------------------------------------------ */
 
-static const char *circle_names[DESIGN_CIRCLE_COUNT] = {
-    "相册", "手柄", "拓展", "设置", "休眠模式"
+typedef struct
+{
+    const char *label;
+    cart_system_icon_id_t icon_id;
+    int8_t icon_offset_x;
+    int8_t icon_offset_y;
+} launcher_system_entry_t;
+
+static const launcher_system_entry_t s_system_entries[] = {
+    {"相册", CART_SYSTEM_ICON_GALLERY, 0, 0},
+    {"手柄", CART_SYSTEM_ICON_GAMEPAD, -1, -1},
+    {"拓展", CART_SYSTEM_ICON_EXTENSIONS, 2, -2},
+    {"设置", CART_SYSTEM_ICON_SETTINGS, -1, -1},
+    {"休眠模式", CART_SYSTEM_ICON_SLEEP, 0, 0},
 };
+
+_Static_assert((sizeof(s_system_entries) / sizeof(s_system_entries[0])) == DESIGN_CIRCLE_COUNT,
+               "Launcher system entry count must match DESIGN_CIRCLE_COUNT");
 
 static LauncherStoredApp s_apps[DESIGN_APP_COUNT];
 static lv_obj_t *s_main_container = NULL;
@@ -83,6 +101,7 @@ static lv_obj_t *s_slots[DESIGN_APP_COUNT];
 static lv_obj_t *s_slot_labels[DESIGN_APP_COUNT];
 static lv_obj_t *s_slot_images[DESIGN_APP_COUNT];
 static lv_obj_t *s_circles[DESIGN_CIRCLE_COUNT];
+static lv_obj_t *s_circle_icons[DESIGN_CIRCLE_COUNT];
 static lv_obj_t *s_circle_labels[DESIGN_CIRCLE_COUNT];
 static lv_obj_t *s_status_label = NULL;
 static lv_obj_t *s_info_popup = NULL;
@@ -659,7 +678,10 @@ static void prv_set_selection(lv_obj_t *selected_obj)
     }
     for (int i = 0; i < DESIGN_CIRCLE_COUNT; i++) {
         lv_obj_set_style_border_color(s_circles[i], lv_color_hex(COLOR_BLACK), 0);
-        lv_obj_set_style_border_width(s_circles[i], 1, 0);
+        lv_obj_set_style_outline_width(s_circles[i], 0, 0);
+        if (s_circle_icons[i] != NULL) {
+            lv_obj_set_style_image_recolor(s_circle_icons[i], lv_color_hex(COLOR_BLACK), LV_PART_MAIN);
+        }
         lv_obj_add_flag(s_circle_labels[i], LV_OBJ_FLAG_HIDDEN);
     }
 
@@ -681,7 +703,10 @@ static void prv_set_selection(lv_obj_t *selected_obj)
     }
     for (int i = 0; i < DESIGN_CIRCLE_COUNT; i++) {
         if (s_circles[i] == selected_obj) {
-            lv_obj_set_style_border_width(s_circles[i], 3, 0);
+            lv_obj_set_style_outline_width(s_circles[i], 2, 0);
+            if (s_circle_icons[i] != NULL) {
+                lv_obj_set_style_image_recolor(s_circle_icons[i], lv_color_hex(COLOR_CYAN), LV_PART_MAIN);
+            }
             lv_obj_remove_flag(s_circle_labels[i], LV_OBJ_FLAG_HIDDEN);
             s_selected_index = -(i + 1);
             s_app_launch_armed = false;
@@ -823,11 +848,33 @@ static void prv_create_circle_area(lv_obj_t *parent)
         lv_obj_set_style_bg_color(circle, lv_color_hex(COLOR_BG), 0);
         lv_obj_set_style_border_width(circle, 1, 0);
         lv_obj_set_style_border_color(circle, lv_color_hex(COLOR_BLACK), 0);
+        lv_obj_set_style_outline_width(circle, 0, 0);
+        lv_obj_set_style_outline_color(circle, lv_color_hex(COLOR_CYAN), 0);
+        lv_obj_set_style_outline_opa(circle, LV_OPA_COVER, 0);
+        lv_obj_set_style_outline_pad(circle, 0, 0);
+        lv_obj_set_style_pad_all(circle, 0, 0);
+        lv_obj_remove_flag(circle, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_add_event_cb(circle, prv_circle_clicked_cb, LV_EVENT_CLICKED, NULL);
         s_circles[i] = circle;
 
+        const lv_image_dsc_t *icon_source = CartSystemIcon_GetSource(s_system_entries[i].icon_id);
+        if (icon_source != NULL) {
+            lv_obj_t *icon = lv_image_create(circle);
+            if (icon != NULL) {
+                lv_image_set_src(icon, icon_source);
+                lv_obj_set_size(icon, SYSTEM_ICON_SIZE, SYSTEM_ICON_SIZE);
+                lv_obj_set_pos(icon,
+                               (diameter - SYSTEM_ICON_SIZE) / 2 + s_system_entries[i].icon_offset_x,
+                               (diameter - SYSTEM_ICON_SIZE) / 2 + s_system_entries[i].icon_offset_y);
+                lv_obj_remove_flag(icon, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+                lv_obj_set_style_image_recolor(icon, lv_color_hex(COLOR_BLACK), LV_PART_MAIN);
+                lv_obj_set_style_image_recolor_opa(icon, LV_OPA_COVER, LV_PART_MAIN);
+                s_circle_icons[i] = icon;
+            }
+        }
+
         lv_obj_t *label = lv_label_create(parent);
-        lv_label_set_text(label, circle_names[i]);
+        lv_label_set_text(label, s_system_entries[i].label);
         lv_obj_set_style_text_color(label, lv_color_hex(COLOR_CYAN), 0);
         lv_obj_set_style_text_font(label, UiFont_GetSystem(20u), 0);
         lv_obj_set_pos(label, cx - 40, CIRCLE_Y + diameter + 5);
@@ -1029,6 +1076,7 @@ void DesignLauncher_Destroy(void)
     }
     s_status_label = NULL;
     s_info_popup = NULL;
+    memset(s_circle_icons, 0, sizeof(s_circle_icons));
     /*
      * SDRAM 图片槽是固定 launcher cache 分区，不需要 free。
      * 如果将来需要复用这段地址，在这里清零即可：

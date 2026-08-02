@@ -45,6 +45,7 @@ set(BOARD_GPIO_DIR ${DRIVER_DIR}/GPIO)
 set(SCREEN_DIR ${CORE_DIR}/Screen)
 set(SCREEN_PAGE_DIR ${SCREEN_DIR}/Page)
 set(SCREEN_UTILS_DIR ${SCREEN_DIR}/utils)
+set(SCREEN_ASSETS_DIR ${SCREEN_DIR}/Assets)
 set(DEBUG_DIR ${CORE_DIR}/Debug)
 set(TOOLS_DIR ${PROJECT_ROOT}/tools)
 set(FATFS_DIR ${PROJECT_ROOT}/FATFS)
@@ -458,6 +459,10 @@ target_link_libraries(lua_runtime PUBLIC cartdesk_common lua_port)
 # 目标 11: app_screen —— 应用层 UI 界面（启动器 / 缓存 / 预览）
 # ==============================================================================
 add_library(app_screen STATIC
+        ${SCREEN_ASSETS_DIR}/cart_system_icons.c
+        ${SCREEN_ASSETS_DIR}/cart_system_icons.h
+        ${SCREEN_ASSETS_DIR}/cart_system_icons_data.c
+        ${SCREEN_ASSETS_DIR}/cart_system_icons_data.h
         ${SCREEN_PAGE_DIR}/launcher_action_hints.c
         ${SCREEN_PAGE_DIR}/launcher_action_hints.h
         ${SCREEN_PAGE_DIR}/ui_screen_launcher.c
@@ -470,6 +475,7 @@ add_library(app_screen STATIC
 )
 
 target_include_directories(app_screen PUBLIC
+        ${SCREEN_ASSETS_DIR}
         ${SCREEN_PAGE_DIR}
         ${SCREEN_UTILS_DIR}
         ${TASK_DIR}
