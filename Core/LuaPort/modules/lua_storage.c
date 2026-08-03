@@ -7,10 +7,8 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "crc.h"
-#include "launcher_store.h"
-#include "lfs.h"
-#include "lfs_port.h"
+#include "FreeRTOS.h"
+#include "cart_io_service.h"
 #include "lua_foundation.h"
 
 #define LUA_STORAGE_MAX_OWNERS 4u
@@ -18,19 +16,9 @@
 #define LUA_STORAGE_STRING_MAX 4096u
 #define LUA_STORAGE_QUOTA (16u * 1024u)
 #define LUA_STORAGE_MAX_ENTRIES 128u
-#define LUA_STORAGE_MAGIC 0x56534B43u
-#define LUA_STORAGE_VERSION 1u
 
 typedef enum { VALUE_BOOL = 1, VALUE_INTEGER = 2, VALUE_NUMBER = 3,
                VALUE_STRING = 4 } value_type_t;
-
-typedef struct __attribute__((packed)) {
-  uint32_t magic;
-  uint16_t version;
-  uint16_t entry_count;
-  uint32_t payload_size;
-  uint32_t crc32;
-} storage_header_t;
 
 typedef struct {
   lua_State* vm;
@@ -43,6 +31,12 @@ typedef struct {
   int data_ref;
   bool loaded;
   bool dirty;
+  bool load_pending;
+  bool commit_pending;
+  uint32_t load_request_id;
+  uint32_t commit_request_id;
+  uint32_t revision;
+  uint32_t commit_revision;
   bool active;
 } storage_owner_t;
 
@@ -96,6 +90,34 @@ bool lua_storage_owner_create(lua_State* L, uint32_t id, uint32_t gen,
       g_owners[i].vm = L; g_owners[i].owner_id = id;
       g_owners[i].generation = gen; g_owners[i].cart_id = cart_id;
       g_owners[i].data_ref = LUA_NOREF; g_owners[i].active = true;
+      if (cart_id == 0u) {
+        g_owners[i].loaded = true;
+        return true;
+      }
+      cart_task_buffer_t load_buffer = {
+        .data = pvPortMalloc(LUA_STORAGE_QUOTA),
+        .capacity = LUA_STORAGE_QUOTA,
+        .owner_id = id,
+        .source = CART_BUFFER_SOURCE_RTOS_HEAP,
+      };
+      if (!load_buffer.data) {
+        memset(&g_owners[i], 0, sizeof(g_owners[i]));
+        return false;
+      }
+      cart_io_request_t request = {
+        .request_id = CartIoService_NextRequestId(),
+        .owner_id = id,
+        .operation = CART_IO_OP_STORAGE_LOAD,
+      };
+      request.params.storage.cart_id = cart_id;
+      request.params.storage.payload = load_buffer;
+      if (!CartIoService_Submit(&request, CART_IO_TIMEOUT_SD_READ_MS)) {
+        CartTaskBuffer_Release(&load_buffer);
+        memset(&g_owners[i], 0, sizeof(g_owners[i]));
+        return false;
+      }
+      g_owners[i].load_pending = true;
+      g_owners[i].load_request_id = request.request_id;
       return true;
     }
   }
@@ -105,6 +127,7 @@ bool lua_storage_owner_create(lua_State* L, uint32_t id, uint32_t gen,
 void lua_storage_owner_destroy(lua_State* L, uint32_t id, uint32_t gen) {
   storage_owner_t* owner = find_owner(L, id, gen);
   if (!owner) return;
+  (void)CartIoService_CancelOwner(id);
   if (owner->data_ref != LUA_NOREF)
     luaL_unref(owner->vm, LUA_REGISTRYINDEX, owner->data_ref);
   memset(owner, 0, sizeof(*owner));
@@ -122,15 +145,6 @@ static storage_owner_t* current_owner(lua_State* L, const char** error) {
     owner = NULL;
   }
   return owner;
-}
-
-static void make_paths(const storage_owner_t* owner, char* dir, char* path,
-                       char* temp) {
-  (void)snprintf(dir, 40, "/apps/%08lX%08lX",
-                 (unsigned long)(owner->cart_id >> 32),
-                 (unsigned long)owner->cart_id);
-  (void)snprintf(path, 64, "%s/storage.bin", dir);
-  (void)snprintf(temp, 64, "%s/storage.tmp", dir);
 }
 
 static bool validate_payload(storage_owner_t* owner) {
@@ -165,52 +179,10 @@ static bool ensure_buffer(lua_State* L, storage_owner_t* owner) {
 }
 
 static bool load_owner(lua_State* L, storage_owner_t* owner, const char** error) {
-  if (owner->loaded) return true;
+  if (owner->load_pending) { *error = "storage load pending"; return false; }
+  if (!owner->loaded) { *error = "storage load failed"; return false; }
   if (!ensure_buffer(L, owner)) { *error = "storage buffer allocation failed"; return false; }
-  if (!LauncherStore_IsReady()) { *error = "QFlash storage is unavailable"; return false; }
-  char dir[40], path[64], temp[64]; make_paths(owner, dir, path, temp);
-  if (LFS_EnableMappedRead(0) != 0) { *error = "QFlash operation failed"; return false; }
-  lfs_file_t file;
-  int rc = lfs_file_open(&g_lfs, &file, path, LFS_O_RDONLY);
-  if (rc == LFS_ERR_NOENT) {
-    int temp_rc = lfs_file_open(&g_lfs, &file, temp, LFS_O_RDONLY);
-    if (temp_rc >= 0) {
-      (void)lfs_file_close(&g_lfs, &file);
-      if (lfs_rename(&g_lfs, temp, path) >= 0)
-        rc = lfs_file_open(&g_lfs, &file, path, LFS_O_RDONLY);
-      else
-        rc = LFS_ERR_CORRUPT;
-    } else {
-      owner->used = 0u; owner->count = 0u; owner->loaded = true;
-      (void)LFS_EnableMappedRead(1); return true;
-    }
-  }
-  storage_header_t header;
-  if (rc >= 0) {
-    lfs_ssize_t read = lfs_file_read(&g_lfs, &file, &header, sizeof(header));
-    if (read != (lfs_ssize_t)sizeof(header)) rc = LFS_ERR_CORRUPT;
-    if (rc >= 0 && (header.magic != LUA_STORAGE_MAGIC ||
-        header.version != LUA_STORAGE_VERSION || header.payload_size > LUA_STORAGE_QUOTA ||
-        header.entry_count > LUA_STORAGE_MAX_ENTRIES)) rc = LFS_ERR_CORRUPT;
-    if (rc >= 0) {
-      read = lfs_file_read(&g_lfs, &file, owner->data, header.payload_size);
-      if (read != (lfs_ssize_t)header.payload_size) rc = LFS_ERR_CORRUPT;
-    }
-    if (rc >= 0 && lfs_file_size(&g_lfs, &file) !=
-                       (lfs_soff_t)(sizeof(header) + header.payload_size))
-      rc = LFS_ERR_CORRUPT;
-    (void)lfs_file_close(&g_lfs, &file);
-    if (rc >= 0) {
-      owner->used = header.payload_size; owner->count = header.entry_count;
-      if (CRC32_IEEE_Calculate(owner->data, owner->used) != header.crc32 ||
-          !validate_payload(owner) || owner->count != header.entry_count) rc = LFS_ERR_CORRUPT;
-    }
-  }
-  (void)LFS_EnableMappedRead(1);
-  if (rc < 0) { owner->used = 0u; owner->count = 0u;
-    *error = rc == LFS_ERR_CORRUPT ? "storage file is corrupt" : "storage read failed";
-    return false; }
-  owner->loaded = true; return true;
+  return true;
 }
 
 static bool read_key(lua_State* L, int index, const char** key, size_t* length,
@@ -320,6 +292,7 @@ static int l_set(lua_State* L) {
   memcpy(owner->data + offset + 4u, key, key_len);
   memcpy(owner->data + offset + 4u + key_len, value_ptr, value_len);
   owner->used = base_used + new_size; if (!exists) ++owner->count;
+  ++owner->revision;
   owner->dirty = true; lua_pushboolean(L, 1); return 1;
 }
 
@@ -331,7 +304,7 @@ static int l_remove(lua_State* L) {
   if (find_entry(owner, key, key_len, &offset, &size)) {
     memmove(owner->data + offset, owner->data + offset + size,
             owner->used - offset - size); owner->used -= size; --owner->count;
-    owner->dirty = true;
+    owner->dirty = true; ++owner->revision;
   }
   lua_pushboolean(L, 1); return 1;
 }
@@ -342,6 +315,7 @@ static int l_clear(lua_State* L) {
   if (lua_gettop(L) != 0) return fail(L, "storage.clear expects no arguments");
   if (!ensure_buffer(L, owner)) return fail(L, "storage buffer allocation failed");
   owner->used = 0u; owner->count = 0u; owner->loaded = true; owner->dirty = true;
+  ++owner->revision;
   lua_pushboolean(L, 1); return 1;
 }
 
@@ -349,31 +323,87 @@ static int l_commit(lua_State* L) {
   const char* error = NULL; storage_owner_t* owner = current_owner(L, &error);
   if (!owner || lua_gettop(L) != 0 || !load_owner(L, owner, &error)) return fail(L, error);
   if (!owner->dirty) { lua_pushboolean(L, 1); return 1; }
-  char dir[40], path[64], temp[64]; make_paths(owner, dir, path, temp);
-  if (LFS_EnableMappedRead(0) != 0) return fail(L, "QFlash operation failed");
-  int rc = lfs_mkdir(&g_lfs, "/apps"); if (rc == LFS_ERR_EXIST) rc = 0;
-  if (rc >= 0) { rc = lfs_mkdir(&g_lfs, dir); if (rc == LFS_ERR_EXIST) rc = 0; }
-  lfs_file_t file;
-  bool opened = false;
-  if (rc >= 0) {
-    rc = lfs_file_open(&g_lfs, &file, temp,
-                       LFS_O_WRONLY | LFS_O_CREAT | LFS_O_TRUNC);
-    opened = rc >= 0;
+  if (owner->commit_pending) { lua_pushboolean(L, 1); return 1; }
+  size_t allocation_size = owner->used == 0u ? 1u : owner->used;
+  cart_task_buffer_t payload = {
+    .data = pvPortMalloc(allocation_size),
+    .capacity = (uint32_t)allocation_size,
+    .length = owner->used,
+    .owner_id = owner->owner_id,
+    .source = CART_BUFFER_SOURCE_RTOS_HEAP,
+  };
+  if (!payload.data) return fail(L, "storage commit buffer unavailable");
+  if (owner->used > 0u) memcpy(payload.data, owner->data, owner->used);
+  cart_io_request_t request = {
+    .request_id = CartIoService_NextRequestId(),
+    .owner_id = owner->owner_id,
+    .operation = CART_IO_OP_STORAGE_COMMIT,
+  };
+  request.params.storage.cart_id = owner->cart_id;
+  request.params.storage.entry_count = owner->count;
+  request.params.storage.payload = payload;
+  if (!CartIoService_Submit(&request, CART_IO_TIMEOUT_LFS_COMMIT_MS)) {
+    CartTaskBuffer_Release(&payload);
+    return fail(L, "storage commit queue is full");
   }
-  storage_header_t header = {LUA_STORAGE_MAGIC, LUA_STORAGE_VERSION, owner->count,
-                             owner->used, CRC32_IEEE_Calculate(owner->data, owner->used)};
-  if (rc >= 0 && lfs_file_write(&g_lfs, &file, &header, sizeof(header)) != (lfs_ssize_t)sizeof(header)) rc = LFS_ERR_IO;
-  if (rc >= 0 && lfs_file_write(&g_lfs, &file, owner->data, owner->used) != (lfs_ssize_t)owner->used) rc = LFS_ERR_IO;
-  if (rc >= 0) rc = lfs_file_sync(&g_lfs, &file);
-  if (opened) {
-    int close_rc = lfs_file_close(&g_lfs, &file);
-    if (rc >= 0) rc = close_rc;
+  owner->commit_pending = true;
+  owner->commit_request_id = request.request_id;
+  owner->commit_revision = owner->revision;
+  lua_pushboolean(L, 1); return 1;
+}
+
+bool lua_storage_handle_io_completion(const cart_io_completion_t* completion) {
+  if (!completion || (completion->operation != CART_IO_OP_STORAGE_LOAD &&
+      completion->operation != CART_IO_OP_STORAGE_COMMIT &&
+      completion->operation != CART_IO_OP_STORAGE_CLEAR)) return false;
+
+  storage_owner_t* owner = NULL;
+  for (size_t i = 0u; i < LUA_STORAGE_MAX_OWNERS; ++i) {
+    if (g_owners[i].active && g_owners[i].owner_id == completion->owner_id) {
+      owner = &g_owners[i]; break;
+    }
   }
-  if (rc >= 0) rc = lfs_rename(&g_lfs, temp, path);
-  if (rc < 0) (void)lfs_remove(&g_lfs, temp);
-  (void)LFS_EnableMappedRead(1);
-  if (rc < 0) return fail(L, "storage commit failed");
-  owner->dirty = false; lua_pushboolean(L, 1); return 1;
+  cart_task_buffer_t buffer = completion->result.storage.buffer;
+  if (!owner) {
+    return false;
+  }
+  if (completion->operation == CART_IO_OP_STORAGE_LOAD &&
+      completion->request_id == owner->load_request_id) {
+    owner->load_pending = false;
+    owner->used = 0u; owner->count = 0u;
+    if ((completion->status == CART_IO_STATUS_OK ||
+         completion->status == CART_IO_STATUS_NOT_FOUND) &&
+        ensure_buffer(owner->vm, owner)) {
+      if (completion->status == CART_IO_STATUS_OK && buffer.length <= LUA_STORAGE_QUOTA) {
+        uint16_t expected_count = completion->result.storage.entry_count;
+        memcpy(owner->data, buffer.data, buffer.length);
+        owner->used = buffer.length;
+        owner->count = expected_count;
+        if (!validate_payload(owner) || owner->count != expected_count) {
+          owner->used = 0u; owner->count = 0u;
+        }
+      }
+      owner->loaded = true;
+    }
+    CartTaskBuffer_Release(&buffer);
+    return true;
+  }
+  if (completion->operation == CART_IO_OP_STORAGE_COMMIT &&
+      completion->request_id == owner->commit_request_id) {
+    owner->commit_pending = false;
+    if (completion->status == CART_IO_STATUS_OK &&
+        owner->revision == owner->commit_revision) owner->dirty = false;
+    CartTaskBuffer_Release(&buffer);
+    return true;
+  }
+  return false;
+}
+
+bool lua_storage_all_ready(void) {
+  for (size_t i = 0u; i < LUA_STORAGE_MAX_OWNERS; ++i) {
+    if (g_owners[i].active && g_owners[i].load_pending) return false;
+  }
+  return true;
 }
 
 int luaopen_storage(lua_State* L) {

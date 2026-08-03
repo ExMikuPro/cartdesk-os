@@ -28,6 +28,8 @@
 #include "app_task.h"
 #include "audio_task.h"
 #include "background_task.h"
+#include "cart_io_service.h"
+#include "cart_log.h"
 #include "crash_record.h"
 #include "peripheral_task.h"
 /* USER CODE END Includes */
@@ -69,14 +71,14 @@ const osThreadAttr_t audio_attributes = {
 osThreadId_t ioHandle;
 const osThreadAttr_t io_attributes = {
   .name = "io",
-  .stack_size = 1024 * 4,
+  .stack_size = 3072 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
 /* Definitions for background */
 osThreadId_t backgroundHandle;
 const osThreadAttr_t background_attributes = {
   .name = "background",
-  .stack_size = 1024 * 4,
+  .stack_size = 1536 * 4,
   .priority = (osPriority_t) osPriorityLow,
 };
 
@@ -100,7 +102,10 @@ void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
   */
 void MX_FREERTOS_Init(void) {
   /* USER CODE BEGIN Init */
-
+  if (!CartIoService_Init() || !CartLog_Init() || !CartdeskAudioTask_Init())
+  {
+    Error_Handler();
+  }
   /* USER CODE END Init */
 
   /* USER CODE BEGIN RTOS_MUTEX */
@@ -155,12 +160,6 @@ void MX_FREERTOS_Init(void) {
 /* USER CODE END Header_StartAppTask */
 void StartAppTask(void *argument)
 {
-  /*
-   * The generated FatFs SD driver uses CMSIS-RTOS2 synchronization objects and
-   * an SDMMC completion queue. Flush only after the scheduler is running;
-   * calling it from main() leaves BASEPRI raised by pre-kernel FreeRTOS calls.
-   */
-  (void)CrashRecord_FlushPendingToSd();
   CrashRecord_MaybeTriggerTestFault();
 
   /* init code for USB_DEVICE */

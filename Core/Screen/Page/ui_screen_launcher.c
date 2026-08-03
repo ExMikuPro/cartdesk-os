@@ -11,8 +11,9 @@
 
 #include "stm32h743xx.h"
 #include "cart_bin.h"
+#include "cart_io_service.h"
+#include "cart_log.h"
 #include "cart_system_icons.h"
-#include "fatfs.h"
 #include "launcher_store.h"
 #include "lua_runtime_task.h"
 #include "launcher_action_hints.h"
@@ -20,7 +21,6 @@
 #include "perf_monitor.h"
 #include "ui_font_provider.h"
 #include "ui_launcher_cache.h"
-#include "usart.h"
 
 /* ------------------------------------------------------------------ */
 /*  SDRAM 地址布局                                                      */
@@ -115,6 +115,10 @@ static int s_inserted_slot = -1;
 static uint32_t s_next_cart_probe_ms = 0u;
 static LauncherActionHints s_action_hints;
 static bool s_app_launch_armed = false;
+static uint32_t s_io_request_id = 0u;
+static cart_io_operation_t s_io_pending_operation = CART_IO_OP_NONE;
+static int s_io_pending_slot = -1;
+static CartBinInfo s_probe_info;
 
 #if PERF_MONITOR_ENABLE
 /*
@@ -183,25 +187,6 @@ static void prv_update_action_hints(void)
     launcher_action_hints_update(&s_action_hints, &state);
 }
 
-static void prv_uart_write(const char *text)
-{
-    size_t len;
-
-    if (text == NULL || huart1.Instance != USART1) {
-        return;
-    }
-
-    len = strlen(text);
-    while (len > 0u) {
-        uint16_t chunk = (uint16_t)(len > 0xFFFFu ? 0xFFFFu : len);
-        if (HAL_UART_Transmit(&huart1, (uint8_t *)text, chunk, 100u) != HAL_OK) {
-            return;
-        }
-        text += chunk;
-        len -= chunk;
-    }
-}
-
 static void prv_uart_log_clicked_app(int index, const char *title)
 {
     char buf[128];
@@ -210,8 +195,8 @@ static void prv_uart_log_clicked_app(int index, const char *title)
         title = "(untitled)";
     }
 
-    snprintf(buf, sizeof(buf), "[launcher] clicked app %d: %s\r\n", index, title);
-    prv_uart_write(buf);
+    snprintf(buf, sizeof(buf), "clicked app %d: %s", index, title);
+    CartLog_Write(CART_LOG_INFO, "launcher", buf);
 }
 
 static void prv_set_status_text(const char *text)
@@ -534,16 +519,28 @@ static void prv_load_cached_icons_until(uint8_t end_slot)
         end_slot = DESIGN_APP_COUNT;
     }
 
-    while(s_cached_icon_cursor < end_slot) {
+    while(s_cached_icon_cursor < end_slot && s_io_pending_operation == CART_IO_OP_NONE) {
         uint8_t slot = s_cached_icon_cursor++;
         if(!s_apps[slot].valid) {
             continue;
         }
 
         uint32_t *buffer = launcher_get_big_icon(slot);
-        if(LauncherStore_ReadIcon(slot, buffer, CART_BIN_PREVIEW_SIZE) == 0) {
-            prv_configure_slot_image(slot);
-            prv_attach_slot_image(slot);
+        cart_io_request_t request = {
+            .request_id = CartIoService_NextRequestId(),
+            .operation = CART_IO_OP_LAUNCHER_STORE_READ_ICON,
+        };
+        request.params.launcher_read_icon.slot = slot;
+        request.params.launcher_read_icon.output = (cart_task_buffer_t) {
+            .data = buffer,
+            .capacity = CART_BIN_PREVIEW_SIZE,
+            .owner_id = 0u,
+            .source = CART_BUFFER_SOURCE_CALLER,
+        };
+        if (CartIoService_Submit(&request, CART_IO_TIMEOUT_SD_READ_MS)) {
+            s_io_request_id = request.request_id;
+            s_io_pending_operation = request.operation;
+            s_io_pending_slot = slot;
         }
     }
 }
@@ -557,72 +554,28 @@ static void prv_load_cached_icon_step(void)
 
 static void prv_probe_game_card(void)
 {
-    CartBinInfo info;
-    int result = cart_bin_read_info_from_sd("0:/cart.bin", &info);
-    if(result != 0) {
-        SD_FATFS_InvalidateMount();
-        if(s_cart_present) {
-            s_cart_present = false;
-            s_inserted_slot = -1;
-            s_app_launch_armed = false;
-            prv_set_status_text(NULL);
-            prv_update_action_hints();
-        }
+    if (s_io_pending_operation != CART_IO_OP_NONE) {
         return;
     }
 
-    if(s_cart_present
-       && s_inserted_slot >= 0
-       && s_inserted_slot < DESIGN_APP_COUNT
-       && s_apps[s_inserted_slot].valid
-       && s_apps[s_inserted_slot].cart_id == info.cart_id) {
-        return;
+    memset(&s_probe_info, 0, sizeof(s_probe_info));
+    cart_io_request_t request = {
+        .request_id = CartIoService_NextRequestId(),
+        .operation = CART_IO_OP_CART_PROBE,
+    };
+    (void)snprintf(request.params.cart.path, sizeof(request.params.cart.path),
+                   "0:/cart.bin");
+    request.params.cart.output = (cart_task_buffer_t) {
+        .data = &s_probe_info,
+        .capacity = sizeof(s_probe_info),
+        .owner_id = 0u,
+        .source = CART_BUFFER_SOURCE_CALLER,
+    };
+    if (CartIoService_Submit(&request, CART_IO_TIMEOUT_CART_HEADER_MS)) {
+        s_io_request_id = request.request_id;
+        s_io_pending_operation = request.operation;
+        s_io_pending_slot = -1;
     }
-
-    int target_slot = prv_find_cart_slot(info.cart_id);
-    if(target_slot < 0) {
-        s_cart_present = false;
-        s_inserted_slot = -1;
-        prv_set_status_text(NULL);
-        prv_update_action_hints();
-        return;
-    }
-
-    uint32_t *buffer = launcher_get_big_icon((uint8_t)target_slot);
-    uint32_t preview_start = PerfMonitor_Begin();
-    result = cart_bin_read_preview_from_sd("0:/cart.bin",
-                                           (uint8_t *)buffer,
-                                           CART_BIN_PREVIEW_SIZE);
-    PerfMonitor_End(PERF_MONITOR_STARTUP_PREVIEW_READ, preview_start);
-    if(result != 0) {
-        SD_FATFS_InvalidateMount();
-        return;
-    }
-
-    uint8_t stored_slot = (uint8_t)target_slot;
-    if(LauncherStore_IsReady()) {
-        (void)LauncherStore_Upsert(&info,
-                                   buffer,
-                                   CART_BIN_PREVIEW_SIZE,
-                                   &stored_slot);
-    }
-    if(stored_slot != (uint8_t)target_slot && stored_slot < DESIGN_APP_COUNT) {
-        memcpy(launcher_get_big_icon(stored_slot), buffer, CART_BIN_PREVIEW_SIZE);
-        target_slot = stored_slot;
-    }
-
-    if(LauncherStore_Get((uint8_t)target_slot, &s_apps[target_slot]) != 0) {
-        prv_copy_cart_info(&s_apps[target_slot], &info);
-    }
-    prv_configure_slot_image(target_slot);
-    prv_attach_slot_image(target_slot);
-    prv_update_slot_label(target_slot);
-
-    s_cart_present = true;
-    s_inserted_slot = target_slot;
-    s_app_launch_armed = false;
-    prv_set_status_text(NULL);
-    prv_update_action_hints();
 }
 
 static void prv_start_selected_app(void)
@@ -917,6 +870,132 @@ void Launcher_Init(void)
     s_runtime_exit_pending = false;
     DesignLauncher_Destroy();
     DesignLauncher_Create(NULL);
+}
+
+static void prv_finish_cart_probe(int target_slot, uint8_t stored_slot)
+{
+    uint32_t *buffer = launcher_get_big_icon((uint8_t)target_slot);
+    if(stored_slot != (uint8_t)target_slot && stored_slot < DESIGN_APP_COUNT) {
+        memcpy(launcher_get_big_icon(stored_slot), buffer, CART_BIN_PREVIEW_SIZE);
+        target_slot = stored_slot;
+    }
+    if(LauncherStore_Get((uint8_t)target_slot, &s_apps[target_slot]) != 0) {
+        prv_copy_cart_info(&s_apps[target_slot], &s_probe_info);
+    }
+    prv_configure_slot_image(target_slot);
+    prv_attach_slot_image(target_slot);
+    prv_update_slot_label(target_slot);
+    s_cart_present = true;
+    s_inserted_slot = target_slot;
+    s_app_launch_armed = false;
+    prv_set_status_text(NULL);
+    prv_update_action_hints();
+}
+
+bool Launcher_HandleIoCompletion(const cart_io_completion_t *completion)
+{
+    if(completion == NULL || completion->request_id != s_io_request_id ||
+       completion->operation != s_io_pending_operation) {
+        return false;
+    }
+
+    cart_io_operation_t operation = s_io_pending_operation;
+    int pending_slot = s_io_pending_slot;
+    s_io_request_id = 0u;
+    s_io_pending_operation = CART_IO_OP_NONE;
+    s_io_pending_slot = -1;
+
+    if(operation == CART_IO_OP_LAUNCHER_STORE_READ_ICON) {
+        if(completion->status == CART_IO_STATUS_OK && pending_slot >= 0) {
+            prv_configure_slot_image(pending_slot);
+            prv_attach_slot_image(pending_slot);
+        }
+        return true;
+    }
+
+    if(operation == CART_IO_OP_CART_PROBE) {
+        if(completion->status != CART_IO_STATUS_OK) {
+            if(s_cart_present) {
+                s_cart_present = false;
+                s_inserted_slot = -1;
+                s_app_launch_armed = false;
+                prv_set_status_text(NULL);
+                prv_update_action_hints();
+            }
+            return true;
+        }
+        if(s_cart_present && s_inserted_slot >= 0 &&
+           s_inserted_slot < DESIGN_APP_COUNT && s_apps[s_inserted_slot].valid &&
+           s_apps[s_inserted_slot].cart_id == s_probe_info.cart_id) {
+            return true;
+        }
+        int target_slot = prv_find_cart_slot(s_probe_info.cart_id);
+        if(target_slot < 0) return true;
+
+        cart_io_request_t request = {
+            .request_id = CartIoService_NextRequestId(),
+            .operation = CART_IO_OP_CART_READ_RESOURCE,
+        };
+        (void)snprintf(request.params.cart.path, sizeof(request.params.cart.path),
+                       "0:/cart.bin");
+        request.params.cart.output = (cart_task_buffer_t) {
+            .data = launcher_get_big_icon((uint8_t)target_slot),
+            .capacity = CART_BIN_PREVIEW_SIZE,
+            .owner_id = 0u,
+            .source = CART_BUFFER_SOURCE_CALLER,
+        };
+        if(CartIoService_Submit(&request, CART_IO_TIMEOUT_SD_READ_MS)) {
+            s_io_request_id = request.request_id;
+            s_io_pending_operation = request.operation;
+            s_io_pending_slot = target_slot;
+        }
+        return true;
+    }
+
+    if(operation == CART_IO_OP_CART_READ_RESOURCE) {
+        if(completion->status != CART_IO_STATUS_OK || pending_slot < 0) return true;
+        if(!LauncherStore_IsReady()) {
+            prv_finish_cart_probe(pending_slot, (uint8_t)pending_slot);
+            return true;
+        }
+        cart_io_request_t request = {
+            .request_id = CartIoService_NextRequestId(),
+            .operation = CART_IO_OP_LAUNCHER_STORE_UPSERT,
+        };
+        request.params.launcher_upsert.info = (cart_task_buffer_t) {
+            .data = &s_probe_info,
+            .capacity = sizeof(s_probe_info),
+            .length = sizeof(s_probe_info),
+            .owner_id = 0u,
+            .source = CART_BUFFER_SOURCE_CALLER,
+        };
+        request.params.launcher_upsert.icon = (cart_task_buffer_t) {
+            .data = launcher_get_big_icon((uint8_t)pending_slot),
+            .capacity = CART_BIN_PREVIEW_SIZE,
+            .length = CART_BIN_PREVIEW_SIZE,
+            .owner_id = 0u,
+            .source = CART_BUFFER_SOURCE_CALLER,
+        };
+        if(CartIoService_Submit(&request, CART_IO_TIMEOUT_LFS_COMMIT_MS)) {
+            s_io_request_id = request.request_id;
+            s_io_pending_operation = request.operation;
+            s_io_pending_slot = pending_slot;
+        } else {
+            prv_finish_cart_probe(pending_slot, (uint8_t)pending_slot);
+        }
+        return true;
+    }
+
+    if(operation == CART_IO_OP_LAUNCHER_STORE_UPSERT) {
+        if(pending_slot >= 0) {
+            uint8_t stored_slot = completion->status == CART_IO_STATUS_OK
+                                      ? completion->result.launcher_slot
+                                      : (uint8_t)pending_slot;
+            prv_finish_cart_probe(pending_slot, stored_slot);
+        }
+        return true;
+    }
+    return true;
 }
 
 void Launcher_Task(void)

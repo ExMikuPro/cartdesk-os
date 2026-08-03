@@ -379,6 +379,7 @@ add_library(lua_port STATIC
 target_include_directories(lua_port PUBLIC
         ${LUA_PORT_DIR}
         ${LUA_PORT_DIR}/modules
+        ${TASK_DIR}
         ${CART_DIR}
         ${DRIVER_DIR}/SDRAM
         ${FATFS_INCLUDES}
@@ -442,6 +443,7 @@ target_link_libraries(cart_core
 
 option(CARTDESK_BUILD_HOST_TESTS "Build host-side parser tests with a native toolchain" OFF)
 if(CARTDESK_BUILD_HOST_TESTS)
+    enable_testing()
     add_executable(xhgc_cart_host_test
             ${PROJECT_ROOT}/tests/xhgc_cart_host_test.c
             ${CART_DIR}/xhgc_cart.c
@@ -453,6 +455,13 @@ if(CARTDESK_BUILD_HOST_TESTS)
             XHGC_CART_NO_HW_CRC=1
     )
     target_include_directories(xhgc_cart_host_test PRIVATE ${CART_DIR})
+    add_test(NAME xhgc_cart_host_test COMMAND xhgc_cart_host_test)
+
+    add_executable(task_message_contract_test
+            ${PROJECT_ROOT}/tests/task_message_contract_test.c
+    )
+    target_include_directories(task_message_contract_test PRIVATE ${TASK_DIR})
+    add_test(NAME task_message_contract_test COMMAND task_message_contract_test)
 endif()
 
 # ==============================================================================
@@ -511,6 +520,9 @@ target_link_libraries(app_screen
 add_library(app_task STATIC
         ${TASK_DIR}/app_task.c
         ${TASK_DIR}/app_task.h
+        ${TASK_DIR}/task_messages.h
+        ${TASK_DIR}/cart_io_service.c
+        ${TASK_DIR}/cart_io_service.h
         ${TASK_DIR}/audio_task.c
         ${TASK_DIR}/audio_task.h
         ${TASK_DIR}/peripheral_task.c

@@ -28,6 +28,8 @@ bool lua_timer_owner_create(lua_State* L, uint32_t owner_id, uint32_t generation
 void lua_timer_owner_destroy(lua_State* L, uint32_t owner_id, uint32_t generation);
 void lua_timer_process(lua_State* L, uint32_t owner_id, uint32_t generation,
                        uint64_t now_ms);
+bool lua_storage_handle_io_completion(const cart_io_completion_t* completion);
+bool lua_storage_all_ready(void);
 
 static lua_foundation_owner_t g_owners[LUA_FOUNDATION_MAX_OWNERS];
 static lua_foundation_owner_t* g_current_owner;
@@ -170,4 +172,12 @@ void lua_foundation_process(lua_State* L, uint64_t now_ms) {
     if (!owner->active || owner->vm != main_thread) continue;
     lua_timer_process(main_thread, owner->owner_id, owner->generation, now_ms);
   }
+}
+
+bool lua_foundation_handle_io_completion(const cart_io_completion_t* completion) {
+  return lua_storage_handle_io_completion(completion);
+}
+
+bool lua_foundation_storage_ready(void) {
+  return lua_storage_all_ready();
 }

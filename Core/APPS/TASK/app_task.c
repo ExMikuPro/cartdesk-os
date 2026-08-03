@@ -4,11 +4,15 @@
 #include <stdint.h>
 #include <stdio.h>
 
+#include "FreeRTOS.h"
+#include "audio_task.h"
+#include "cart_io_service.h"
+#include "cart_log.h"
 #include "cmsis_os2.h"
 #include "flash.h"
 #include "lcd.h"
-#include "launcher_store.h"
 #include "lua_runtime_task.h"
+#include "lua_foundation.h"
 #include "lv_port_disp.h"
 #include "lv_port_indev.h"
 #include "lvgl.h"
@@ -16,8 +20,8 @@
 #include "main.h"
 #include "perf_monitor.h"
 #include "qflash_font.h"
-#include "quadspi.h"
 #include "runtime_stats.h"
+#include "task.h"
 #include "ui_screen_launcher.h"
 #if XHGC_MEM_OVERLAY_ENABLE
 #include "xhgc_mem_overlay.h"
@@ -25,29 +29,49 @@
 
 #define APP_TASK_PERIOD_MS 5u
 #define CARTDESK_ENABLE_QFLASH_FONT 1
+#define APP_COMPLETION_BUDGET 8u
+
+static cart_task_stats_t s_app_stats;
+
+static void process_worker_completions(void)
+{
+    uint32_t handled = 0u;
+    cart_io_completion_t io_completion;
+    while(handled < APP_COMPLETION_BUDGET &&
+          CartIoService_TryReceive(&io_completion)) {
+        if(!lua_foundation_handle_io_completion(&io_completion) &&
+           !Launcher_HandleIoCompletion(&io_completion)) {
+            if(io_completion.operation == CART_IO_OP_STORAGE_LOAD ||
+               io_completion.operation == CART_IO_OP_STORAGE_COMMIT ||
+               io_completion.operation == CART_IO_OP_STORAGE_CLEAR) {
+                CartTaskBuffer_Release(&io_completion.result.storage.buffer);
+            }
+            ++s_app_stats.stale_completion;
+        }
+        ++handled;
+    }
+
+    cart_audio_completion_t audio_completion;
+    while(handled < APP_COMPLETION_BUDGET &&
+          CartdeskAudioTask_TryReceive(&audio_completion)) {
+        (void)audio_completion;
+        ++handled;
+    }
+}
+
+void CartdeskAppTask_GetStats(cart_task_stats_t *stats)
+{
+    if(stats != NULL) *stats = s_app_stats;
+}
 
 #if CARTDESK_ENABLE_QFLASH_FONT
-static FLASH_Handle s_qflash;
-
 static void qflash_font_init_or_fallback(void)
 {
     uint32_t qflash_start = PerfMonitor_Begin();
-    FLASH_Status status = FLASH_Open(&s_qflash, &hqspi, 64u * 1024u * 1024u);
-    if (status == FLASH_OK) {
-        status = FLASH_BringUp(&s_qflash);
-    }
-    if (status == FLASH_OK) {
-        status = FLASH_EnableMemoryMapped(&s_qflash);
-    }
-
-    if (status != FLASH_OK) {
+    if (!CartIoService_WaitReady(CART_IO_READY_TIMEOUT_MS)) {
         PerfMonitor_End(PERF_MONITOR_STARTUP_QFLASH_INIT, qflash_start);
-        const FLASH_ErrorInfo *error = FLASH_LastError(&s_qflash);
-        printf("QFLASH font init failed: step=%s code=%d hal=%d qspi=0x%08lx; using built-in font\r\n",
-               error && error->step ? error->step : "?",
-               error ? error->code : -1,
-               error ? error->hal : -1,
-               error ? (unsigned long)error->qspi_error : 0ul);
+        CartLog_Write(CART_LOG_WARN, "app",
+                      "IO startup timeout; using built-in font and degraded storage");
         return;
     }
 
@@ -59,25 +83,18 @@ static void qflash_font_init_or_fallback(void)
     bool mounted = QFlashFont_Mount(font_pack, QFLASH_FONT_REGION_SIZE);
     PerfMonitor_End(PERF_MONITOR_STARTUP_QFLASH_MOUNT, mount_start);
     if (!mounted) {
-        printf("QFLASH font mount failed: %s; using built-in font\r\n",
-               QFlashFont_LastError());
+        CartLog_Write(CART_LOG_WARN, "app", QFlashFont_LastError());
     } else {
         QFlashFontStorageInfo storage_info;
         if (QFlashFont_GetStorageInfo(&storage_info)) {
-            printf("QFLASH font mounted: 16/20/24 px, default=%u px, storage=%lu/%lu bytes\r\n",
-                   (unsigned)QFLASH_FONT_DEFAULT_SIZE,
-                   (unsigned long)storage_info.used_bytes,
-                   (unsigned long)storage_info.capacity_bytes);
+            char message[128];
+            (void)snprintf(message, sizeof(message),
+                           "QFLASH font mounted: default=%u storage=%lu/%lu",
+                           (unsigned)QFLASH_FONT_DEFAULT_SIZE,
+                           (unsigned long)storage_info.used_bytes,
+                           (unsigned long)storage_info.capacity_bytes);
+            CartLog_Write(CART_LOG_INFO, "app", message);
         }
-    }
-
-    int store_result = LauncherStore_Init(&s_qflash);
-    if (store_result < 0) {
-        printf("Launcher store init warning: code=%d detail=%s\r\n",
-               store_result,
-               LauncherStore_LastError());
-    } else {
-        printf("Launcher store mounted\r\n");
     }
 }
 #endif
@@ -113,6 +130,18 @@ void CartdeskAppTask_Run(void *argument)
     uint32_t next_wake = osKernelGetTickCount();
     for (;;) {
         RuntimeStats_BeginSection(RUNTIME_STATS_SECTION_FRAME);
+        process_worker_completions();
+
+        if(CartIoService_IsQflashExclusive()) {
+            ++s_app_stats.heartbeat;
+            s_app_stats.last_heartbeat_tick = osKernelGetTickCount();
+            s_app_stats.stack_high_water =
+                (uint32_t)uxTaskGetStackHighWaterMark(NULL);
+            RuntimeStats_EndSection(RUNTIME_STATS_SECTION_FRAME);
+            RuntimeStats_UpdateSnapshot();
+            delay_until_next_period(&next_wake);
+            continue;
+        }
 
         RuntimeStats_BeginSection(RUNTIME_STATS_SECTION_LVGL);
         uint32_t lv_timer_start = PerfMonitor_Begin();
@@ -137,8 +166,10 @@ void CartdeskAppTask_Run(void *argument)
 #endif
 
         RuntimeStats_EndSection(RUNTIME_STATS_SECTION_FRAME);
+        ++s_app_stats.heartbeat;
+        s_app_stats.last_heartbeat_tick = osKernelGetTickCount();
+        s_app_stats.stack_high_water = (uint32_t)uxTaskGetStackHighWaterMark(NULL);
         RuntimeStats_UpdateSnapshot();
-        RuntimeStats_PrintEveryMs(1000u);
         delay_until_next_period(&next_wake);
     }
 }

@@ -51,6 +51,10 @@ payload size 和 IEEE CRC-32；提交经临时文件、sync、close、rename 完
 编解码，不要求变长 key 后的 value 地址按 4/8 字节对齐，可在启用 `UNALIGN_TRP` 的
 Cortex-M7 上安全读取。
 
+storage 文件由 io task 异步预载；`init(self)` 只在该 owner 的 load completion 返回后
+开始。`storage.commit()` 的 `true` 表示快照已成功加入 IO request queue，不表示 QFlash
+已经写完；失败、取消和旧 owner completion 由宿主回收，不会从 worker 调用 Lua。
+
 ## timer
 
 - `timer.now_ms()` 返回单调毫秒时间。

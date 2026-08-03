@@ -49,7 +49,10 @@ static void record_error(LuaRuntimeError error, const char *context)
 {
     s_last_error = error;
     if (context != NULL && error != LUA_RUNTIME_ERROR_NONE) {
-        printf("[lua-runtime] %s: %s\r\n", context, error_message(error));
+        char message[192];
+        (void)snprintf(message, sizeof(message), "%s: %s",
+                       context, error_message(error));
+        CartLog_Write(CART_LOG_ERROR, "lua-runtime", message);
     }
 }
 
@@ -119,7 +122,6 @@ bool LuaRuntimeTask_RequestRestart(void)
 void LuaRuntimeTask_Process(uint32_t now_ms)
 {
     int init_rc;
-    CartLog_Process();
 
     switch (s_state) {
         case LUA_RUNTIME_STATE_IDLE:

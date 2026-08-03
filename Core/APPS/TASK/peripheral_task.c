@@ -1,17 +1,13 @@
 #include "peripheral_task.h"
 
-#include "cmsis_os2.h"
-
-#define PERIPHERAL_TASK_EVENT_MASK 0x00000001u
+#include "cart_io_service.h"
+#include "crash_record.h"
 
 void CartdeskPeripheralTask_Run(void *argument)
 {
     (void)argument;
 
-    for (;;) {
-        (void)osThreadFlagsWait(PERIPHERAL_TASK_EVENT_MASK,
-                                osFlagsWaitAny,
-                                osWaitForever);
-        /* Reserved: process bounded GPIO/I2C/SPI/SD requests from a queue. */
-    }
+    (void)CartIoService_WorkerInitialize();
+    (void)CrashRecord_FlushPendingToSd();
+    CartIoService_WorkerRun();
 }

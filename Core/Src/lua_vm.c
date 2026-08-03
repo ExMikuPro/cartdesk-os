@@ -95,8 +95,7 @@ void lua_rt_log(const char *s)
     if (s == NULL) {
         return;
     }
-    fputs(s, stdout);
-    fflush(stdout);
+    CartLog_Write(CART_LOG_ERROR, "lua-vm", s);
 }
 
 /**
@@ -1522,7 +1521,6 @@ static int lua_rt_start_runtime(void)
     g_fixed_accumulator = 0.0f;
     g_runtime_started = true;
     lua_rt_scheduler_next_phase(LUA_SCHED_INIT);
-    lua_rt_drive_scheduler();
     return 0;
 }
 
@@ -1757,6 +1755,7 @@ void lua_update_task(void)
 
     const uint32_t now = lua_rt_time_ms();
     lua_foundation_process(g_L, lua_foundation_platform_uptime_ms());
+    if (!lua_foundation_storage_ready()) return;
     if (g_entry_thread) {
         if (lua_rt_poll_entry(now) == 1) {
             return;

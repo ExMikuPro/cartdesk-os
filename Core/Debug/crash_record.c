@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "cart_log.h"
 #include "fatfs.h"
 #include "stm32h7xx.h"
 
@@ -358,27 +359,35 @@ bool CrashRecord_FlushPendingToSd(void)
 
   FRESULT fr = SD_FATFS_Mount();
   if (fr != FR_OK) {
-    printf("[CRASH] SD mount failed: %u; record retained\r\n", (unsigned)fr);
+    char message[96];
+    (void)snprintf(message, sizeof(message), "SD mount failed: %u; record retained",
+                   (unsigned)fr);
+    CartLog_Write(CART_LOG_ERROR, "crash", message);
     SD_FATFS_InvalidateMount();
     return false;
   }
 
   fr = f_mkdir("0:/logs");
   if (fr != FR_OK && fr != FR_EXIST) {
-    printf("[CRASH] create logs directory failed: %u; record retained\r\n",
-           (unsigned)fr);
+    char message[96];
+    (void)snprintf(message, sizeof(message),
+                   "create logs directory failed: %u; record retained", (unsigned)fr);
+    CartLog_Write(CART_LOG_ERROR, "crash", message);
     return false;
   }
 
   size_t length = CrashRecord_FormatLog(&g_pending_record);
   if (length >= sizeof(g_log_buffer)) {
-    printf("[CRASH] log formatting overflow; record retained\r\n");
+    CartLog_Write(CART_LOG_ERROR, "crash", "log formatting overflow; record retained");
     return false;
   }
 
   fr = f_open(&g_crash_file, "0:/logs/crash.log", FA_WRITE | FA_OPEN_APPEND);
   if (fr != FR_OK) {
-    printf("[CRASH] open crash.log failed: %u; record retained\r\n", (unsigned)fr);
+    char message[96];
+    (void)snprintf(message, sizeof(message),
+                   "open crash.log failed: %u; record retained", (unsigned)fr);
+    CartLog_Write(CART_LOG_ERROR, "crash", message);
     return false;
   }
 
@@ -391,16 +400,18 @@ bool CrashRecord_FlushPendingToSd(void)
 
   if (write_fr != FR_OK || written != length || sync_fr != FR_OK ||
       close_fr != FR_OK) {
-    printf("[CRASH] SD write failed: write=%u bytes=%u/%lu sync=%u close=%u; "
-           "record retained\r\n",
-           (unsigned)write_fr, (unsigned)written, (unsigned long)length,
-           (unsigned)sync_fr, (unsigned)close_fr);
+    char message[160];
+    (void)snprintf(message, sizeof(message),
+                   "SD write failed: write=%u bytes=%u/%lu sync=%u close=%u; retained",
+                   (unsigned)write_fr, (unsigned)written, (unsigned long)length,
+                   (unsigned)sync_fr, (unsigned)close_fr);
+    CartLog_Write(CART_LOG_ERROR, "crash", message);
     SD_FATFS_InvalidateMount();
     return false;
   }
 
   CrashRecord_Clear();
-  printf("[CRASH] record appended to 0:/logs/crash.log\r\n");
+  CartLog_Write(CART_LOG_INFO, "crash", "record appended to 0:/logs/crash.log");
   return true;
 }
 

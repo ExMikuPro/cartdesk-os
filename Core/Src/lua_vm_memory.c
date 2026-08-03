@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "lua.h"
+#include "cart_log.h"
 #include "sdram.h"
 #include "xhgc_meminfo.h"
 
@@ -413,15 +414,13 @@ size_t lua_vm_heap_capacity_bytes(void)
  */
 void lua_vm_memory_print_stats(void)
 {
-    printf("Lua heap region: SDRAM_APP_ARENA\r\n");
-    printf("Lua heap base: 0x%08lX\r\n",
-           (unsigned long)(uintptr_t)g_lua_allocator.base);
-    printf("Lua heap size: %lu bytes\r\n",
-           (unsigned long)g_lua_allocator.stats.capacity);
-    printf("Lua heap used: %lu bytes\r\n",
-           (unsigned long)g_lua_allocator.stats.used);
-    printf("Lua heap peak: %lu bytes\r\n",
-           (unsigned long)g_lua_allocator.stats.peak);
-    printf("Lua heap alloc fail count: %lu\r\n",
-           (unsigned long)g_lua_allocator.stats.alloc_fail_count);
+    char message[160];
+    (void)snprintf(message, sizeof(message),
+                   "heap base=0x%08lX size=%lu used=%lu peak=%lu fail=%lu",
+                   (unsigned long)(uintptr_t)g_lua_allocator.base,
+                   (unsigned long)g_lua_allocator.stats.capacity,
+                   (unsigned long)g_lua_allocator.stats.used,
+                   (unsigned long)g_lua_allocator.stats.peak,
+                   (unsigned long)g_lua_allocator.stats.alloc_fail_count);
+    CartLog_Write(CART_LOG_INFO, "lua-memory", message);
 }

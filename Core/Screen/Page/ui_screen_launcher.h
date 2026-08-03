@@ -4,6 +4,7 @@
 #define UI_SCREEN_LAUNCHER_H
 
 #include "lvgl.h"
+#include "task_messages.h"
 
 /**
  * @brief 兼容旧入口，初始化并显示 Launcher
@@ -14,6 +15,7 @@ void Launcher_Init(void);
  * @brief 驱动 Launcher 延迟动作，需要在 LVGL 主循环中周期调用
  */
 void Launcher_Task(void);
+bool Launcher_HandleIoCompletion(const cart_io_completion_t *completion);
 
 /**
  * @brief 创建设计稿风格的启动器界面
