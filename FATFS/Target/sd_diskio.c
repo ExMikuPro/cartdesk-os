@@ -33,6 +33,8 @@
 #include <stdio.h>
 #include <stdbool.h>
 
+extern SD_HandleTypeDef hsd1;
+
 /* Private typedef -----------------------------------------------------------*/
 /* Private define ------------------------------------------------------------*/
 
@@ -243,6 +245,29 @@ Stat = STA_NOINIT;
   }
 
   return Stat;
+}
+
+DSTATUS SD_reinitialize(BYTE lun)
+{
+  (void)HAL_SD_Abort(&hsd1);
+  (void)HAL_SD_DeInit(&hsd1);
+
+#if (osCMSIS <= 0x20000U)
+  if (SDQueueID != NULL)
+  {
+    while (osMessageGet(SDQueueID, 0U).status == osEventMessage)
+    {
+    }
+  }
+#else
+  if (SDQueueID != NULL)
+  {
+    (void)osMessageQueueReset(SDQueueID);
+  }
+#endif
+
+  Stat = STA_NOINIT;
+  return SD_initialize(lun);
 }
 
 /**

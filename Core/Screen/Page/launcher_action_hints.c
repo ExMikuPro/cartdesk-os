@@ -139,6 +139,14 @@ static uint8_t prv_make_items(const LauncherActionHintState *state,
         };
     }
 
+    if (state->has_transfer && count < max_items) {
+        items[count++] = (LauncherHintItemModel) {
+            .action = LAUNCHER_ACTION_HINT_TRANSFER,
+            .text = state->transfer_active ? "Y 退出传输" : "Y 传输",
+            .enabled = state->can_transfer,
+        };
+    }
+
     if (count < max_items) {
         items[count++] = (LauncherHintItemModel) {
             .action = LAUNCHER_ACTION_HINT_BACK,

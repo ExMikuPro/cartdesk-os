@@ -16,6 +16,7 @@
 - LTDC 双缓冲显示链路，配合 VBlank/page flip 降低撕裂。
 - 64 MiB 外部 SDRAM 固定分区，用于 framebuffer、保留的 SDRAM_LVGL_HEAP、DMA pool、launcher cache 和应用资源区；LVGL runtime heap 当前位于片内 RAM。
 - SD 卡 `cart.bin` 读取，launcher 可显示卡带标题和 200x200 ARGB8888 预览图。
+- 专用 Debug preset 可由 Launcher 将整张板载 SD 卡切换为 USB MSC，传输期间独占 SD 并暂停固件侧 FatFs 访问。
 - Launcher 原生右下角操作提示栏，用字母和中文显示当前选中项操作。
 - Lua VM 运行时，支持生命周期函数和 `ui/assets/storage/timer/system/random/log/crc` Foundation API。
 - FreeRTOS/CMSIS-RTOS2 四任务模型：app 独占 LVGL/Lua，io 串行化运行期存储，audio 保留最小命令状态机，background 负责正常日志输出。
@@ -71,6 +72,7 @@ cmake --build --preset Release -j8
 | Preset | 作用 | 适用场景 |
 | --- | --- | --- |
 | `Debug` | 默认开发构建，使用 ARM 交叉工具链，关闭内存自测、LCD memory overlay 和实验性 cart 资源缓存。 | 日常开发、CLion 调试、常规实机验证。 |
+| `Debug-USB-SD-MSC` | 使用 `-Og -g3`，编入 Launcher 控制的 USB CDC/MSC 切换和 SD 卡 LUN 0 存储接口。 | 通过 USB 向板载 SD 卡传文件，同时保留 ST-Link/GDB 调试能力。 |
 | `Debug-Memory-Overlay` | 在 Debug 基础上启用 `XHGC_MEM_OVERLAY_ENABLE` 和启动即显示的 `XHGC_MEM_OVERLAY_BOOT_VISIBLE`。 | 低频观察 LCD 上的 meminfo snapshot，不适合正式固件或日常刷机。 |
 | `Debug-MemInfo-SelfTest` | 在 Debug 基础上启用 `XHGC_MEMINFO_SELFTEST_ENABLE`。 | 验证 `APP_ARENA_REST` / meminfo 的 `used`、`peak`、`reset`、`fail` 统计行为。 |
 | `Debug-DmaPool-SelfTest` | 在 Debug 基础上启用 `XHGC_DMA_POOL_SELFTEST_ENABLE`。 | 验证 `DMA_POOL` 的临时 buffer 分配、对齐、越界失败记录和 reset 统计。 |
@@ -91,6 +93,8 @@ build/Debug/cartdesk-os.map
 构建结束后，如果本机能找到 Python 3，CMake 会自动解析 map 文件并打印 SDRAM 各分区的静态使用情况。
 
 CLion / CMake preset、自测构建和实验构建说明见 [Docs/CLion_Build_Presets.md](Docs/CLion_Build_Presets.md)。
+
+USB SD 传输模式的构建、Launcher 操作、存储所有权和安全弹出要求见 [Docs/USB_SD_TRANSFER_MODE.md](Docs/USB_SD_TRANSFER_MODE.md)。
 
 Fault 记录布局、SD 重试策略、受控 UDF 测试和地址解析方法见
 [Docs/debug/crash-record.md](Docs/debug/crash-record.md)。

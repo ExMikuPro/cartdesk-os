@@ -82,6 +82,11 @@ void MX_USB_DEVICE_Init(void);
  */
 /* USER CODE BEGIN FD */
 
+#include <stdbool.h>
+
+bool USB_Device_SetSdMscMode(bool enabled);
+bool USB_Device_IsSdMscMode(void);
+
 /* USER CODE END FD */
 /**
   * @}

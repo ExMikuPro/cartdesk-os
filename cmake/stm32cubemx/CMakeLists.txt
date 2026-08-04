@@ -29,6 +29,10 @@ set(MX_Include_Dirs
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/CMSIS/Include
 )
 
+if(CARTDESK_USB_SD_MSC_ENABLE)
+    list(APPEND MX_Include_Dirs ${CARTDESK_USB_MSC_INCLUDE_DIR})
+endif()
+
 # STM32CubeMX generated application sources
 set(MX_Application_Src
     ${CMAKE_CURRENT_SOURCE_DIR}/../../USB_DEVICE/Target/usbd_conf.c
@@ -59,6 +63,10 @@ set(MX_Application_Src
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/syscalls.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../startup_stm32h743xx.s
 )
+
+if(CARTDESK_USB_SD_MSC_ENABLE)
+    list(APPEND MX_Application_Src ${CARTDESK_USB_MSC_APP_SOURCES})
+endif()
 
 # STM32 HAL/LL Drivers
 set(STM32_Drivers_Src
@@ -118,6 +126,9 @@ set(USB_Device_Library_Src
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/ST/STM32_USB_Device_Library/Core/Src/usbd_ioreq.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/ST/STM32_USB_Device_Library/Class/CDC/Src/usbd_cdc.c
 )
+if(CARTDESK_USB_SD_MSC_ENABLE)
+    list(APPEND USB_Device_Library_Src ${CARTDESK_USB_MSC_SOURCES})
+endif()
 set(FreeRTOS_Src
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/FreeRTOS/Source/portable/Common/mpu_wrappers_v2.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Middlewares/Third_Party/FreeRTOS/Source/croutine.c

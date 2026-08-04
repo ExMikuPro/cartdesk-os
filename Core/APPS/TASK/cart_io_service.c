@@ -40,6 +40,8 @@ static uint32_t s_cancelled_owners[CART_IO_CANCELLED_OWNER_CAPACITY];
 static uint32_t s_cancelled_owner_cursor;
 static cart_task_stats_t s_stats;
 static volatile uint32_t s_qflash_pending;
+static volatile uint32_t s_sd_pending;
+static volatile bool s_sd_exclusive;
 
 static bool operation_uses_qflash(cart_io_operation_t operation)
 {
@@ -48,6 +50,14 @@ static bool operation_uses_qflash(cart_io_operation_t operation)
            operation == CART_IO_OP_STORAGE_LOAD ||
            operation == CART_IO_OP_STORAGE_COMMIT ||
            operation == CART_IO_OP_STORAGE_CLEAR;
+}
+
+static bool operation_uses_sd(cart_io_operation_t operation)
+{
+    return operation == CART_IO_OP_CRASH_LOG_APPEND ||
+           operation == CART_IO_OP_CART_PROBE ||
+           operation == CART_IO_OP_CART_READ_INFO ||
+           operation == CART_IO_OP_CART_READ_RESOURCE;
 }
 
 static void storage_paths(uint64_t cart_id, char *dir, char *path, char *temp)
@@ -274,6 +284,8 @@ bool CartIoService_Init(void)
     memset(s_cancelled_owners, 0, sizeof(s_cancelled_owners));
     s_cancelled_owner_cursor = 0u;
     s_qflash_pending = 0u;
+    s_sd_pending = 0u;
+    s_sd_exclusive = false;
     s_request_queue = osMessageQueueNew(CART_IO_REQUEST_QUEUE_DEPTH,
                                         sizeof(cart_io_request_t), NULL);
     s_completion_queue = osMessageQueueNew(CART_IO_COMPLETION_QUEUE_DEPTH,
@@ -315,14 +327,31 @@ uint32_t CartIoService_NextRequestId(void)
 
 bool CartIoService_Submit(const cart_io_request_t *request, uint32_t timeout_ms)
 {
+    bool uses_sd;
+
     if (request == NULL || request->request_id == 0u ||
         request->operation == CART_IO_OP_NONE || owner_is_cancelled(request->owner_id)) {
         return false;
+    }
+    uses_sd = operation_uses_sd(request->operation);
+    if (uses_sd) {
+        taskENTER_CRITICAL();
+        if (s_sd_exclusive) {
+            taskEXIT_CRITICAL();
+            return false;
+        }
+        ++s_sd_pending;
+        taskEXIT_CRITICAL();
     }
     cart_io_request_t queued = *request;
     queued.timeout_ms = timeout_ms;
     queued.submitted_tick = osKernelGetTickCount();
     if (osMessageQueuePut(s_request_queue, &queued, 0u, 0u) != osOK) {
+        if (uses_sd) {
+            taskENTER_CRITICAL();
+            if (s_sd_pending > 0u) --s_sd_pending;
+            taskEXIT_CRITICAL();
+        }
         ++s_stats.queue_full;
         return false;
     }
@@ -380,6 +409,31 @@ bool CartIoService_WaitReady(uint32_t timeout_ms)
 bool CartIoService_IsQflashExclusive(void)
 {
     return s_qflash_pending != 0u;
+}
+
+bool CartIoService_BeginSdExclusive(void)
+{
+    bool acquired = false;
+
+    taskENTER_CRITICAL();
+    if (!s_sd_exclusive && s_sd_pending == 0u) {
+        s_sd_exclusive = true;
+        acquired = true;
+    }
+    taskEXIT_CRITICAL();
+    return acquired;
+}
+
+void CartIoService_EndSdExclusive(void)
+{
+    taskENTER_CRITICAL();
+    s_sd_exclusive = false;
+    taskEXIT_CRITICAL();
+}
+
+bool CartIoService_IsSdExclusive(void)
+{
+    return s_sd_exclusive;
 }
 
 void CartIoService_GetStats(cart_task_stats_t *stats)
@@ -452,6 +506,11 @@ void CartIoService_WorkerRun(void)
         if (operation_uses_qflash(request.operation)) {
             taskENTER_CRITICAL();
             if (s_qflash_pending > 0u) --s_qflash_pending;
+            taskEXIT_CRITICAL();
+        }
+        if (operation_uses_sd(request.operation)) {
+            taskENTER_CRITICAL();
+            if (s_sd_pending > 0u) --s_sd_pending;
             taskEXIT_CRITICAL();
         }
     }

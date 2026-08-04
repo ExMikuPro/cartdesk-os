@@ -13,6 +13,9 @@
 typedef struct {
     bool has_selection;
     bool can_start;
+    bool has_transfer;
+    bool can_transfer;
+    bool transfer_active;
     bool has_info;
     bool has_favorite_state;
     bool is_favorite;
@@ -20,6 +23,7 @@ typedef struct {
 
 typedef enum {
     LAUNCHER_ACTION_HINT_START,
+    LAUNCHER_ACTION_HINT_TRANSFER,
     LAUNCHER_ACTION_HINT_BACK,
     LAUNCHER_ACTION_HINT_INFO,
 } LauncherActionHintAction;

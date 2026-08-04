@@ -24,6 +24,9 @@
 #include "usbd_def.h"
 #include "usbd_core.h"
 #include "usbd_cdc.h"
+#if CARTDESK_USB_SD_MSC_ENABLE
+#include "usbd_msc.h"
+#endif
 
 /* USER CODE BEGIN Includes */
 
@@ -639,8 +642,16 @@ USBD_StatusTypeDef USBD_LL_SetTestMode(USBD_HandleTypeDef *pdev, uint8_t testmod
 void *USBD_static_malloc(uint32_t size)
 {
   UNUSED(size);
+#if CARTDESK_USB_SD_MSC_ENABLE
+  static uint32_t mem[((sizeof(USBD_CDC_HandleTypeDef) >
+                        sizeof(USBD_MSC_BOT_HandleTypeDef)
+                            ? sizeof(USBD_CDC_HandleTypeDef)
+                            : sizeof(USBD_MSC_BOT_HandleTypeDef)) / 4U) + 1U]
+      __attribute__((section(".usb_ram_data"), aligned(32)));
+#else
   static uint32_t mem[(sizeof(USBD_CDC_HandleTypeDef)/4)+1]
       __attribute__((section(".usb_ram_data"), aligned(32)));
+#endif
   return mem;
 }
 

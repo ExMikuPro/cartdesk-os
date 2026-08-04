@@ -53,6 +53,7 @@ set(FATFS_APP_DIR ${FATFS_DIR}/App)
 set(FATFS_TARGET_DIR ${FATFS_DIR}/Target)
 set(FATFS_MIDDLEWARE_DIR ${PROJECT_ROOT}/Middlewares/Third_Party/FatFs/src)
 set(FREERTOS_DIR ${PROJECT_ROOT}/Middlewares/Third_Party/FreeRTOS/Source)
+include(${PROJECT_ROOT}/cmake/UsbSdMsc.cmake)
 
 set(STM32_HAL_INCLUDES
         ${PROJECT_ROOT}/Drivers/STM32H7xx_HAL_Driver/Inc
@@ -150,6 +151,10 @@ if(XHGC_MEM_OVERLAY_ENABLE)
     if(XHGC_MEM_OVERLAY_BOOT_VISIBLE)
         list(APPEND COMMON_DEFINES XHGC_MEM_OVERLAY_BOOT_VISIBLE=1)
     endif()
+endif()
+
+if(CARTDESK_USB_SD_MSC_ENABLE)
+    list(APPEND COMMON_DEFINES CARTDESK_USB_SD_MSC_ENABLE=1)
 endif()
 
 add_library(cartdesk_common INTERFACE)
@@ -471,6 +476,8 @@ add_library(lua_runtime STATIC
         ${TASK_DIR}/lua_runtime_task.c
         ${TASK_DIR}/lua_runtime_task.h
         ${TASK_DIR}/lua_foundation_platform.c
+        ${TASK_DIR}/usb_sd_transfer_mode.c
+        ${TASK_DIR}/usb_sd_transfer_mode.h
 )
 
 target_include_directories(lua_runtime PUBLIC ${TASK_DIR})
@@ -480,6 +487,9 @@ target_include_directories(lua_runtime PRIVATE
         ${PROJECT_ROOT}/Middlewares/ST/STM32_USB_Device_Library/Core/Inc
         ${PROJECT_ROOT}/Middlewares/ST/STM32_USB_Device_Library/Class/CDC/Inc
 )
+if(CARTDESK_USB_SD_MSC_ENABLE)
+    target_include_directories(lua_runtime PRIVATE ${CARTDESK_USB_MSC_INCLUDE_DIR})
+endif()
 target_link_libraries(lua_runtime PUBLIC cartdesk_common lua_port)
 target_compile_definitions(lua_runtime PRIVATE CARTDESK_FIRMWARE_VERSION="0.1.0")
 

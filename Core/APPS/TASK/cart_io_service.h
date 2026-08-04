@@ -25,5 +25,8 @@ bool CartIoService_CancelOwner(uint32_t owner_id);
 bool CartIoService_IsReady(void);
 bool CartIoService_WaitReady(uint32_t timeout_ms);
 bool CartIoService_IsQflashExclusive(void);
+bool CartIoService_BeginSdExclusive(void);
+void CartIoService_EndSdExclusive(void);
+bool CartIoService_IsSdExclusive(void);
 void CartIoService_GetStats(cart_task_stats_t *stats);
 void CartTaskBuffer_Release(cart_task_buffer_t *buffer);

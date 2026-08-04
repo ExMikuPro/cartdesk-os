@@ -25,6 +25,21 @@
             }
         },
         {
+            "name": "Debug-USB-SD-MSC",
+            "displayName": "Debug USB SD 传输模式",
+            "description": "使用 -Og/-g3 构建，并允许 Launcher 将板载 SD 卡切换为 USB MSC；适合 GDB 实机调试。",
+            "inherits": "default",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "CARTDESK_USB_SD_MSC_ENABLE": "ON",
+                "XHGC_MEMINFO_SELFTEST_ENABLE": "OFF",
+                "XHGC_DMA_POOL_SELFTEST_ENABLE": "OFF",
+                "XHGC_MEM_OVERLAY_ENABLE": "OFF",
+                "XHGC_MEM_OVERLAY_BOOT_VISIBLE": "OFF",
+                "XHGC_ENABLE_EXPERIMENTAL_CART_RESOURCE_CACHE": "OFF"
+            }
+        },
+        {
             "name": "Debug-Memory-Overlay",
             "displayName": "Debug LCD 内存 Overlay",
             "description": "启用 LCD Memory Overlay，用于实机低频观察 meminfo snapshot。默认固件和发布构建不应使用此配置。",
@@ -142,6 +157,13 @@
         {
             "name": "Debug",
             "configurePreset": "Debug",
+            "targets": [
+                "cartdesk-os"
+            ]
+        },
+        {
+            "name": "Debug-USB-SD-MSC",
+            "configurePreset": "Debug-USB-SD-MSC",
             "targets": [
                 "cartdesk-os"
             ]

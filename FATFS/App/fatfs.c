@@ -69,6 +69,22 @@ FRESULT SD_FATFS_Mount(void)
   return fr;
 }
 
+FRESULT SD_FATFS_Unmount(void)
+{
+  const char *path = (SDPath[0] != '\0') ? SDPath : "0:";
+  FRESULT fr = f_mount(NULL, path, 1);
+  if (fr == FR_OK) {
+    s_sd_fatfs_mounted = 0U;
+  }
+  return fr;
+}
+
+FRESULT SD_FATFS_Reinitialize(void)
+{
+  s_sd_fatfs_mounted = 0U;
+  return SD_reinitialize(0U) == 0U ? FR_OK : FR_DISK_ERR;
+}
+
 void SD_FATFS_InvalidateMount(void)
 {
   s_sd_fatfs_mounted = 0;

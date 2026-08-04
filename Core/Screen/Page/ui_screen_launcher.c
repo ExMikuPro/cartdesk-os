@@ -16,6 +16,7 @@
 #include "cart_system_icons.h"
 #include "launcher_store.h"
 #include "lua_runtime_task.h"
+#include "usb_sd_transfer_mode.h"
 #include "launcher_action_hints.h"
 #include "runtime_stats.h"
 #include "perf_monitor.h"
@@ -71,6 +72,7 @@
 #define LAUNCHER_VISIBLE_ICON_COUNT  4u
 #define CART_PROBE_START_DELAY_MS    150u
 #define CART_PROBE_PERIOD_MS         1000u
+#define USB_TRANSFER_ACTION_GUARD_MS 1000u
 
 /* ------------------------------------------------------------------ */
 /*  私有状态                                                            */
@@ -115,6 +117,7 @@ static int s_inserted_slot = -1;
 static uint32_t s_next_cart_probe_ms = 0u;
 static LauncherActionHints s_action_hints;
 static bool s_app_launch_armed = false;
+static uint32_t s_usb_transfer_action_ready_ms = 0u;
 static uint32_t s_io_request_id = 0u;
 static cart_io_operation_t s_io_pending_operation = CART_IO_OP_NONE;
 static int s_io_pending_slot = -1;
@@ -161,17 +164,22 @@ static LauncherActionHintState prv_make_action_hint_state(void)
     LauncherActionHintState state = {
         .has_selection = (s_selected_index >= 0 && s_selected_index < DESIGN_APP_COUNT),
         .can_start = false,
+        .has_transfer = UsbSdTransferMode_IsAvailable(),
+        .can_transfer = false,
+        .transfer_active = UsbSdTransferMode_IsActive(),
         .has_info = false,
         .has_favorite_state = false,
         .is_favorite = false,
     };
 
     if (state.has_selection) {
-        state.can_start = s_cart_present
+        state.can_start = !state.transfer_active
+                          && s_cart_present
                           && (s_selected_index == s_inserted_slot)
                           && LuaRuntimeTask_IsIdle();
         state.has_info = s_apps[s_selected_index].valid;
     }
+    state.can_transfer = state.has_transfer && LuaRuntimeTask_IsIdle();
 
     /*
      * Detail and favorite persistence are not implemented yet.
@@ -291,7 +299,8 @@ static void prv_format_file_size(char *dst, uint32_t dst_size, uint64_t bytes)
 
 static bool prv_selected_app_can_start(void)
 {
-    return s_cart_present
+    return !UsbSdTransferMode_IsActive()
+           && s_cart_present
            && (s_selected_index == s_inserted_slot)
            && LuaRuntimeTask_IsIdle();
 }
@@ -605,6 +614,29 @@ static void prv_action_hint_clicked_cb(LauncherActionHintAction action, void *us
     switch (action) {
     case LAUNCHER_ACTION_HINT_START:
         prv_start_selected_app();
+        break;
+    case LAUNCHER_ACTION_HINT_TRANSFER:
+        {
+            uint32_t now = HAL_GetTick();
+            if ((int32_t)(now - s_usb_transfer_action_ready_ms) < 0) {
+                break;
+            }
+            s_usb_transfer_action_ready_ms = now + USB_TRANSFER_ACTION_GUARD_MS;
+        }
+        if (UsbSdTransferMode_IsActive()) {
+            if (UsbSdTransferMode_Exit()) {
+                prv_set_status_text("USB transfer ended; scanning SD card");
+                s_next_cart_probe_ms = HAL_GetTick();
+            } else {
+                prv_set_status_text(UsbSdTransferMode_GetLastError());
+            }
+        } else if (UsbSdTransferMode_Enter()) {
+            s_app_launch_armed = false;
+            prv_set_status_text("USB transfer active; eject on host before exit");
+        } else {
+            prv_set_status_text(UsbSdTransferMode_GetLastError());
+        }
+        prv_update_action_hints();
         break;
     case LAUNCHER_ACTION_HINT_INFO:
         prv_show_selected_app_info();
@@ -1069,7 +1101,8 @@ void Launcher_Task(void)
         }
 
         uint32_t now = HAL_GetTick();
-        if((int32_t)(now - s_next_cart_probe_ms) >= 0) {
+        if(!UsbSdTransferMode_IsActive() &&
+           (int32_t)(now - s_next_cart_probe_ms) >= 0) {
             s_next_cart_probe_ms = now + CART_PROBE_PERIOD_MS;
             prv_probe_game_card();
         }

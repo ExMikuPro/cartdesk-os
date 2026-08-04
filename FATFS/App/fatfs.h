@@ -41,6 +41,8 @@ void MX_FATFS_Init(void);
 
 /* USER CODE BEGIN Prototypes */
 FRESULT SD_FATFS_Mount(void);
+FRESULT SD_FATFS_Unmount(void);
+FRESULT SD_FATFS_Reinitialize(void);
 void SD_FATFS_InvalidateMount(void);
 bool SD_FATFS_IsMounted(void);
 

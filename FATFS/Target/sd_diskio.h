@@ -35,6 +35,7 @@
 extern const Diskio_drvTypeDef  SD_Driver;
 
 /* USER CODE BEGIN lastSection */
+DSTATUS SD_reinitialize(BYTE lun);
 /* can be used to modify / undefine previous code or add new definitions */
 /* USER CODE END lastSection */
 
