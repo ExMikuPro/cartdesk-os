@@ -18,6 +18,7 @@ message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 option(CARTDESK_ENABLE_BOARD_TESTS "Run board-level test diagnostics at startup" OFF)
 option(CARTDESK_CRASH_TEST_ENABLE "Trigger one deliberate UDF crash at startup" OFF)
 option(CARTDESK_CRASH_BREAK_WHEN_DEBUGGED "Break after saving a crash when a debugger is attached" OFF)
+option(CARTDESK_HOST_TESTS_ONLY "Configure only native host tests" OFF)
 option(XHGC_MEMINFO_SELFTEST_ENABLE "Run APP_ARENA_REST meminfo selftest in Debug builds" OFF)
 option(XHGC_DMA_POOL_SELFTEST_ENABLE "Run DMA_POOL allocator meminfo selftest in Debug builds" OFF)
 option(XHGC_MEM_OVERLAY_ENABLE "Enable LCD memory debug overlay" OFF)
@@ -54,6 +55,68 @@ set(FATFS_TARGET_DIR ${FATFS_DIR}/Target)
 set(FATFS_MIDDLEWARE_DIR ${PROJECT_ROOT}/Middlewares/Third_Party/FatFs/src)
 set(FREERTOS_DIR ${PROJECT_ROOT}/Middlewares/Third_Party/FreeRTOS/Source)
 include(${PROJECT_ROOT}/cmake/UsbSdMsc.cmake)
+
+if(CARTDESK_HOST_TESTS_ONLY)
+    enable_testing()
+    set(CARTDESK_PROJECT_ROOT ${PROJECT_ROOT})
+    add_subdirectory(${TOOLS_DIR}/luavm host_luavm)
+
+    add_executable(xhgc_cart_host_test
+            ${PROJECT_ROOT}/tests/xhgc_cart_host_test.c
+            ${CART_DIR}/xhgc_cart.c
+            ${CART_DIR}/xhgc_cart.h
+    )
+    target_compile_definitions(xhgc_cart_host_test PRIVATE
+            XHGC_CART_NO_FATFS=1
+            XHGC_CART_NO_FLASH=1
+            XHGC_CART_NO_HW_CRC=1
+    )
+    target_include_directories(xhgc_cart_host_test PRIVATE ${CART_DIR})
+
+    add_executable(task_message_contract_test
+            ${PROJECT_ROOT}/tests/task_message_contract_test.c
+    )
+    target_include_directories(task_message_contract_test PRIVATE ${TASK_DIR})
+
+    if(NOT MSVC)
+        target_compile_options(xhgc_cart_host_test PRIVATE
+                -Wall -Wextra -Werror -Wconversion -Wsign-conversion)
+        target_compile_options(task_message_contract_test PRIVATE
+                -Wall -Wextra -Werror -Wconversion -Wsign-conversion)
+    endif()
+
+    foreach(host_test IN ITEMS
+            xhgc_cart_host_test
+            task_message_contract_test
+            lua_runtime_task_test
+            lua_ui_owner_test
+            lua_foundation_owner_test
+            lua_crc_test
+            lua_random_test
+            lua_storage_test
+            lua_assets_test
+            lua_timer_test
+            lua_vm_lifecycle_test)
+        add_test(NAME ${host_test} COMMAND $<TARGET_FILE:${host_test}>)
+    endforeach()
+
+    add_test(NAME luavm_self_test COMMAND $<TARGET_FILE:luavm> --self-test)
+    add_test(NAME lua_style_lint
+             COMMAND bash ${PROJECT_ROOT}/tests/lua/style_contract_lint.sh)
+    add_test(NAME lua_syntax_compile
+             COMMAND ${CMAKE_COMMAND}
+                     -DLUAVM=$<TARGET_FILE:luavm>
+                     -DSOURCE_ROOT=${PROJECT_ROOT}
+                     -DBINARY_ROOT=${CMAKE_BINARY_DIR}
+                     -P ${PROJECT_ROOT}/tests/lua/syntax_compile_test.cmake)
+
+    set_tests_properties(lua_random_test lua_storage_test lua_assets_test
+            lua_timer_test
+            lua_vm_lifecycle_test
+            PROPERTIES ENVIRONMENT
+            "ASAN_OPTIONS=detect_leaks=1;UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1")
+    return()
+endif()
 
 set(STM32_HAL_INCLUDES
         ${PROJECT_ROOT}/Drivers/STM32H7xx_HAL_Driver/Inc
@@ -533,6 +596,8 @@ add_library(app_task STATIC
         ${TASK_DIR}/task_messages.h
         ${TASK_DIR}/cart_io_service.c
         ${TASK_DIR}/cart_io_service.h
+        ${TASK_DIR}/cart_storage_format.c
+        ${TASK_DIR}/cart_storage_format.h
         ${TASK_DIR}/audio_task.c
         ${TASK_DIR}/audio_task.h
         ${TASK_DIR}/peripheral_task.c

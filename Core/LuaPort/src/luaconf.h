@@ -156,10 +156,10 @@
 #define LUA_FLOAT_TYPE  LUA_FLOAT_DOUBLE
 
 #else           /* }{ */
-/* STM32H743: int(32) + double(H743 has hw double FPU) */
+/* STM32H743: 64-bit Lua integers + double precision numbers. */
 
 #ifndef LUA_INT_TYPE
-#define LUA_INT_TYPE    LUA_INT_INT
+#define LUA_INT_TYPE    LUA_INT_LONGLONG
 #endif
 #ifndef LUA_FLOAT_TYPE
 #define LUA_FLOAT_TYPE  LUA_FLOAT_DOUBLE
@@ -803,4 +803,3 @@
 
 
 #endif
-

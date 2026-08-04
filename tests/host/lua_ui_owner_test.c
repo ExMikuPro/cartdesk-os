@@ -2,6 +2,7 @@
 #undef NDEBUG
 #endif
 #include <assert.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -13,6 +14,7 @@
 static lv_obj_t s_screen;
 static unsigned s_delete_count;
 static unsigned s_cleanup_count;
+static bool s_fail_next_create;
 static uint32_t s_input_owner;
 static uint32_t s_input_generation;
 static char s_input_id[LUA_INPUT_ACTION_ID_MAX];
@@ -22,6 +24,10 @@ lv_obj_t* lv_screen_active(void) {
 }
 
 lv_obj_t* lv_obj_create(lv_obj_t* parent) {
+  if (s_fail_next_create) {
+    s_fail_next_create = false;
+    return NULL;
+  }
   lv_obj_t* object = (lv_obj_t*)calloc(1u, sizeof(*object));
   assert(object != NULL);
   object->parent = parent;
@@ -321,6 +327,32 @@ int main(void) {
   lua_settop(L, 0);
 
   lua_ui_owner_destroy(L, 2u, 20u);
+
+  assert(lua_ui_owner_create(L, 3u, 30u));
+  lua_ui_owner_enter(L, 3u, 30u);
+  lua_settop(L, 0);
+  luaopen_ui_container(L);
+  lua_newtable(L);
+  s_fail_next_create = true;
+  lua_call(L, 1, LUA_MULTRET);
+  assert(lua_isnil(L, -2));
+  assert(strstr(lua_tostring(L, -1), "failed to create container") != NULL);
+  lua_settop(L, 0);
+  (void)lua_gc(L, LUA_GCCOLLECT, 0);
+
+  for (unsigned i = 0u; i < 1000u; ++i) {
+    lua_settop(L, 0);
+    luaopen_ui_container(L);
+    lua_newtable(L);
+    lua_call(L, 1, 1);
+    lua_ui_handle_t* stress_handle = lua_ui_handle_test(L, -1);
+    assert(stress_handle != NULL && stress_handle->alive);
+    assert(lua_ui_delete(L) == 1 && lua_toboolean(L, -1));
+    assert(!stress_handle->alive && stress_handle->object == NULL);
+  }
+  lua_settop(L, 0);
+  lua_ui_owner_leave();
+  lua_ui_owner_destroy(L, 3u, 30u);
   lua_close(L);
   return 0;
 }

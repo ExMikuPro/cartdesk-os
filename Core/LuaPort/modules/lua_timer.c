@@ -9,6 +9,7 @@
 #include "cart_log.h"
 #include "lua_foundation.h"
 #include "lua_foundation_platform.h"
+#include "lua_vm.h"
 #include "lua_ui.h"
 
 #define LUA_TIMER_HANDLE_MT "cartdesk.timer_handle"
@@ -247,13 +248,23 @@ void lua_timer_process(lua_State* L, uint32_t id, uint32_t gen, uint64_t now_ms)
       lua_foundation_owner_leave();
       if (rc != LUA_OK) {
         const char* message = lua_tostring(L, -1);
+        char error_message[LUA_RUNTIME_ERROR_MESSAGE_MAX];
+        char app_id[LUA_FOUNDATION_APP_ID_MAX + 1u];
+        (void)snprintf(error_message, sizeof(error_message), "%s",
+                       message ? message : "timer callback failed");
+        app_id[0] = '\0';
         lua_foundation_owner_enter(L, id, gen);
         lua_foundation_owner_view_t view;
-        if (lua_foundation_current(L, &view))
+        if (lua_foundation_current(L, &view)) {
+          (void)snprintf(app_id, sizeof(app_id), "%s", view.app_id);
           CartLog_Write(CART_LOG_ERROR, view.app_id,
-                        message ? message : "timer callback failed");
+                        error_message);
+        }
         lua_foundation_owner_leave();
-        if (handle->active) deactivate(handle);
+        if (handle->registered) deactivate(handle);
+        lua_settop(L, base);
+        lua_vm_report_timer_error(id, gen, app_id, error_message);
+        return;
       } else if (!repeating && handle->registered) {
         deactivate(handle);
       }

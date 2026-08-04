@@ -9,6 +9,7 @@
 #include "stm32h743xx.h"
 
 #include "cart_bin.h"
+#include "cart_storage_format.h"
 #include "crash_record.h"
 #include "crc.h"
 #include "flash.h"
@@ -20,17 +21,6 @@
 #define CART_IO_READY_FLAG 0x00000001u
 #define CART_IO_CANCELLED_OWNER_CAPACITY 32u
 #define CART_IO_QFLASH_SIZE (64u * 1024u * 1024u)
-#define CART_IO_STORAGE_MAGIC 0x56534B43u
-#define CART_IO_STORAGE_VERSION 1u
-
-typedef struct __attribute__((packed)) {
-    uint32_t magic;
-    uint16_t version;
-    uint16_t entry_count;
-    uint32_t payload_size;
-    uint32_t crc32;
-} cart_io_storage_header_t;
-
 static osMessageQueueId_t s_request_queue;
 static osMessageQueueId_t s_completion_queue;
 static osEventFlagsId_t s_state_flags;
@@ -95,22 +85,25 @@ static cart_io_status_t storage_load(const cart_io_request_t *request,
             return CART_IO_STATUS_NOT_FOUND;
         }
     }
-    cart_io_storage_header_t header;
-    if(rc >= 0 && lfs_file_read(&g_lfs, &file, &header, sizeof(header)) !=
+    uint8_t header[CART_STORAGE_HEADER_SIZE];
+    cart_storage_metadata_t metadata;
+    if(rc >= 0 && lfs_file_read(&g_lfs, &file, header, sizeof(header)) !=
                     (lfs_ssize_t)sizeof(header)) rc = LFS_ERR_CORRUPT;
-    if(rc >= 0 && (header.magic != CART_IO_STORAGE_MAGIC ||
-                   header.version != CART_IO_STORAGE_VERSION ||
-                   header.payload_size > buffer.capacity)) rc = LFS_ERR_CORRUPT;
-    if(rc >= 0 && lfs_file_read(&g_lfs, &file, buffer.data, header.payload_size) !=
-                    (lfs_ssize_t)header.payload_size) rc = LFS_ERR_CORRUPT;
-    if(rc >= 0 && lfs_file_size(&g_lfs, &file) !=
-                    (lfs_soff_t)(sizeof(header) + header.payload_size))
+    if(rc >= 0 && !CartStorageFormat_DecodeHeader(header, buffer.capacity,
+                                                   &metadata))
         rc = LFS_ERR_CORRUPT;
-    if(rc >= 0 && CRC32_IEEE_Calculate(buffer.data, header.payload_size) != header.crc32)
+    if(rc >= 0 && lfs_file_read(&g_lfs, &file, buffer.data,
+                                metadata.payload_size) !=
+                    (lfs_ssize_t)metadata.payload_size) rc = LFS_ERR_CORRUPT;
+    if(rc >= 0 && lfs_file_size(&g_lfs, &file) !=
+                    (lfs_soff_t)(sizeof(header) + metadata.payload_size))
+        rc = LFS_ERR_CORRUPT;
+    if(rc >= 0 && !CartStorageFormat_VerifyPayload(
+                       &metadata, buffer.data, metadata.payload_size))
         rc = LFS_ERR_CORRUPT;
     if(rc >= 0) {
-        completion->result.storage.buffer.length = header.payload_size;
-        completion->result.storage.entry_count = header.entry_count;
+        completion->result.storage.buffer.length = metadata.payload_size;
+        completion->result.storage.entry_count = metadata.entry_count;
     }
     (void)lfs_file_close(&g_lfs, &file);
     (void)LFS_EnableMappedRead(1);
@@ -142,11 +135,9 @@ static cart_io_status_t storage_commit(const cart_io_request_t *request,
                            LFS_O_WRONLY | LFS_O_CREAT | LFS_O_TRUNC);
         opened = rc >= 0;
     }
-    cart_io_storage_header_t header = {
-        CART_IO_STORAGE_MAGIC, CART_IO_STORAGE_VERSION,
-        request->params.storage.entry_count, buffer.length,
-        CRC32_IEEE_Calculate(buffer.data, buffer.length),
-    };
+    uint8_t header[CART_STORAGE_HEADER_SIZE];
+    CartStorageFormat_EncodeHeader(header, request->params.storage.entry_count,
+                                   buffer.data, buffer.length);
     if(rc >= 0 && lfs_file_write(&g_lfs, &file, &header, sizeof(header)) !=
                     (lfs_ssize_t)sizeof(header)) rc = LFS_ERR_IO;
     if(rc >= 0 && lfs_file_write(&g_lfs, &file, buffer.data, buffer.length) !=

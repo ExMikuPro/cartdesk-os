@@ -110,6 +110,7 @@ static lv_obj_t *s_info_popup = NULL;
 static lv_obj_t *s_launcher_screen = NULL;
 static lv_obj_t *s_runtime_screen = NULL;
 static bool s_runtime_exit_pending = false;
+static bool s_runtime_error_visible = false;
 static bool s_launcher_assets_initialized = false;
 static uint8_t s_cached_icon_cursor = 0u;
 static bool s_cart_present = false;
@@ -135,6 +136,35 @@ volatile uint32_t g_phase3_repeat_completed = 0u;
 volatile uint32_t g_phase3_repeat_failures = 0u;
 volatile uint32_t g_phase3_repeat_state = 0u;
 static uint32_t s_phase3_repeat_dwell_count = 0u;
+
+volatile uint32_t g_stability_board_command = 0u;
+volatile uint32_t g_stability_board_target = 50u;
+volatile uint32_t g_stability_board_completed = 0u;
+volatile uint32_t g_stability_board_failures = 0u;
+volatile uint32_t g_stability_board_state = 0u;
+volatile uint32_t g_stability_board_last_stage = 0u;
+static uint32_t s_stability_board_dwell_count = 0u;
+
+static const char s_stability_board_source[] =
+    "local function reject(a,b) local v,e=random.integer(a,b) "
+    "assert(v==nil and e=='random range exceeds 32-bit entropy') end\n"
+    "function init(self)\n"
+    " assert(random.integer(0,0)==0)\n"
+    " local v=random.integer(0,1); assert(v>=0 and v<=1)\n"
+    " v=random.integer(0,0xFFFFFFFF); assert(v>=0 and v<=0xFFFFFFFF)\n"
+    " v=random.integer(-0x80000000,0x7FFFFFFF); "
+    "assert(v>=-0x80000000 and v<=0x7FFFFFFF)\n"
+    " v=random.integer(-1,0xFFFFFFFE); assert(v>=-1 and v<=0xFFFFFFFE)\n"
+    " reject(0,0x100000000); reject(0,0x100000001)\n"
+    " reject(math.mininteger,math.maxinteger)\n"
+    " self.ui.title=assert(ui.label({id='stability-title',"
+    "text='before intentional init failure',rect={20,20,500,40}}))\n"
+    " self.timers.test=assert(timer.every(1000,function() "
+    "log.error('stability timer survived init failure') end))\n"
+    " error('intentional stability init failure')\n"
+    "end\n"
+    "function update(self,dt) error('update ran after init failure') end\n"
+    "function final(self) end\n";
 #endif
 
 /*
@@ -400,6 +430,7 @@ static void prv_show_launcher_screen(void)
 
     DesignLauncher_Destroy();
     DesignLauncher_Create(NULL);
+    s_runtime_error_visible = false;
 }
 
 static void prv_runtime_exit_clicked_cb(lv_event_t *e)
@@ -420,6 +451,7 @@ static void prv_runtime_exit_clicked_cb(lv_event_t *e)
 static void prv_show_runtime_screen(void)
 {
     s_runtime_exit_pending = false;
+    s_runtime_error_visible = false;
 
     RuntimeStats_BeginLvglScreenOp();
     if (s_runtime_screen != NULL) {
@@ -450,6 +482,63 @@ static void prv_show_runtime_screen(void)
     DesignLauncher_Destroy();
     lv_screen_load(s_runtime_screen);
     RuntimeStats_EndLvglScreenOp();
+}
+
+static void prv_show_runtime_error_screen(void)
+{
+    const LuaRuntimeErrorInfo *error = LuaRuntimeTask_GetErrorInfo();
+    char details[384];
+    const char *app_id = error != NULL && error->app_id[0] != '\0'
+                             ? error->app_id
+                             : LuaRuntimeTask_GetCurrentCartPath();
+    const char *stage = error != NULL
+                            ? lua_vm_runtime_error_stage_name(error->stage)
+                            : "unknown";
+    const char *message = error != NULL && error->message[0] != '\0'
+                              ? error->message
+                              : LuaRuntimeTask_GetLastErrorMessage();
+
+    (void)snprintf(details, sizeof(details),
+                   "App: %.64s\nError stage: %.16s\n%.240s",
+                   app_id != NULL ? app_id : "unknown", stage, message);
+
+    RuntimeStats_BeginLvglScreenOp();
+    if (s_runtime_screen != NULL) {
+        lv_obj_delete(s_runtime_screen);
+    }
+    s_runtime_screen = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(s_runtime_screen, lv_color_hex(COLOR_BG), 0);
+    lv_obj_set_style_pad_all(s_runtime_screen, 24, 0);
+    lv_obj_set_style_text_font(s_runtime_screen,
+                               UiFont_GetSystem(UI_FONT_SYSTEM_DEFAULT_SIZE),
+                               0);
+
+    lv_obj_t *title = lv_label_create(s_runtime_screen);
+    lv_label_set_text(title, "应用启动失败");
+    lv_obj_set_style_text_color(title, lv_color_hex(COLOR_BLACK), 0);
+    lv_obj_align(title, LV_ALIGN_TOP_LEFT, 0, 0);
+
+    lv_obj_t *detail_label = lv_label_create(s_runtime_screen);
+    lv_obj_set_width(detail_label, 700);
+    lv_label_set_long_mode(detail_label, LV_LABEL_LONG_WRAP);
+    lv_label_set_text(detail_label, details);
+    lv_obj_align(detail_label, LV_ALIGN_TOP_LEFT, 0, 52);
+
+    lv_obj_t *exit_btn = lv_button_create(s_runtime_screen);
+    lv_obj_set_size(exit_btn, 180, 44);
+    lv_obj_align(exit_btn, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
+    lv_obj_set_style_bg_color(exit_btn, lv_color_hex(COLOR_BLACK), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(exit_btn, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_add_event_cb(exit_btn, prv_runtime_exit_clicked_cb,
+                        LV_EVENT_CLICKED, NULL);
+    lv_obj_t *button_label = lv_label_create(exit_btn);
+    lv_label_set_text(button_label, "返回 Launcher");
+    lv_obj_set_style_text_color(button_label, lv_color_hex(COLOR_BG), 0);
+    lv_obj_center(button_label);
+
+    lv_screen_load(s_runtime_screen);
+    RuntimeStats_EndLvglScreenOp();
+    s_runtime_error_visible = true;
 }
 
 static void prv_configure_slot_image(int slot)
@@ -1033,6 +1122,70 @@ bool Launcher_HandleIoCompletion(const cart_io_completion_t *completion)
 void Launcher_Task(void)
 {
 #if PERF_MONITOR_ENABLE
+    if (g_stability_board_command == 1u) {
+        g_stability_board_completed = 0u;
+        g_stability_board_failures = 0u;
+        g_stability_board_last_stage = 0u;
+        g_stability_board_state = 1u;
+        s_stability_board_dwell_count = 0u;
+        g_stability_board_command = 0u;
+    } else if (g_stability_board_command == 2u) {
+        g_stability_board_state = 0u;
+        g_stability_board_command = 0u;
+        if (!LuaRuntimeTask_IsIdle()) {
+            s_runtime_exit_pending = true;
+            LuaRuntimeTask_RequestStop();
+        }
+    }
+
+    switch (g_stability_board_state) {
+    case 1u:
+        if (LuaRuntimeTask_IsIdle() && s_main_container != NULL) {
+            if (LuaRuntimeTask_DebugStartSource(s_stability_board_source,
+                                                "stability_board_test.lua")) {
+                prv_show_runtime_screen();
+                g_stability_board_state = 2u;
+            } else {
+                g_stability_board_failures++;
+                g_stability_board_state = 0u;
+            }
+        }
+        break;
+    case 2u:
+        if (LuaRuntimeTask_GetState() == LUA_RUNTIME_STATE_ERROR) {
+            const LuaRuntimeErrorInfo *error = LuaRuntimeTask_GetErrorInfo();
+            if (error != NULL) {
+                g_stability_board_last_stage = (uint32_t)error->stage;
+            }
+            if (error == NULL || error->stage != LUA_RUNTIME_ERROR_STAGE_INIT ||
+                strstr(error->message, "intentional stability init failure") == NULL) {
+                g_stability_board_failures++;
+            }
+            s_stability_board_dwell_count = 0u;
+            g_stability_board_state = 3u;
+        }
+        break;
+    case 3u:
+        if (++s_stability_board_dwell_count >= 200u) {
+            s_runtime_exit_pending = true;
+            LuaRuntimeTask_RequestStop();
+            g_stability_board_state = 4u;
+        }
+        break;
+    case 4u:
+        if (LuaRuntimeTask_IsIdle()) {
+            g_stability_board_completed++;
+            if (g_stability_board_completed >= g_stability_board_target) {
+                g_stability_board_state = 0u;
+            } else {
+                g_stability_board_state = 1u;
+            }
+        }
+        break;
+    default:
+        break;
+    }
+
     if (g_phase3_repeat_command == 1u) {
         g_phase3_repeat_completed = 0u;
         g_phase3_repeat_failures = 0u;
@@ -1092,6 +1245,12 @@ void Launcher_Task(void)
         break;
     }
 #endif
+
+    if (s_runtime_screen != NULL && LuaRuntimeTask_HasError() &&
+        LuaRuntimeTask_GetState() == LUA_RUNTIME_STATE_ERROR &&
+        !s_runtime_error_visible) {
+        prv_show_runtime_error_screen();
+    }
 
     if (s_main_container != NULL) {
         if(s_cached_icon_cursor < LAUNCHER_VISIBLE_ICON_COUNT) {

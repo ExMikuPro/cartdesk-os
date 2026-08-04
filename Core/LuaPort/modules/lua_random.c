@@ -1,8 +1,10 @@
 #include "lua.h"
 #include "lauxlib.h"
 
+#include <stdbool.h>
 #include <stdint.h>
 
+#include "lua_random.h"
 #include "rng_port.h"
 
 #define LUA_RANDOM_MAX_BYTES 4096u
@@ -13,9 +15,25 @@ static int fail(lua_State* L, const char* message) {
   return 2;
 }
 
-static bool generate_u32(uint32_t* value) {
+static bool hardware_generate_u32(uint32_t* value) {
   return RNG_GetU32(value, NULL) == RNG_OK;
 }
+
+#if defined(CARTDESK_HOST_TEST)
+static cart_random_u32_provider_t g_u32_provider = hardware_generate_u32;
+
+void lua_random_set_u32_provider_for_test(cart_random_u32_provider_t provider) {
+  g_u32_provider = provider != NULL ? provider : hardware_generate_u32;
+}
+
+static bool generate_u32(uint32_t* value) {
+  return g_u32_provider(value);
+}
+#else
+static bool generate_u32(uint32_t* value) {
+  return hardware_generate_u32(value);
+}
+#endif
 
 static int l_integer(lua_State* L) {
   if (lua_gettop(L) != 2 || !lua_isinteger(L, 1) || !lua_isinteger(L, 2)) {
@@ -24,7 +42,18 @@ static int l_integer(lua_State* L) {
   lua_Integer min_value = lua_tointeger(L, 1);
   lua_Integer max_value = lua_tointeger(L, 2);
   if (min_value > max_value) return fail(L, "min_value must be <= max_value");
-  uint64_t span = (uint64_t)((int64_t)max_value - (int64_t)min_value) + 1u;
+
+  /*
+   * Converting both endpoints before subtraction makes the difference well
+   * defined modulo 2^64. Because min_value <= max_value, that value is the
+   * exact mathematical distance for every Lua 64-bit integer pair, including
+   * INT64_MIN..INT64_MAX. Check the distance before adding the inclusive end.
+   */
+  uint64_t distance = (uint64_t)max_value - (uint64_t)min_value;
+  if (distance > UINT32_MAX) {
+    return fail(L, "random range exceeds 32-bit entropy");
+  }
+  uint64_t span = distance + UINT64_C(1);
   uint32_t random_value = 0u;
   if (!generate_u32(&random_value)) return fail(L, "random hardware failed");
   uint64_t offset;
@@ -38,7 +67,8 @@ static int l_integer(lua_State* L) {
     }
     offset = random_value % range;
   }
-  lua_pushinteger(L, (lua_Integer)((int64_t)min_value + (int64_t)offset));
+  /* offset <= distance, so the mathematical sum is always <= max_value. */
+  lua_pushinteger(L, min_value + (lua_Integer)offset);
   return 1;
 }
 
@@ -55,7 +85,7 @@ static int l_bytes(lua_State* L) {
     return fail(L, "random.bytes expects an integer length");
   }
   lua_Integer length = lua_tointeger(L, 1);
-  if (length < 0 || length > LUA_RANDOM_MAX_BYTES) {
+  if (length < 0 || (uint64_t)length > LUA_RANDOM_MAX_BYTES) {
     return fail(L, "random.bytes length must be 0..4096");
   }
   luaL_Buffer buffer;

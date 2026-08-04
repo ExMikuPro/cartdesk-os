@@ -13,6 +13,9 @@ static LuaRuntimeState s_state = LUA_RUNTIME_STATE_IDLE;
 static LuaRuntimeError s_last_error = LUA_RUNTIME_ERROR_NONE;
 static char s_cart_path[LUA_RUNTIME_CART_PATH_MAX];
 static uint32_t s_next_update_ms;
+static LuaRuntimeErrorInfo s_error_info;
+
+static void record_error(LuaRuntimeError error, const char *context);
 
 static bool time_reached(uint32_t now_ms, uint32_t deadline_ms)
 {
@@ -24,6 +27,7 @@ static void clear_context(void)
     s_cart_path[0] = '\0';
     s_last_error = LUA_RUNTIME_ERROR_NONE;
     s_next_update_ms = 0u;
+    memset(&s_error_info, 0, sizeof(s_error_info));
 }
 
 static const char *error_message(LuaRuntimeError error)
@@ -39,10 +43,30 @@ static const char *error_message(LuaRuntimeError error)
             return "busy";
         case LUA_RUNTIME_ERROR_INIT_FAILED:
             return "init failed";
+        case LUA_RUNTIME_ERROR_CALLBACK_FAILED:
+            return "callback failed";
         case LUA_RUNTIME_ERROR_INTERNAL:
         default:
             return "internal";
     }
+}
+
+static void record_vm_error(LuaRuntimeError fallback,
+                            LuaRuntimeErrorStage fallback_stage,
+                            const char *fallback_message)
+{
+    memset(&s_error_info, 0, sizeof(s_error_info));
+    if (!lua_vm_get_runtime_error(&s_error_info)) {
+        s_error_info.stage = fallback_stage;
+        s_error_info.tick = s_next_update_ms;
+        (void)snprintf(s_error_info.message, sizeof(s_error_info.message),
+                       "%s", fallback_message != NULL
+                                  ? fallback_message : error_message(fallback));
+        (void)snprintf(s_error_info.traceback,
+                       sizeof(s_error_info.traceback), "%s",
+                       s_error_info.message);
+    }
+    record_error(fallback, s_error_info.message);
 }
 
 static void record_error(LuaRuntimeError error, const char *context)
@@ -50,8 +74,14 @@ static void record_error(LuaRuntimeError error, const char *context)
     s_last_error = error;
     if (context != NULL && error != LUA_RUNTIME_ERROR_NONE) {
         char message[192];
-        (void)snprintf(message, sizeof(message), "%s: %s",
-                       context, error_message(error));
+        const char *suffix = error_message(error);
+        size_t suffix_len = strlen(suffix);
+        size_t context_limit = sizeof(message) - suffix_len - 3u;
+        size_t context_len = strnlen(context, context_limit);
+        memcpy(message, context, context_len);
+        message[context_len] = ':';
+        message[context_len + 1u] = ' ';
+        memcpy(message + context_len + 2u, suffix, suffix_len + 1u);
         CartLog_Write(CART_LOG_ERROR, "lua-runtime", message);
     }
 }
@@ -80,6 +110,31 @@ bool LuaRuntimeTask_RequestStart(const char *cart_path)
     s_state = LUA_RUNTIME_STATE_START_REQUESTED;
     return true;
 }
+
+#if PERF_MONITOR_ENABLE
+bool LuaRuntimeTask_DebugStartSource(const char *source,
+                                     const char *chunk_name)
+{
+    if (source == NULL || chunk_name == NULL || s_state != LUA_RUNTIME_STATE_IDLE) {
+        return false;
+    }
+
+    clear_context();
+    (void)snprintf(s_cart_path, sizeof(s_cart_path), "%s", chunk_name);
+    s_state = LUA_RUNTIME_STATE_STARTING;
+    if (lua_init_from_source_for_stability_test(source, chunk_name) != 0) {
+        record_vm_error(LUA_RUNTIME_ERROR_INIT_FAILED,
+                        LUA_RUNTIME_ERROR_STAGE_LOAD,
+                        "stability source load failed");
+        s_state = LUA_RUNTIME_STATE_ERROR;
+        return false;
+    }
+
+    s_next_update_ms = 0u;
+    s_state = LUA_RUNTIME_STATE_RUNNING;
+    return true;
+}
+#endif
 
 void LuaRuntimeTask_RequestStop(void)
 {
@@ -135,8 +190,9 @@ void LuaRuntimeTask_Process(uint32_t now_ms)
             s_state = LUA_RUNTIME_STATE_STARTING;
             init_rc = lua_init_from_cart(s_cart_path);
             if (init_rc != 0) {
-                record_error(LUA_RUNTIME_ERROR_INIT_FAILED,
-                             s_cart_path[0] != '\0' ? s_cart_path : "init failed");
+                record_vm_error(LUA_RUNTIME_ERROR_INIT_FAILED,
+                                LUA_RUNTIME_ERROR_STAGE_LOAD,
+                                "Cart ENTRY load failed");
                 s_state = LUA_RUNTIME_STATE_ERROR;
                 return;
             }
@@ -147,6 +203,13 @@ void LuaRuntimeTask_Process(uint32_t now_ms)
         case LUA_RUNTIME_STATE_RUNNING:
             if (time_reached(now_ms, s_next_update_ms)) {
                 lua_update_task();
+                if (lua_vm_get_runtime_error(NULL)) {
+                    record_vm_error(LUA_RUNTIME_ERROR_CALLBACK_FAILED,
+                                    LUA_RUNTIME_ERROR_STAGE_UPDATE,
+                                    "Lua callback failed");
+                    s_state = LUA_RUNTIME_STATE_ERROR;
+                    return;
+                }
                 s_next_update_ms = now_ms + LUA_RUNTIME_UPDATE_PERIOD_MS;
             }
             return;
@@ -156,7 +219,9 @@ void LuaRuntimeTask_Process(uint32_t now_ms)
             (void)lua_shutdown();
             init_rc = lua_init_from_cart(s_cart_path);
             if (init_rc != 0) {
-                record_error(LUA_RUNTIME_ERROR_INIT_FAILED, "restart failed");
+                record_vm_error(LUA_RUNTIME_ERROR_INIT_FAILED,
+                                LUA_RUNTIME_ERROR_STAGE_LOAD,
+                                "Cart restart failed");
                 s_state = LUA_RUNTIME_STATE_ERROR;
                 return;
             }
@@ -243,4 +308,10 @@ LuaRuntimeError LuaRuntimeTask_GetLastError(void)
 const char *LuaRuntimeTask_GetLastErrorMessage(void)
 {
     return error_message(s_last_error);
+}
+
+const LuaRuntimeErrorInfo *LuaRuntimeTask_GetErrorInfo(void)
+{
+    return s_error_info.stage != LUA_RUNTIME_ERROR_STAGE_NONE
+               ? &s_error_info : NULL;
 }

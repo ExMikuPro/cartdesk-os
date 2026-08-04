@@ -13,39 +13,55 @@
 
 static lua_State* g_expected_vm;
 static unsigned g_destroy_count;
+static uint32_t g_expected_owner_id = 7u;
+static uint32_t g_expected_generation = 11u;
+static uint64_t g_expected_cart_id = UINT64_C(0x1122334455667788);
 
 bool lua_assets_owner_create(lua_State* L, uint32_t id, uint32_t generation) {
-  assert(L == g_expected_vm && id == 7u && generation == 11u);
+  assert(L == g_expected_vm && id == g_expected_owner_id &&
+         generation == g_expected_generation);
   return true;
 }
 
 void lua_assets_owner_destroy(lua_State* L, uint32_t id,
                               uint32_t generation) {
-  assert(L == g_expected_vm && id == 7u && generation == 11u);
+  assert(L == g_expected_vm && id == g_expected_owner_id &&
+         generation == g_expected_generation);
   ++g_destroy_count;
 }
 
 bool lua_storage_owner_create(lua_State* L, uint32_t id, uint32_t generation,
                               uint64_t cart_id) {
-  assert(L == g_expected_vm && id == 7u && generation == 11u);
-  assert(cart_id == UINT64_C(0x1122334455667788));
+  assert(L == g_expected_vm && id == g_expected_owner_id &&
+         generation == g_expected_generation);
+  assert(cart_id == g_expected_cart_id);
   return true;
 }
 
 void lua_storage_owner_destroy(lua_State* L, uint32_t id,
                                uint32_t generation) {
-  assert(L == g_expected_vm && id == 7u && generation == 11u);
+  assert(L == g_expected_vm && id == g_expected_owner_id &&
+         generation == g_expected_generation);
   ++g_destroy_count;
 }
 
+bool lua_storage_handle_io_completion(const cart_io_completion_t* completion) {
+  (void)completion;
+  return false;
+}
+
+bool lua_storage_all_ready(void) { return true; }
+
 bool lua_timer_owner_create(lua_State* L, uint32_t id, uint32_t generation) {
-  assert(L == g_expected_vm && id == 7u && generation == 11u);
+  assert(L == g_expected_vm && id == g_expected_owner_id &&
+         generation == g_expected_generation);
   return true;
 }
 
 void lua_timer_owner_destroy(lua_State* L, uint32_t id,
                              uint32_t generation) {
-  assert(L == g_expected_vm && id == 7u && generation == 11u);
+  assert(L == g_expected_vm && id == g_expected_owner_id &&
+         generation == g_expected_generation);
   ++g_destroy_count;
 }
 
@@ -86,6 +102,28 @@ int main(void) {
   assert(g_destroy_count == 3u);
   lua_foundation_owner_enter(L, 7u, 11u);
   assert(!lua_foundation_current(L, NULL));
+
+  for (uint32_t i = 0u; i < 100u; ++i) {
+    g_expected_owner_id = 100u + i;
+    g_expected_generation = 200u + i;
+    g_expected_cart_id = UINT64_C(0xA000000000000000) + i;
+    assert(lua_foundation_owner_create(L, g_expected_owner_id,
+                                       g_expected_generation,
+                                       g_expected_cart_id, "stress-owner"));
+    lua_foundation_owner_enter(L, g_expected_owner_id,
+                               g_expected_generation);
+    lua_foundation_owner_view_t stress_owner;
+    assert(lua_foundation_current(L, &stress_owner));
+    assert(stress_owner.owner_id == g_expected_owner_id);
+    lua_foundation_owner_leave();
+    lua_foundation_owner_destroy(L, g_expected_owner_id,
+                                 g_expected_generation);
+    unsigned expected_destroy_count = 3u + (i + 1u) * 3u;
+    assert(g_destroy_count == expected_destroy_count);
+    lua_foundation_owner_destroy(L, g_expected_owner_id,
+                                 g_expected_generation);
+    assert(g_destroy_count == expected_destroy_count);
+  }
 
   lua_close(other);
   lua_close(L);

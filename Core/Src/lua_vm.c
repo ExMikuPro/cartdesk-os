@@ -148,6 +148,7 @@ static lua_State *g_L = NULL;
 static bool       g_runtime_started = false;
 static uint32_t   g_last_ms = 0;
 static float      g_fixed_accumulator = 0.0f;
+static LuaRuntimeErrorInfo g_runtime_error;
 
 typedef enum {
     LUA_LIFECYCLE_INIT = 0,
@@ -274,7 +275,8 @@ static int lua_rt_traceback(lua_State *L)
     return 1;
 }
 
-static int lua_rt_pcall(lua_State *L, int nargs, int nrets)
+static int lua_rt_pcall_capture(lua_State *L, int nargs, int nrets,
+                                char *error, size_t error_size)
 {
     /* 在函数下面插入 traceback handler */
     int base = lua_gettop(L) - nargs;
@@ -289,6 +291,9 @@ static int lua_rt_pcall(lua_State *L, int nargs, int nrets)
     if (rc != LUA_OK) {
         const char *err = lua_tostring(L, -1);
         if (!err) err = "(lua error: null)";
+        if (error != NULL && error_size > 0u) {
+            (void)snprintf(error, error_size, "%s", err);
+        }
         lua_foundation_owner_view_t owner;
         if (lua_foundation_current(L, &owner)) {
             CartLog_Write(CART_LOG_ERROR, owner.app_id, err);
@@ -300,6 +305,11 @@ static int lua_rt_pcall(lua_State *L, int nargs, int nrets)
         return -1;
     }
     return 0;
+}
+
+static int lua_rt_pcall(lua_State *L, int nargs, int nrets)
+{
+    return lua_rt_pcall_capture(L, nargs, nrets, NULL, 0u);
 }
 
 static const char *const k_lifecycle_names[LUA_LIFECYCLE_COUNT] = {
@@ -392,6 +402,77 @@ static void lua_rt_cache_callbacks(lua_script_instance_t *instance)
             lua_rt_ref_env_function(instance, k_lifecycle_names[i]);
     }
 
+}
+
+const char *lua_vm_runtime_error_stage_name(LuaRuntimeErrorStage stage)
+{
+    switch (stage) {
+    case LUA_RUNTIME_ERROR_STAGE_NONE: return "none";
+    case LUA_RUNTIME_ERROR_STAGE_LOAD: return "load";
+    case LUA_RUNTIME_ERROR_STAGE_INIT: return "init";
+    case LUA_RUNTIME_ERROR_STAGE_UPDATE: return "update";
+    case LUA_RUNTIME_ERROR_STAGE_INPUT: return "input";
+    case LUA_RUNTIME_ERROR_STAGE_TIMER: return "timer";
+    case LUA_RUNTIME_ERROR_STAGE_MESSAGE: return "message";
+    case LUA_RUNTIME_ERROR_STAGE_FINAL: return "final";
+    default: return "unknown";
+    }
+}
+
+static LuaRuntimeErrorStage lua_rt_error_stage(lua_lifecycle_t lifecycle)
+{
+    switch (lifecycle) {
+    case LUA_LIFECYCLE_INIT: return LUA_RUNTIME_ERROR_STAGE_INIT;
+    case LUA_LIFECYCLE_FINAL: return LUA_RUNTIME_ERROR_STAGE_FINAL;
+    case LUA_LIFECYCLE_INPUT: return LUA_RUNTIME_ERROR_STAGE_INPUT;
+    case LUA_LIFECYCLE_MESSAGE: return LUA_RUNTIME_ERROR_STAGE_MESSAGE;
+    case LUA_LIFECYCLE_FIXED_UPDATE:
+    case LUA_LIFECYCLE_UPDATE:
+    case LUA_LIFECYCLE_LATE_UPDATE:
+    case LUA_LIFECYCLE_RELOAD:
+    default:
+        return LUA_RUNTIME_ERROR_STAGE_UPDATE;
+    }
+}
+
+static void lua_rt_record_runtime_error(LuaRuntimeErrorStage stage,
+                                        const lua_script_instance_t *instance,
+                                        const char *message,
+                                        const char *traceback)
+{
+    if (g_runtime_error.stage != LUA_RUNTIME_ERROR_STAGE_NONE) {
+        return;
+    }
+    memset(&g_runtime_error, 0, sizeof(g_runtime_error));
+    g_runtime_error.stage = stage;
+    g_runtime_error.tick = lua_rt_time_ms();
+    if (instance != NULL) {
+        g_runtime_error.owner_id = instance->owner_id;
+        g_runtime_error.cart_id = instance->cart_id;
+        (void)snprintf(g_runtime_error.app_id,
+                       sizeof(g_runtime_error.app_id), "%s", instance->app_id);
+    }
+    (void)snprintf(g_runtime_error.message, sizeof(g_runtime_error.message),
+                   "%s", message != NULL ? message : "Lua callback failed");
+    (void)snprintf(g_runtime_error.traceback, sizeof(g_runtime_error.traceback),
+                   "%s", traceback != NULL ? traceback : g_runtime_error.message);
+}
+
+static void lua_rt_stop_after_callback_error(lua_script_instance_t *instance)
+{
+    if (instance != NULL && instance->alive) {
+        lua_foundation_owner_destroy(g_L, instance->owner_id,
+                                     instance->generation);
+        lua_ui_owner_destroy(g_L, instance->owner_id, instance->generation);
+        instance->alive = false;
+        instance->initialized = false;
+    }
+    g_runtime_started = false;
+    g_scheduler_phase = LUA_SCHED_IDLE;
+    g_input_head = g_input_tail = g_input_count = 0u;
+    g_message_head = g_message_tail = g_message_count = 0u;
+    g_has_current_input = false;
+    g_has_current_message = false;
 }
 
 static int lua_rt_build_self(lua_State *L)
@@ -1035,14 +1116,6 @@ static void lua_rt_finish_lifecycle(bool success)
 {
     if (g_entry_instance && g_entry_lifecycle == LUA_LIFECYCLE_INIT) {
         g_entry_instance->initialized = success;
-        if (!success) {
-            lua_rt_log("lua init() failed; instance disabled\n");
-            lua_foundation_owner_destroy(g_L, g_entry_instance->owner_id,
-                                         g_entry_instance->generation);
-            lua_ui_owner_destroy(g_L, g_entry_instance->owner_id,
-                                 g_entry_instance->generation);
-            g_entry_instance->alive = false;
-        }
     }
 }
 
@@ -1081,12 +1154,19 @@ static int lua_rt_resume_entry(int nargs)
     }
 
     const char *err = lua_tostring(g_entry_thread, -1);
+    char message[LUA_RUNTIME_ERROR_MESSAGE_MAX];
+    (void)snprintf(message, sizeof(message), "%s",
+                   err ? err : "(lua coroutine error)");
     luaL_traceback(g_L, g_entry_thread,
                    err ? err : "(lua coroutine error)", 1);
+    const char *traceback = lua_tostring(g_L, -1);
     CartLog_Write(CART_LOG_ERROR, g_entry_instance->app_id,
-                  lua_tostring(g_L, -1));
+                  traceback ? traceback : message);
+    lua_rt_record_runtime_error(lua_rt_error_stage(g_entry_lifecycle),
+                                g_entry_instance, message, traceback);
     lua_pop(g_L, 1);
     lua_rt_finish_lifecycle(false);
+    lua_rt_stop_after_callback_error(g_entry_instance);
     lua_rt_clear_entry();
     return -1;
 }
@@ -1233,10 +1313,18 @@ static int lua_rt_call_direct(lua_script_instance_t *instance,
     lua_rawgeti(g_L, LUA_REGISTRYINDEX, instance->self_ref);
     lua_ui_owner_enter(g_L, instance->owner_id, instance->generation);
     lua_foundation_owner_enter(g_L, instance->owner_id, instance->generation);
-    int rc = lua_rt_pcall(g_L, 1, 0);
+    char error[LUA_RUNTIME_ERROR_TRACEBACK_MAX];
+    int rc = lua_rt_pcall_capture(g_L, 1, 0, error, sizeof(error));
     lua_foundation_owner_leave();
     lua_ui_owner_leave();
     lua_settop(g_L, stack_base);
+    if (rc != 0) {
+        lua_rt_record_runtime_error(lua_rt_error_stage(lifecycle), instance,
+                                    error, error);
+        if (lifecycle != LUA_LIFECYCLE_FINAL) {
+            lua_rt_stop_after_callback_error(instance);
+        }
+    }
     return rc;
 }
 
@@ -1456,6 +1544,8 @@ static int lua_rt_init_state(void)
 {
     if (g_L) return 0;
 
+    memset(&g_runtime_error, 0, sizeof(g_runtime_error));
+
     g_L = lua_vm_newstate();
     if (!g_L) {
         lua_rt_log("lua_vm_newstate failed (allocator: lua_vm_alloc)\n");
@@ -1537,7 +1627,11 @@ int lua_init_from_file(const char *path)
     if (rc != 0) return rc;
 
     rc = lua_run_file(path);
-    if (rc != 0) return rc;
+    if (rc != 0) {
+        lua_rt_record_runtime_error(LUA_RUNTIME_ERROR_STAGE_LOAD, NULL,
+                                    "Lua entry file load failed", NULL);
+        return rc;
+    }
     return lua_rt_start_runtime();
 }
 
@@ -1554,9 +1648,44 @@ int lua_init_from_cart(const char *cart_path)
     if (rc != 0) return rc;
 
     rc = lua_run_cart_entry(cart_path);
-    if (rc != 0) return rc;
+    if (rc != 0) {
+        lua_rt_record_runtime_error(LUA_RUNTIME_ERROR_STAGE_LOAD, NULL,
+                                    "Cart ENTRY load failed", NULL);
+        return rc;
+    }
     return lua_rt_start_runtime();
 }
+
+#if PERF_MONITOR_ENABLE
+int lua_init_from_source_for_stability_test(const char *source,
+                                            const char *chunk_name)
+{
+    if (source == NULL || chunk_name == NULL) return -1;
+
+    int rc = lua_rt_init_state();
+    if (rc != 0) return rc;
+
+    rc = luaL_loadbufferx(g_L, source, strlen(source), chunk_name, "t");
+    if (rc != LUA_OK) {
+        const char *message = lua_tostring(g_L, -1);
+        lua_rt_record_runtime_error(LUA_RUNTIME_ERROR_STAGE_LOAD, NULL,
+                                    message != NULL ? message
+                                                    : "stability source load failed",
+                                    NULL);
+        lua_pop(g_L, 1);
+        return -2;
+    }
+
+    rc = lua_rt_create_instance_from_loaded(LUA_SCRIPT_SOURCE_EMBEDDED,
+                                             chunk_name);
+    if (rc != 0) {
+        lua_rt_record_runtime_error(LUA_RUNTIME_ERROR_STAGE_LOAD, NULL,
+                                    "stability instance create failed", NULL);
+        return -3;
+    }
+    return lua_rt_start_runtime();
+}
+#endif
 
 /**
  * @brief  按默认优先级初始化并启动 Lua runtime
@@ -1755,6 +1884,7 @@ void lua_update_task(void)
 
     const uint32_t now = lua_rt_time_ms();
     lua_foundation_process(g_L, lua_foundation_platform_uptime_ms());
+    if (!g_runtime_started) return;
     if (!lua_foundation_storage_ready()) return;
     if (g_entry_thread) {
         if (lua_rt_poll_entry(now) == 1) {
@@ -1823,4 +1953,38 @@ uint32_t lua_vm_runtime_state(void)
         return LUA_VM_RUNTIME_STATE_BUSY;
     }
     return LUA_VM_RUNTIME_STATE_RUNNING;
+}
+
+bool lua_vm_get_runtime_error(LuaRuntimeErrorInfo *out_error)
+{
+    if (g_runtime_error.stage == LUA_RUNTIME_ERROR_STAGE_NONE) {
+        return false;
+    }
+    if (out_error != NULL) {
+        *out_error = g_runtime_error;
+    }
+    return true;
+}
+
+void lua_vm_report_timer_error(uint32_t owner_id,
+                               uint32_t generation,
+                               const char *app_id,
+                               const char *message)
+{
+    lua_script_instance_t *instance = NULL;
+    for (size_t i = 0u; i < g_instance_count; ++i) {
+        if (g_instances[i].alive && g_instances[i].owner_id == owner_id &&
+            g_instances[i].generation == generation) {
+            instance = &g_instances[i];
+            break;
+        }
+    }
+    lua_rt_record_runtime_error(LUA_RUNTIME_ERROR_STAGE_TIMER, instance,
+                                message, message);
+    if (instance == NULL && app_id != NULL) {
+        (void)snprintf(g_runtime_error.app_id,
+                       sizeof(g_runtime_error.app_id), "%s", app_id);
+        g_runtime_error.owner_id = owner_id;
+    }
+    lua_rt_stop_after_callback_error(instance);
 }

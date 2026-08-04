@@ -11,6 +11,17 @@
             }
         },
         {
+            "name": "HostTest",
+            "displayName": "HostTest 本机稳定性测试",
+            "description": "使用本机编译器构建并运行 CartDesk host/CTest 测试。",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/HostTest",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "CARTDESK_HOST_TESTS_ONLY": "ON"
+            }
+        },
+        {
             "name": "Debug",
             "displayName": "Debug 默认开发构建",
             "description": "默认调试构建，不启用内存自测或实验缓存，用于日常开发和实机验证。",
@@ -155,6 +166,10 @@
     ],
     "buildPresets": [
         {
+            "name": "HostTest",
+            "configurePreset": "HostTest"
+        },
+        {
             "name": "Debug",
             "configurePreset": "Debug",
             "targets": [
@@ -223,6 +238,15 @@
             "targets": [
                 "cartdesk-os"
             ]
+        }
+    ],
+    "testPresets": [
+        {
+            "name": "HostTest",
+            "configurePreset": "HostTest",
+            "output": {
+                "outputOnFailure": true
+            }
         }
     ]
 }

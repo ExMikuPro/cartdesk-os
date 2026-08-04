@@ -4,6 +4,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "lua_vm.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -26,6 +28,7 @@ typedef enum {
     LUA_RUNTIME_ERROR_PATH_TOO_LONG,
     LUA_RUNTIME_ERROR_BUSY,
     LUA_RUNTIME_ERROR_INIT_FAILED,
+    LUA_RUNTIME_ERROR_CALLBACK_FAILED,
     LUA_RUNTIME_ERROR_INTERNAL
 } LuaRuntimeError;
 
@@ -48,6 +51,11 @@ const char *LuaRuntimeTask_GetStateName(LuaRuntimeState state);
 const char *LuaRuntimeTask_GetCurrentCartPath(void);
 LuaRuntimeError LuaRuntimeTask_GetLastError(void);
 const char *LuaRuntimeTask_GetLastErrorMessage(void);
+const LuaRuntimeErrorInfo *LuaRuntimeTask_GetErrorInfo(void);
+#if PERF_MONITOR_ENABLE
+bool LuaRuntimeTask_DebugStartSource(const char *source,
+                                     const char *chunk_name);
+#endif
 
 #ifdef __cplusplus
 }

@@ -1,9 +1,14 @@
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
+
 #include <assert.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
 
+#include "cart_log.h"
 #include "lua_runtime_task.h"
 
 static int s_stub_init_rc = 0;
@@ -11,8 +16,22 @@ static int s_stub_init_calls = 0;
 static int s_stub_shutdown_calls = 0;
 static int s_stub_update_calls = 0;
 static char s_stub_last_init_path[256];
+static bool s_stub_reports_callback_error = false;
+static LuaRuntimeErrorInfo s_stub_error;
 
-void CartLog_Process(void) {}
+void CartLog_Write(cart_log_level_t level, const char *tag, const char *message)
+{
+    (void)level;
+    (void)tag;
+    (void)message;
+}
+
+bool lua_vm_get_runtime_error(LuaRuntimeErrorInfo *out_error)
+{
+    if (!s_stub_reports_callback_error) return false;
+    if (out_error != NULL) *out_error = s_stub_error;
+    return true;
+}
 
 int lua_init_from_cart(const char *cart_path)
 {
@@ -44,6 +63,8 @@ static void reset_stub_state(void)
     s_stub_shutdown_calls = 0;
     s_stub_update_calls = 0;
     s_stub_last_init_path[0] = '\0';
+    s_stub_reports_callback_error = false;
+    memset(&s_stub_error, 0, sizeof(s_stub_error));
 }
 
 static void drive_task_until_running(uint32_t now_ms)
@@ -127,6 +148,30 @@ int main(void)
     assert(LuaRuntimeTask_GetState() == LUA_RUNTIME_STATE_STOP_REQUESTED);
     drive_task_until_idle(305u);
     assert(s_stub_shutdown_calls == 1);
+
+    reset_stub_state();
+    assert(LuaRuntimeTask_RequestStart("0:/init-error.bin"));
+    drive_task_until_running(400u);
+    s_stub_reports_callback_error = true;
+    s_stub_error.stage = LUA_RUNTIME_ERROR_STAGE_INIT;
+    s_stub_error.owner_id = 42u;
+    s_stub_error.cart_id = UINT64_C(0x1234);
+    strcpy(s_stub_error.app_id, "init-error-app");
+    strcpy(s_stub_error.message, "intentional init failure");
+    strcpy(s_stub_error.traceback, "init-error.lua:7: intentional init failure");
+    LuaRuntimeTask_Process(400u);
+    assert(LuaRuntimeTask_GetState() == LUA_RUNTIME_STATE_ERROR);
+    assert(LuaRuntimeTask_GetLastError() == LUA_RUNTIME_ERROR_CALLBACK_FAILED);
+    const LuaRuntimeErrorInfo *runtime_error = LuaRuntimeTask_GetErrorInfo();
+    assert(runtime_error != NULL);
+    assert(runtime_error->stage == LUA_RUNTIME_ERROR_STAGE_INIT);
+    assert(runtime_error->owner_id == 42u);
+    assert(strcmp(runtime_error->message, "intentional init failure") == 0);
+    int updates_after_error = s_stub_update_calls;
+    LuaRuntimeTask_Process(500u);
+    assert(s_stub_update_calls == updates_after_error);
+    LuaRuntimeTask_RequestStop();
+    drive_task_until_idle(505u);
 
     reset_stub_state();
     assert(LuaRuntimeTask_RequestStart("0:/wrap.bin"));

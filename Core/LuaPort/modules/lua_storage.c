@@ -2,6 +2,7 @@
 #include "lauxlib.h"
 
 #include <stdbool.h>
+#include <limits.h>
 #include <stdint.h>
 #include <math.h>
 #include <stdio.h>
@@ -153,8 +154,9 @@ static bool validate_payload(storage_owner_t* owner) {
     if (owner->used - offset < 4u) return false;
     uint8_t key_len = owner->data[offset];
     uint8_t type = owner->data[offset + 1u];
-    uint16_t value_len = (uint16_t)owner->data[offset + 2u] |
-                         ((uint16_t)owner->data[offset + 3u] << 8);
+    uint16_t value_len = (uint16_t)(
+        (uint16_t)owner->data[offset + 2u] |
+        (uint16_t)((uint16_t)owner->data[offset + 3u] << 8u));
     uint32_t size = 4u + key_len + value_len;
     if (key_len == 0u || key_len > LUA_STORAGE_KEY_MAX ||
         type < VALUE_BOOL || type > VALUE_STRING || size > owner->used - offset ||
@@ -200,8 +202,9 @@ static bool find_entry(storage_owner_t* owner, const char* key, size_t key_len,
   uint32_t offset = 0u;
   while (offset < owner->used) {
     uint8_t stored_key_len = owner->data[offset];
-    uint16_t value_len = (uint16_t)owner->data[offset + 2u] |
-                         ((uint16_t)owner->data[offset + 3u] << 8);
+    uint16_t value_len = (uint16_t)(
+        (uint16_t)owner->data[offset + 2u] |
+        (uint16_t)((uint16_t)owner->data[offset + 3u] << 8u));
     uint32_t size = 4u + stored_key_len + value_len;
     if (stored_key_len == key_len && memcmp(owner->data + offset + 4u, key, key_len) == 0) {
       if (out_offset) *out_offset = offset;
@@ -258,10 +261,15 @@ static int l_set(lua_State* L) {
   if (!owner || lua_gettop(L) != 2 || !read_key(L, 1, &key, &key_len, &error) ||
       !load_owner(L, owner, &error)) return fail(L, error);
   uint8_t type; uint8_t value[8]; const uint8_t* value_ptr = value; uint16_t value_len;
-  if (lua_isboolean(L, 2)) { type = VALUE_BOOL; value[0] = lua_toboolean(L, 2); value_len = 1u; }
+  if (lua_isboolean(L, 2)) { type = VALUE_BOOL; value[0] = lua_toboolean(L, 2) ? 1u : 0u; value_len = 1u; }
   else if (lua_isinteger(L, 2)) {
     type = VALUE_INTEGER;
-    int32_t v = (int32_t)lua_tointeger(L, 2);
+    lua_Integer integer = lua_tointeger(L, 2);
+    if (integer < (lua_Integer)INT32_MIN ||
+        integer > (lua_Integer)INT32_MAX) {
+      return fail(L, "integer value is outside int32 range");
+    }
+    int32_t v = (int32_t)integer;
     uint32_t bits;
     memcpy(&bits, &v, sizeof(bits));
     store_u32_le(value, bits);
