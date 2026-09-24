@@ -70,6 +70,7 @@ add_executable(lua_ui_owner_test
 
 add_executable(lua_crc_test
         ${CMAKE_CURRENT_LIST_DIR}/../../tests/host/lua_crc_test.c
+        ${CMAKE_CURRENT_LIST_DIR}/../../Core/LuaPort/lua_execution_budget.c
         ${CMAKE_CURRENT_LIST_DIR}/../../Core/LuaPort/modules/lua_crc.c
         ${LUAVM_LUA_SOURCES}
 )
@@ -86,6 +87,7 @@ add_executable(lua_storage_test
 )
 add_executable(lua_assets_test
         ${CMAKE_CURRENT_LIST_DIR}/../../tests/host/lua_assets_test.c
+        ${CMAKE_CURRENT_LIST_DIR}/../../Core/LuaPort/lua_execution_budget.c
         ${CMAKE_CURRENT_LIST_DIR}/../../Core/LuaPort/modules/lua_assets.c
         ${LUAVM_LUA_SOURCES}
 )
@@ -94,12 +96,14 @@ target_compile_definitions(lua_assets_test PRIVATE
         XHGC_CART_NO_FLASH=1)
 add_executable(lua_timer_test
         ${CMAKE_CURRENT_LIST_DIR}/../../tests/host/lua_timer_test.c
+        ${CMAKE_CURRENT_LIST_DIR}/../../Core/LuaPort/lua_execution_budget.c
         ${CMAKE_CURRENT_LIST_DIR}/../../Core/LuaPort/modules/lua_timer.c
         ${LUAVM_LUA_SOURCES}
 )
 add_executable(lua_vm_lifecycle_test
         ${CMAKE_CURRENT_LIST_DIR}/../../tests/host/lua_vm_lifecycle_test.c
         ${CMAKE_CURRENT_LIST_DIR}/../../Core/Src/lua_vm.c
+        ${CMAKE_CURRENT_LIST_DIR}/../../Core/LuaPort/lua_execution_budget.c
         ${CMAKE_CURRENT_LIST_DIR}/../../Core/LuaPort/lua_app_instance.c
         ${LUAVM_LUA_SOURCES}
 )
@@ -120,6 +124,7 @@ target_include_directories(lua_runtime_task_test PRIVATE
 target_include_directories(lua_crc_test PRIVATE
         ${CMAKE_CURRENT_LIST_DIR}/../../tests/stubs
         ${CMAKE_CURRENT_LIST_DIR}/../../Core/Inc
+        ${CMAKE_CURRENT_LIST_DIR}/../../Core/LuaPort
         ${LUA_SRC_DIR}
 )
 target_compile_definitions(lua_random_test PRIVATE CARTDESK_HOST_TEST=1)

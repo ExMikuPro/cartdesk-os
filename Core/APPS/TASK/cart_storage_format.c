@@ -6,7 +6,7 @@
 
 static uint16_t load_u16_le(const uint8_t *bytes)
 {
-    return (uint16_t)bytes[0] | ((uint16_t)bytes[1] << 8u);
+    return (uint16_t)((uint16_t)bytes[0] | ((uint16_t)bytes[1] << 8u));
 }
 
 static uint32_t load_u32_le(const uint8_t *bytes)

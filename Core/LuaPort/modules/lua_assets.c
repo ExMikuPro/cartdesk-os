@@ -4,6 +4,7 @@
 
 #include "cart_index.h"
 #include "lauxlib.h"
+#include "lua_execution_budget.h"
 #include "lua_foundation.h"
 #include "xhgc_cart.h"
 
@@ -132,7 +133,9 @@ static int l_image(lua_State* L) {
     return fail(L, "assets.image requires an active application owner");
   lua_asset_owner_t* owner = find_owner(L, current.owner_id, current.generation);
   if (!owner) return fail(L, "asset owner is unavailable");
+  LuaExecutionBudget_PauseForBlockingCall();
   res_handle_t resource = res_acquire_image(path, RES_LIFE_SCENE);
+  LuaExecutionBudget_ResumeAfterBlockingCall();
   if (!res_handle_valid(resource))
     return fail(L, res_last_error() ? res_last_error() : "image load failed");
   ensure_metatable(L);
@@ -160,11 +163,16 @@ static int l_data(lua_State* L) {
   if (meta->size > LUA_ASSETS_DATA_MAX) return fail(L, "resource exceeds 256 KiB limit");
   int base = lua_gettop(L);
   luaL_Buffer buffer;
+  LuaExecutionBudget_PauseForBlockingCall();
   char* bytes = luaL_buffinitsize(L, &buffer, meta->size);
-  if (!cart_read_data(meta->data_off, bytes, meta->size)) {
+  bool read_ok = cart_read_data(meta->data_off, bytes, meta->size);
+  if (!read_ok) {
+    LuaExecutionBudget_ResumeAfterBlockingCall();
     lua_settop(L, base); return fail(L, "resource read failed");
   }
-  luaL_pushresultsize(&buffer, meta->size); return 1;
+  luaL_pushresultsize(&buffer, meta->size);
+  LuaExecutionBudget_ResumeAfterBlockingCall();
+  return 1;
 }
 
 bool lua_asset_image_acquire(lua_State* L, int index, res_handle_t* out_handle,

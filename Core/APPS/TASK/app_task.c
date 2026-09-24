@@ -21,6 +21,7 @@
 #include "perf_monitor.h"
 #include "qflash_font.h"
 #include "runtime_stats.h"
+#include "watchdog_policy.h"
 #include "task.h"
 #include "ui_screen_launcher.h"
 #if XHGC_MEM_OVERLAY_ENABLE
@@ -115,6 +116,7 @@ void CartdeskAppTask_Run(void *argument)
     bool first_lv_timer_pending = true;
 
     RuntimeStats_Init();
+    WatchdogPolicy_DebugRunStallTest();
 #if CARTDESK_ENABLE_QFLASH_FONT
     qflash_font_init_or_fallback();
 #endif
@@ -132,44 +134,43 @@ void CartdeskAppTask_Run(void *argument)
         RuntimeStats_BeginSection(RUNTIME_STATS_SECTION_FRAME);
         process_worker_completions();
 
-        if(CartIoService_IsQflashExclusive()) {
-            ++s_app_stats.heartbeat;
-            s_app_stats.last_heartbeat_tick = osKernelGetTickCount();
-            s_app_stats.stack_high_water =
-                (uint32_t)uxTaskGetStackHighWaterMark(NULL);
-            RuntimeStats_EndSection(RUNTIME_STATS_SECTION_FRAME);
-            RuntimeStats_UpdateSnapshot();
-            delay_until_next_period(&next_wake);
-            continue;
-        }
+        bool qflash_exclusive = CartIoService_IsQflashExclusive();
 
-        RuntimeStats_BeginSection(RUNTIME_STATS_SECTION_LVGL);
-        uint32_t lv_timer_start = PerfMonitor_Begin();
-        lvgl_task_handler();
-        if (first_lv_timer_pending) {
-            PerfMonitor_End(PERF_MONITOR_STARTUP_FIRST_LV_TIMER, lv_timer_start);
-            first_lv_timer_pending = false;
-        }
-        RuntimeStats_EndSection(RUNTIME_STATS_SECTION_LVGL);
+        if (!qflash_exclusive) {
+            RuntimeStats_BeginSection(RUNTIME_STATS_SECTION_LVGL);
+            uint32_t lv_timer_start = PerfMonitor_Begin();
+            lvgl_task_handler();
+            if (first_lv_timer_pending) {
+                PerfMonitor_End(PERF_MONITOR_STARTUP_FIRST_LV_TIMER, lv_timer_start);
+                first_lv_timer_pending = false;
+            }
+            RuntimeStats_EndSection(RUNTIME_STATS_SECTION_LVGL);
 
-        RuntimeStats_BeginSection(RUNTIME_STATS_SECTION_LUA);
-        uint32_t lua_start = PerfMonitor_Begin();
-        LuaRuntimeTask_Process(osKernelGetTickCount());
-        PerfMonitor_End(PERF_MONITOR_RUNTIME_LUA_UPDATE, lua_start);
-        RuntimeStats_EndSection(RUNTIME_STATS_SECTION_LUA);
+            RuntimeStats_BeginSection(RUNTIME_STATS_SECTION_LUA);
+            uint32_t lua_start = PerfMonitor_Begin();
+            LuaRuntimeTask_Process(osKernelGetTickCount());
+            PerfMonitor_End(PERF_MONITOR_RUNTIME_LUA_UPDATE, lua_start);
+            RuntimeStats_EndSection(RUNTIME_STATS_SECTION_LUA);
 
-        RuntimeStats_BeginSection(RUNTIME_STATS_SECTION_LAUNCHER);
-        Launcher_Task();
-        RuntimeStats_EndSection(RUNTIME_STATS_SECTION_LAUNCHER);
+            RuntimeStats_BeginSection(RUNTIME_STATS_SECTION_LAUNCHER);
+            Launcher_Task();
+            RuntimeStats_EndSection(RUNTIME_STATS_SECTION_LAUNCHER);
 #if XHGC_MEM_OVERLAY_ENABLE
-        xhgc_mem_overlay_update();
+            xhgc_mem_overlay_update();
 #endif
+        }
 
         RuntimeStats_EndSection(RUNTIME_STATS_SECTION_FRAME);
         ++s_app_stats.heartbeat;
-        s_app_stats.last_heartbeat_tick = osKernelGetTickCount();
+        uint32_t iteration_end_tick = osKernelGetTickCount();
+        s_app_stats.last_heartbeat_tick = iteration_end_tick;
         s_app_stats.stack_high_water = (uint32_t)uxTaskGetStackHighWaterMark(NULL);
         RuntimeStats_UpdateSnapshot();
+        cart_task_stats_t io_stats;
+        CartIoService_GetStats(&io_stats);
+        WatchdogPolicy_CompleteAppIteration(iteration_end_tick,
+                                            qflash_exclusive,
+                                            io_stats.heartbeat);
         delay_until_next_period(&next_wake);
     }
 }

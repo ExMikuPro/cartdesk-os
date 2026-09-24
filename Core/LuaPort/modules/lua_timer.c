@@ -9,6 +9,7 @@
 #include "cart_log.h"
 #include "lua_foundation.h"
 #include "lua_foundation_platform.h"
+#include "lua_execution_budget.h"
 #include "lua_vm.h"
 #include "lua_ui.h"
 
@@ -243,15 +244,23 @@ void lua_timer_process(lua_State* L, uint32_t id, uint32_t gen, uint64_t now_ms)
       lua_rawgeti(L, LUA_REGISTRYINDEX, callback_ref);
       lua_foundation_owner_enter(L, id, gen);
       lua_ui_owner_enter(L, id, gen);
+      LuaExecutionBudgetReport budget_report;
+      LuaExecutionBudget_Begin(L, LUA_RUNTIME_ERROR_STAGE_TIMER, id, gen);
       int rc = lua_pcall(L, 0, 0, error_index);
+      bool budget_exceeded = LuaExecutionBudget_End(&budget_report);
       lua_ui_owner_leave();
       lua_foundation_owner_leave();
-      if (rc != LUA_OK) {
+      if (rc != LUA_OK || budget_exceeded) {
         const char* message = lua_tostring(L, -1);
         char error_message[LUA_RUNTIME_ERROR_MESSAGE_MAX];
         char app_id[LUA_FOUNDATION_APP_ID_MAX + 1u];
-        (void)snprintf(error_message, sizeof(error_message), "%s",
-                       message ? message : "timer callback failed");
+        if (budget_exceeded) {
+          LuaExecutionBudget_Format(&budget_report, error_message,
+                                    sizeof(error_message));
+        } else {
+          (void)snprintf(error_message, sizeof(error_message), "%s",
+                         message ? message : "timer callback failed");
+        }
         app_id[0] = '\0';
         lua_foundation_owner_enter(L, id, gen);
         lua_foundation_owner_view_t view;
@@ -263,7 +272,14 @@ void lua_timer_process(lua_State* L, uint32_t id, uint32_t gen, uint64_t now_ms)
         lua_foundation_owner_leave();
         if (handle->registered) deactivate(handle);
         lua_settop(L, base);
-        lua_vm_report_timer_error(id, gen, app_id, error_message);
+        if (budget_exceeded) {
+          lua_vm_report_timer_budget_error(
+              id, gen, app_id, error_message,
+              budget_report.elapsed_us, budget_report.budget_us,
+              budget_report.hook_count, budget_report.instruction_interval);
+        } else {
+          lua_vm_report_timer_error(id, gen, app_id, error_message);
+        }
         return;
       } else if (!repeating && handle->registered) {
         deactivate(handle);

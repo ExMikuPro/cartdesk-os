@@ -174,6 +174,28 @@ int main(void)
     drive_task_until_idle(505u);
 
     reset_stub_state();
+    assert(LuaRuntimeTask_RequestStart("0:/budget-error.bin"));
+    drive_task_until_running(600u);
+    s_stub_reports_callback_error = true;
+    s_stub_error.stage = LUA_RUNTIME_ERROR_STAGE_TIMER;
+    s_stub_error.reason = LUA_RUNTIME_ERROR_REASON_BUDGET_EXCEEDED;
+    s_stub_error.owner_id = 84u;
+    s_stub_error.generation = 3u;
+    s_stub_error.elapsed_us = 21000u;
+    s_stub_error.budget_us = 20000u;
+    strcpy(s_stub_error.message, "Lua execution budget exceeded");
+    LuaRuntimeTask_Process(600u);
+    assert(LuaRuntimeTask_GetState() == LUA_RUNTIME_STATE_ERROR);
+    assert(LuaRuntimeTask_GetLastError() ==
+           LUA_RUNTIME_ERROR_BUDGET_EXCEEDED);
+    runtime_error = LuaRuntimeTask_GetErrorInfo();
+    assert(runtime_error != NULL);
+    assert(runtime_error->stage == LUA_RUNTIME_ERROR_STAGE_TIMER);
+    assert(runtime_error->reason == LUA_RUNTIME_ERROR_REASON_BUDGET_EXCEEDED);
+    LuaRuntimeTask_RequestStop();
+    drive_task_until_idle(605u);
+
+    reset_stub_state();
     assert(LuaRuntimeTask_RequestStart("0:/wrap.bin"));
     drive_task_until_running(UINT32_MAX - 3u);
     LuaRuntimeTask_Process(UINT32_MAX - 3u);

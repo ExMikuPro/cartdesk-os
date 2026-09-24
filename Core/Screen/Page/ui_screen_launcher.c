@@ -136,6 +136,7 @@ volatile uint32_t g_phase3_repeat_completed = 0u;
 volatile uint32_t g_phase3_repeat_failures = 0u;
 volatile uint32_t g_phase3_repeat_state = 0u;
 static uint32_t s_phase3_repeat_dwell_count = 0u;
+static int s_phase3_repeat_selected_index = 0;
 
 volatile uint32_t g_stability_board_command = 0u;
 volatile uint32_t g_stability_board_target = 50u;
@@ -144,6 +145,15 @@ volatile uint32_t g_stability_board_failures = 0u;
 volatile uint32_t g_stability_board_state = 0u;
 volatile uint32_t g_stability_board_last_stage = 0u;
 static uint32_t s_stability_board_dwell_count = 0u;
+
+volatile uint32_t g_lua_budget_board_command = 0u;
+volatile uint32_t g_lua_budget_board_completed = 0u;
+volatile uint32_t g_lua_budget_board_failures = 0u;
+volatile uint32_t g_lua_budget_board_state = 0u;
+volatile uint32_t g_lua_budget_board_last_stage = 0u;
+volatile uint32_t g_lua_budget_board_last_reason = 0u;
+volatile uint32_t g_lua_budget_board_elapsed_us = 0u;
+volatile uint32_t g_lua_budget_board_budget_us = 0u;
 
 static const char s_stability_board_source[] =
     "local function reject(a,b) local v,e=random.integer(a,b) "
@@ -164,6 +174,11 @@ static const char s_stability_board_source[] =
     " error('intentional stability init failure')\n"
     "end\n"
     "function update(self,dt) error('update ran after init failure') end\n"
+    "function final(self) end\n";
+
+static const char s_lua_budget_board_source[] =
+    "function init(self) self.state.ready=true end\n"
+    "function update(self,dt) while true do end end\n"
     "function final(self) end\n";
 #endif
 
@@ -1122,6 +1137,67 @@ bool Launcher_HandleIoCompletion(const cart_io_completion_t *completion)
 void Launcher_Task(void)
 {
 #if PERF_MONITOR_ENABLE
+    if (g_lua_budget_board_command == 1u) {
+        g_lua_budget_board_completed = 0u;
+        g_lua_budget_board_failures = 0u;
+        g_lua_budget_board_last_stage = 0u;
+        g_lua_budget_board_last_reason = 0u;
+        g_lua_budget_board_elapsed_us = 0u;
+        g_lua_budget_board_budget_us = 0u;
+        g_lua_budget_board_state = 1u;
+        g_lua_budget_board_command = 0u;
+    } else if (g_lua_budget_board_command == 2u) {
+        g_lua_budget_board_state = 0u;
+        g_lua_budget_board_command = 0u;
+        if (!LuaRuntimeTask_IsIdle()) {
+            s_runtime_exit_pending = true;
+            LuaRuntimeTask_RequestStop();
+        }
+    }
+
+    switch (g_lua_budget_board_state) {
+    case 1u:
+        if (LuaRuntimeTask_IsIdle() && s_main_container != NULL) {
+            if (LuaRuntimeTask_DebugStartSource(s_lua_budget_board_source,
+                                                "lua_budget_board_test.lua")) {
+                prv_show_runtime_screen();
+                g_lua_budget_board_state = 2u;
+            } else {
+                g_lua_budget_board_failures++;
+                g_lua_budget_board_state = 0u;
+            }
+        }
+        break;
+    case 2u:
+        if (LuaRuntimeTask_GetState() == LUA_RUNTIME_STATE_ERROR) {
+            const LuaRuntimeErrorInfo *error = LuaRuntimeTask_GetErrorInfo();
+            if (error != NULL) {
+                g_lua_budget_board_last_stage = (uint32_t)error->stage;
+                g_lua_budget_board_last_reason = (uint32_t)error->reason;
+                g_lua_budget_board_elapsed_us = error->elapsed_us;
+                g_lua_budget_board_budget_us = error->budget_us;
+            }
+            if (error == NULL ||
+                error->stage != LUA_RUNTIME_ERROR_STAGE_UPDATE ||
+                error->reason != LUA_RUNTIME_ERROR_REASON_BUDGET_EXCEEDED ||
+                strstr(error->message, "Lua execution budget exceeded") == NULL) {
+                g_lua_budget_board_failures++;
+            }
+            s_runtime_exit_pending = true;
+            LuaRuntimeTask_RequestStop();
+            g_lua_budget_board_state = 3u;
+        }
+        break;
+    case 3u:
+        if (LuaRuntimeTask_IsIdle()) {
+            g_lua_budget_board_completed++;
+            g_lua_budget_board_state = 0u;
+        }
+        break;
+    default:
+        break;
+    }
+
     if (g_stability_board_command == 1u) {
         g_stability_board_completed = 0u;
         g_stability_board_failures = 0u;
@@ -1191,6 +1267,7 @@ void Launcher_Task(void)
         g_phase3_repeat_failures = 0u;
         g_phase3_repeat_state = 1u;
         s_phase3_repeat_dwell_count = 0u;
+        s_phase3_repeat_selected_index = s_selected_index;
         g_phase3_repeat_command = 0u;
     } else if (g_phase3_repeat_command == 2u) {
         g_phase3_repeat_state = 0u;
@@ -1204,6 +1281,12 @@ void Launcher_Task(void)
     switch (g_phase3_repeat_state) {
     case 1u:
         if (LuaRuntimeTask_IsIdle() && s_main_container != NULL) {
+            /*
+             * Recreating the launcher resets its visual selection to slot 0.
+             * Repeat the app that was selected when the debug command began,
+             * and keep the selection box in sync on every iteration.
+             */
+            DesignLauncher_SetSelected(s_phase3_repeat_selected_index);
             prv_start_selected_app();
             if (LuaRuntimeTask_IsIdle()) {
                 g_phase3_repeat_failures++;

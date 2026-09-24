@@ -30,7 +30,6 @@
 #include "background_task.h"
 #include "cart_io_service.h"
 #include "cart_log.h"
-#include "crash_record.h"
 #include "peripheral_task.h"
 /* USER CODE END Includes */
 
@@ -52,6 +51,19 @@
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
 
+static osThreadId_t ioHandle;
+static const osThreadAttr_t io_attributes = {
+  .name = "io",
+  .stack_size = 3072 * 4,
+  .priority = (osPriority_t) osPriorityNormal,
+};
+static osThreadId_t backgroundHandle;
+static const osThreadAttr_t background_attributes = {
+  .name = "background",
+  .stack_size = 1536 * 4,
+  .priority = (osPriority_t) osPriorityLow,
+};
+
 /* USER CODE END Variables */
 /* Definitions for app */
 osThreadId_t appHandle;
@@ -67,31 +79,16 @@ const osThreadAttr_t audio_attributes = {
   .stack_size = 2048 * 4,
   .priority = (osPriority_t) osPriorityHigh,
 };
-/* Definitions for io */
-osThreadId_t ioHandle;
-const osThreadAttr_t io_attributes = {
-  .name = "io",
-  .stack_size = 3072 * 4,
-  .priority = (osPriority_t) osPriorityNormal,
-};
-/* Definitions for background */
-osThreadId_t backgroundHandle;
-const osThreadAttr_t background_attributes = {
-  .name = "background",
-  .stack_size = 1536 * 4,
-  .priority = (osPriority_t) osPriorityLow,
-};
-
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
+
+static void StartIoTask(void *argument);
+static void StartBackgroundTask(void *argument);
 
 /* USER CODE END FunctionPrototypes */
 
 void StartAppTask(void *argument);
 void StartAudioTask(void *argument);
-void StartIoTask(void *argument);
-void StartBackgroundTask(void *argument);
-
 extern void MX_USB_DEVICE_Init(void);
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
 
@@ -131,13 +128,11 @@ void MX_FREERTOS_Init(void) {
   /* creation of audio */
   audioHandle = osThreadNew(StartAudioTask, NULL, &audio_attributes);
 
-  /* creation of io */
-  ioHandle = osThreadNew(StartIoTask, NULL, &io_attributes);
-
-  /* creation of background */
-  backgroundHandle = osThreadNew(StartBackgroundTask, NULL, &background_attributes);
-
   /* USER CODE BEGIN RTOS_THREADS */
+  ioHandle = osThreadNew(StartIoTask, NULL, &io_attributes);
+  backgroundHandle = osThreadNew(StartBackgroundTask, NULL,
+                                 &background_attributes);
+
   if (appHandle == NULL || audioHandle == NULL || ioHandle == NULL ||
       backgroundHandle == NULL)
   {
@@ -160,8 +155,6 @@ void MX_FREERTOS_Init(void) {
 /* USER CODE END Header_StartAppTask */
 void StartAppTask(void *argument)
 {
-  CrashRecord_MaybeTriggerTestFault();
-
   /* init code for USB_DEVICE */
   MX_USB_DEVICE_Init();
   /* USER CODE BEGIN StartAppTask */
@@ -185,38 +178,20 @@ void StartAudioTask(void *argument)
   /* USER CODE END StartAudioTask */
 }
 
-/* USER CODE BEGIN Header_StartIoTask */
-/**
-* @brief Function implementing the io thread.
-* @param argument: Not used
-* @retval None
-*/
-/* USER CODE END Header_StartIoTask */
-void StartIoTask(void *argument)
-{
-  /* USER CODE BEGIN StartIoTask */
-  CartdeskPeripheralTask_Run(argument);
-  osThreadExit();
-  /* USER CODE END StartIoTask */
-}
-
-/* USER CODE BEGIN Header_StartBackgroundTask */
-/**
-* @brief Function implementing the background thread.
-* @param argument: Not used
-* @retval None
-*/
-/* USER CODE END Header_StartBackgroundTask */
-void StartBackgroundTask(void *argument)
-{
-  /* USER CODE BEGIN StartBackgroundTask */
-  CartdeskBackgroundTask_Run(argument);
-  osThreadExit();
-  /* USER CODE END StartBackgroundTask */
-}
-
 /* Private application code --------------------------------------------------*/
 /* USER CODE BEGIN Application */
+
+static void StartIoTask(void *argument)
+{
+  CartdeskPeripheralTask_Run(argument);
+  osThreadExit();
+}
+
+static void StartBackgroundTask(void *argument)
+{
+  CartdeskBackgroundTask_Run(argument);
+  osThreadExit();
+}
 
 /* USER CODE END Application */
 

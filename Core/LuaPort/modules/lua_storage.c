@@ -218,7 +218,8 @@ static bool find_entry(storage_owner_t* owner, const char* key, size_t key_len,
 
 static int push_value(lua_State* L, const uint8_t* entry) {
   uint8_t key_len = entry[0], type = entry[1];
-  uint16_t length = (uint16_t)entry[2] | ((uint16_t)entry[3] << 8);
+  uint16_t length =
+      (uint16_t)((uint16_t)entry[2] | ((uint16_t)entry[3] << 8u));
   const uint8_t* value = entry + 4u + key_len;
   if (type == VALUE_BOOL) lua_pushboolean(L, value[0] != 0u);
   else if (type == VALUE_INTEGER) {

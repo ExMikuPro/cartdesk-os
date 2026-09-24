@@ -22,6 +22,23 @@
 
 /* USER CODE BEGIN 0 */
 
+#include "crash_record.h"
+
+static void Cartdesk_CrashRecordInitAfterUart(void)
+{
+  static uint8_t initialized;
+  if (initialized != 0U) return;
+  initialized = 1U;
+
+  CrashRecord_Init();
+  if (CrashRecord_HasPending()) {
+    CrashRecord record;
+    if (CrashRecord_Read(&record)) {
+      CrashRecord_Print(&record);
+    }
+  }
+}
+
 /* USER CODE END 0 */
 
 UART_HandleTypeDef huart1;
@@ -66,6 +83,8 @@ void MX_USART1_UART_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN USART1_Init 2 */
+
+  Cartdesk_CrashRecordInitAfterUart();
 
   /* USER CODE END USART1_Init 2 */
 
