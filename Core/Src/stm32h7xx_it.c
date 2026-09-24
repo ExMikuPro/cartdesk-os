@@ -22,7 +22,6 @@
 #include "stm32h7xx_it.h"
 #include "FreeRTOS.h"
 #include "task.h"
-#include "perf_monitor.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "lv_port_disp.h"
@@ -30,6 +29,7 @@
 #include "tick/lv_tick.h"
 #include "FreeRTOS.h"
 #include "task.h"
+#include "perf_monitor.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/

@@ -53,6 +53,10 @@ cmake --build --preset Debug --target flash_qflash_font
 SDRAM。板端依次执行 QFLASH 擦除、页编程和回读比较，写入范围被限制在
 `0x00000000..0x00FFFFFF`，不会触及从 `0x01000000` 开始的 littlefs。
 
+由于 IWDG 已在到达编程断点前启动，板端编程接口会在每个 128 KiB 块开始时
+刷新 IWDG，避免 GDB 函数调用的累计运行时间触发复位。该刷新只存在于显式的
+QFLASH 烧录会话，不改变正常运行时仅由 app 健康帧喂狗的策略。
+
 这里使用 128 KiB 逻辑擦除步长，是因为当前 QUADSPI 工作在 Dual-Flash
 模式：一次 64 KiB Block Erase 会同时擦除两颗 W25Q256 各自的 64 KiB。
 

@@ -45,6 +45,8 @@ static const char *error_message(LuaRuntimeError error)
             return "init failed";
         case LUA_RUNTIME_ERROR_CALLBACK_FAILED:
             return "callback failed";
+        case LUA_RUNTIME_ERROR_BUDGET_EXCEEDED:
+            return "execution budget exceeded";
         case LUA_RUNTIME_ERROR_INTERNAL:
         default:
             return "internal";
@@ -66,7 +68,10 @@ static void record_vm_error(LuaRuntimeError fallback,
                        sizeof(s_error_info.traceback), "%s",
                        s_error_info.message);
     }
-    record_error(fallback, s_error_info.message);
+    record_error(s_error_info.reason == LUA_RUNTIME_ERROR_REASON_BUDGET_EXCEEDED
+                     ? LUA_RUNTIME_ERROR_BUDGET_EXCEEDED
+                     : fallback,
+                 s_error_info.message);
 }
 
 static void record_error(LuaRuntimeError error, const char *context)

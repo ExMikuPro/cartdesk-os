@@ -12,6 +12,7 @@
 #include "lauxlib.h"
 #include "lua.h"
 #include "lua_foundation.h"
+#include "lua_execution_budget.h"
 #include "lua_vm.h"
 
 int luaopen_timer(lua_State* L);
@@ -74,6 +75,23 @@ void lua_vm_report_timer_error(uint32_t owner_id, uint32_t generation,
   ++g_error_count;
 }
 
+void lua_vm_report_timer_budget_error(uint32_t owner_id,
+                                      uint32_t generation,
+                                      const char* app_id,
+                                      const char* message,
+                                      uint32_t elapsed_us,
+                                      uint32_t budget_us,
+                                      uint32_t hook_count,
+                                      uint32_t hook_instruction_interval) {
+  assert(owner_id == OWNER_ID && generation == OWNER_GENERATION);
+  assert(strcmp(app_id, "timer-test") == 0);
+  assert(strstr(message, "Lua execution budget exceeded") != NULL);
+  assert(elapsed_us >= budget_us);
+  assert(hook_count > 0u);
+  assert(hook_instruction_interval > 0u);
+  ++g_error_count;
+}
+
 static int successful_callback(lua_State* L) {
   (void)L;
   ++g_callback_count;
@@ -110,6 +128,7 @@ static void create_timer(lua_CFunction callback, bool repeating) {
 int main(void) {
   g_vm = luaL_newstate();
   assert(g_vm != NULL);
+  LuaExecutionBudget_Install(g_vm);
   assert(lua_timer_owner_create(g_vm, OWNER_ID, OWNER_GENERATION));
 
   for (uint32_t i = 0u; i < 1000u; ++i) {
@@ -142,8 +161,23 @@ int main(void) {
   lua_timer_process(g_vm, OWNER_ID, OWNER_GENERATION, g_now_ms);
   assert(g_error_count == 1u);
 
+  assert(luaL_dostring(g_vm,
+                       "return function() while true do end end") == LUA_OK);
+  int hanging_callback_ref = luaL_ref(g_vm, LUA_REGISTRYINDEX);
+  lua_settop(g_vm, 0);
+  assert(luaopen_timer(g_vm) == 1);
+  lua_getfield(g_vm, -1, "after");
+  lua_pushinteger(g_vm, 5);
+  lua_rawgeti(g_vm, LUA_REGISTRYINDEX, hanging_callback_ref);
+  assert(lua_pcall(g_vm, 2, 1, 0) == LUA_OK);
+  luaL_unref(g_vm, LUA_REGISTRYINDEX, hanging_callback_ref);
+  g_now_ms = 15u;
+  lua_timer_process(g_vm, OWNER_ID, OWNER_GENERATION, g_now_ms);
+  assert(g_error_count == 2u);
+
   lua_timer_owner_destroy(g_vm, OWNER_ID, OWNER_GENERATION);
   lua_timer_owner_destroy(g_vm, OWNER_ID, OWNER_GENERATION);
+  LuaExecutionBudget_Reset();
   lua_close(g_vm);
   puts("lua_timer_test: ok");
   return 0;

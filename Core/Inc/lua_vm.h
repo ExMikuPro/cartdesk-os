@@ -25,14 +25,26 @@ typedef enum {
   LUA_RUNTIME_ERROR_STAGE_FINAL,
 } LuaRuntimeErrorStage;
 
+typedef enum {
+  LUA_RUNTIME_ERROR_REASON_NONE = 0,
+  LUA_RUNTIME_ERROR_REASON_LUA_ERROR,
+  LUA_RUNTIME_ERROR_REASON_BUDGET_EXCEEDED,
+} LuaRuntimeErrorReason;
+
 typedef struct {
   LuaRuntimeErrorStage stage;
+  LuaRuntimeErrorReason reason;
   char message[LUA_RUNTIME_ERROR_MESSAGE_MAX];
   char traceback[LUA_RUNTIME_ERROR_TRACEBACK_MAX];
   char app_id[LUA_RUNTIME_ERROR_APP_ID_MAX + 1u];
   uint32_t owner_id;
+  uint32_t generation;
   uint64_t cart_id;
   uint32_t tick;
+  uint32_t elapsed_us;
+  uint32_t budget_us;
+  uint32_t hook_count;
+  uint32_t hook_instruction_interval;
 } LuaRuntimeErrorInfo;
 
 typedef struct {
@@ -79,6 +91,14 @@ void lua_vm_report_timer_error(uint32_t owner_id,
                                uint32_t generation,
                                const char *app_id,
                                const char *message);
+void lua_vm_report_timer_budget_error(uint32_t owner_id,
+                                      uint32_t generation,
+                                      const char *app_id,
+                                      const char *message,
+                                      uint32_t elapsed_us,
+                                      uint32_t budget_us,
+                                      uint32_t hook_count,
+                                      uint32_t hook_instruction_interval);
 
 #ifdef __cplusplus
 }

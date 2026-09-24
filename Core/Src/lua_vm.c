@@ -15,6 +15,7 @@
 #include "lua_app_instance.h"
 #include "lua_foundation.h"
 #include "lua_foundation_platform.h"
+#include "lua_execution_budget.h"
 #include "lua_ui.h"
 #include "lua_vm_memory.h"
 #include "resource_manager.h"
@@ -208,14 +209,20 @@ typedef enum {
     LUA_SCHED_MESSAGE,
 } lua_scheduler_phase_t;
 
-__attribute__((section(".ram_runtime"), aligned(32)))
+#if defined(STM32H743xx)
+#define LUA_RT_RUNTIME_STORAGE __attribute__((section(".ram_runtime"), aligned(32)))
+#else
+#define LUA_RT_RUNTIME_STORAGE __attribute__((aligned(32)))
+#endif
+
+LUA_RT_RUNTIME_STORAGE
 static lua_script_instance_t g_instances[LUA_RT_MAX_INSTANCES];
 static size_t g_instance_count = 0;
 static uint32_t g_next_owner_id = 1u;
 static uint32_t g_next_generation = 1u;
 static uint64_t g_pending_cart_id = 0u;
 
-__attribute__((section(".ram_runtime"), aligned(32)))
+LUA_RT_RUNTIME_STORAGE
 static lua_input_event_t g_input_queue[LUA_RT_INPUT_QUEUE_CAPACITY];
 static uint8_t g_input_head = 0;
 static uint8_t g_input_tail = 0;
@@ -223,7 +230,7 @@ static uint8_t g_input_count = 0;
 static lua_input_event_t g_current_input;
 static bool g_has_current_input = false;
 
-__attribute__((section(".ram_runtime"), aligned(32)))
+LUA_RT_RUNTIME_STORAGE
 static lua_message_event_t g_message_queue[LUA_RT_MESSAGE_QUEUE_CAPACITY];
 static uint8_t g_message_head = 0;
 static uint8_t g_message_tail = 0;
@@ -275,18 +282,47 @@ static int lua_rt_traceback(lua_State *L)
     return 1;
 }
 
+static void lua_rt_record_runtime_error(LuaRuntimeErrorStage stage,
+                                        const lua_script_instance_t *instance,
+                                        const char *message,
+                                        const char *traceback);
+
+static void lua_rt_record_budget_error(
+    LuaRuntimeErrorStage stage,
+    const lua_script_instance_t *instance,
+    const LuaExecutionBudgetReport *report,
+    const char *traceback);
+
 static int lua_rt_pcall_capture(lua_State *L, int nargs, int nrets,
-                                char *error, size_t error_size)
+                                LuaRuntimeErrorStage stage,
+                                uint32_t owner_id,
+                                uint32_t generation,
+                                char *error, size_t error_size,
+                                LuaExecutionBudgetReport *budget_report)
 {
     /* 在函数下面插入 traceback handler */
     int base = lua_gettop(L) - nargs;
     lua_pushcfunction(L, lua_rt_traceback);
     lua_insert(L, base);
 
+    LuaExecutionBudget_Begin(L, stage, owner_id, generation);
     int rc = lua_pcall(L, nargs, nrets, base);
+    LuaExecutionBudgetReport local_report;
+    bool budget_exceeded = LuaExecutionBudget_End(&local_report);
 
     /* 移除 traceback handler */
     lua_remove(L, base);
+
+    if (budget_exceeded) {
+        char message[LUA_RUNTIME_ERROR_MESSAGE_MAX];
+        LuaExecutionBudget_Format(&local_report, message, sizeof(message));
+        if (error != NULL && error_size > 0u) {
+            (void)snprintf(error, error_size, "%s", message);
+        }
+        if (budget_report != NULL) *budget_report = local_report;
+        if (rc != LUA_OK) lua_pop(L, 1);
+        return -2;
+    }
 
     if (rc != LUA_OK) {
         const char *err = lua_tostring(L, -1);
@@ -307,9 +343,22 @@ static int lua_rt_pcall_capture(lua_State *L, int nargs, int nrets,
     return 0;
 }
 
-static int lua_rt_pcall(lua_State *L, int nargs, int nrets)
+static int lua_rt_pcall(lua_State *L, int nargs, int nrets,
+                        LuaRuntimeErrorStage stage,
+                        const lua_script_instance_t *instance)
 {
-    return lua_rt_pcall_capture(L, nargs, nrets, NULL, 0u);
+    LuaExecutionBudgetReport report;
+    char error[LUA_RUNTIME_ERROR_MESSAGE_MAX];
+    int rc = lua_rt_pcall_capture(L, nargs, nrets,
+                                  stage,
+                                  instance != NULL ? instance->owner_id : 0u,
+                                  instance != NULL ? instance->generation : 0u,
+                                  error, sizeof(error), &report);
+    if (rc == -2) {
+        lua_rt_record_budget_error(stage, instance,
+                                   &report, error);
+    }
+    return rc;
 }
 
 static const char *const k_lifecycle_names[LUA_LIFECYCLE_COUNT] = {
@@ -445,9 +494,11 @@ static void lua_rt_record_runtime_error(LuaRuntimeErrorStage stage,
     }
     memset(&g_runtime_error, 0, sizeof(g_runtime_error));
     g_runtime_error.stage = stage;
+    g_runtime_error.reason = LUA_RUNTIME_ERROR_REASON_LUA_ERROR;
     g_runtime_error.tick = lua_rt_time_ms();
     if (instance != NULL) {
         g_runtime_error.owner_id = instance->owner_id;
+        g_runtime_error.generation = instance->generation;
         g_runtime_error.cart_id = instance->cart_id;
         (void)snprintf(g_runtime_error.app_id,
                        sizeof(g_runtime_error.app_id), "%s", instance->app_id);
@@ -456,6 +507,30 @@ static void lua_rt_record_runtime_error(LuaRuntimeErrorStage stage,
                    "%s", message != NULL ? message : "Lua callback failed");
     (void)snprintf(g_runtime_error.traceback, sizeof(g_runtime_error.traceback),
                    "%s", traceback != NULL ? traceback : g_runtime_error.message);
+}
+
+static void lua_rt_record_budget_error(
+    LuaRuntimeErrorStage stage,
+    const lua_script_instance_t *instance,
+    const LuaExecutionBudgetReport *report,
+    const char *traceback)
+{
+    if (g_runtime_error.stage != LUA_RUNTIME_ERROR_STAGE_NONE) {
+        return;
+    }
+    char message[LUA_RUNTIME_ERROR_MESSAGE_MAX];
+    LuaExecutionBudget_Format(report, message, sizeof(message));
+    lua_rt_record_runtime_error(stage, instance, message,
+                                traceback != NULL ? traceback : message);
+    g_runtime_error.reason = LUA_RUNTIME_ERROR_REASON_BUDGET_EXCEEDED;
+    if (report != NULL) {
+        g_runtime_error.owner_id = report->owner_id;
+        g_runtime_error.generation = report->generation;
+        g_runtime_error.elapsed_us = report->elapsed_us;
+        g_runtime_error.budget_us = report->budget_us;
+        g_runtime_error.hook_count = report->hook_count;
+        g_runtime_error.hook_instruction_interval = report->instruction_interval;
+    }
 }
 
 static void lua_rt_stop_after_callback_error(lua_script_instance_t *instance)
@@ -530,14 +605,14 @@ static int lua_rt_create_instance_from_loaded(lua_script_source_t source,
     }
 
     lua_remove(g_L, env_index);
-    if (lua_rt_pcall(g_L, 0, 0) != 0) {
+    if (lua_rt_pcall(g_L, 0, 0, LUA_RUNTIME_ERROR_STAGE_LOAD, NULL) != 0) {
         lua_rt_unref_instance(instance);
         lua_settop(g_L, stack_base);
         return -4;
     }
 
     lua_pushcfunction(g_L, lua_rt_build_self);
-    if (lua_rt_pcall(g_L, 0, 1) != 0) {
+    if (lua_rt_pcall(g_L, 0, 1, LUA_RUNTIME_ERROR_STAGE_LOAD, NULL) != 0) {
         lua_rt_unref_instance(instance);
         lua_settop(g_L, stack_base);
         return -5;
@@ -1138,32 +1213,47 @@ static int lua_rt_resume_entry(int nargs)
                        g_entry_instance->generation);
     lua_foundation_owner_enter(g_L, g_entry_instance->owner_id,
                                g_entry_instance->generation);
+    LuaRuntimeErrorStage stage = lua_rt_error_stage(g_entry_lifecycle);
+    LuaExecutionBudgetReport budget_report;
+    LuaExecutionBudget_Begin(g_entry_thread, stage,
+                             g_entry_instance->owner_id,
+                             g_entry_instance->generation);
     int rc = lua_resume(g_entry_thread, g_L, nargs, &nresults);
+    bool budget_exceeded = LuaExecutionBudget_End(&budget_report);
     lua_foundation_owner_leave();
     lua_ui_owner_leave();
-    if (rc == LUA_YIELD) {
+    if (!budget_exceeded && rc == LUA_YIELD) {
         if (nresults > 0) lua_pop(g_entry_thread, nresults);
         return 1;
     }
 
-    if (rc == LUA_OK) {
+    if (!budget_exceeded && rc == LUA_OK) {
         if (nresults > 0) lua_pop(g_entry_thread, nresults);
         lua_rt_finish_lifecycle(true);
         lua_rt_clear_entry();
         return 0;
     }
 
-    const char *err = lua_tostring(g_entry_thread, -1);
     char message[LUA_RUNTIME_ERROR_MESSAGE_MAX];
-    (void)snprintf(message, sizeof(message), "%s",
-                   err ? err : "(lua coroutine error)");
+    const char *err = lua_tostring(g_entry_thread, -1);
+    if (budget_exceeded) {
+        LuaExecutionBudget_Format(&budget_report, message, sizeof(message));
+    } else {
+        (void)snprintf(message, sizeof(message), "%s",
+                       err ? err : "(lua coroutine error)");
+    }
     luaL_traceback(g_L, g_entry_thread,
-                   err ? err : "(lua coroutine error)", 1);
+                   message, 1);
     const char *traceback = lua_tostring(g_L, -1);
     CartLog_Write(CART_LOG_ERROR, g_entry_instance->app_id,
                   traceback ? traceback : message);
-    lua_rt_record_runtime_error(lua_rt_error_stage(g_entry_lifecycle),
-                                g_entry_instance, message, traceback);
+    if (budget_exceeded) {
+        lua_rt_record_budget_error(stage, g_entry_instance,
+                                   &budget_report, traceback);
+    } else {
+        lua_rt_record_runtime_error(stage, g_entry_instance,
+                                    message, traceback);
+    }
     lua_pop(g_L, 1);
     lua_rt_finish_lifecycle(false);
     lua_rt_stop_after_callback_error(g_entry_instance);
@@ -1314,13 +1404,20 @@ static int lua_rt_call_direct(lua_script_instance_t *instance,
     lua_ui_owner_enter(g_L, instance->owner_id, instance->generation);
     lua_foundation_owner_enter(g_L, instance->owner_id, instance->generation);
     char error[LUA_RUNTIME_ERROR_TRACEBACK_MAX];
-    int rc = lua_rt_pcall_capture(g_L, 1, 0, error, sizeof(error));
+    LuaRuntimeErrorStage stage = lua_rt_error_stage(lifecycle);
+    LuaExecutionBudgetReport budget_report;
+    int rc = lua_rt_pcall_capture(g_L, 1, 0, stage,
+                                  instance->owner_id, instance->generation,
+                                  error, sizeof(error), &budget_report);
     lua_foundation_owner_leave();
     lua_ui_owner_leave();
     lua_settop(g_L, stack_base);
     if (rc != 0) {
-        lua_rt_record_runtime_error(lua_rt_error_stage(lifecycle), instance,
-                                    error, error);
+        if (rc == -2) {
+            lua_rt_record_budget_error(stage, instance, &budget_report, error);
+        } else {
+            lua_rt_record_runtime_error(stage, instance, error, error);
+        }
         if (lifecycle != LUA_LIFECYCLE_FINAL) {
             lua_rt_stop_after_callback_error(instance);
         }
@@ -1553,6 +1650,7 @@ static int lua_rt_init_state(void)
         return -2;
     }
 
+    LuaExecutionBudget_Install(g_L);
     lua_rt_openlibs(g_L);
     lua_port_bind(g_L, NULL);
     lua_ui_registry_init();
@@ -1775,7 +1873,8 @@ static int lua_rt_reload_instance_from_loaded(lua_script_instance_t *instance)
         return -1;
     }
 
-    if (lua_rt_pcall(g_L, 0, 0) != 0) {
+    if (lua_rt_pcall(g_L, 0, 0, LUA_RUNTIME_ERROR_STAGE_UPDATE,
+                     instance) != 0) {
         lua_settop(g_L, stack_base);
         return -2;
     }
@@ -1862,6 +1961,7 @@ int lua_shutdown(void)
     }
     res_scene_reset();
 
+    LuaExecutionBudget_Reset();
     lua_close(g_L);
     g_L = NULL;
     lua_vm_memory_print_stats();
@@ -1985,6 +2085,44 @@ void lua_vm_report_timer_error(uint32_t owner_id,
         (void)snprintf(g_runtime_error.app_id,
                        sizeof(g_runtime_error.app_id), "%s", app_id);
         g_runtime_error.owner_id = owner_id;
+    }
+    lua_rt_stop_after_callback_error(instance);
+}
+
+void lua_vm_report_timer_budget_error(uint32_t owner_id,
+                                      uint32_t generation,
+                                      const char *app_id,
+                                      const char *message,
+                                      uint32_t elapsed_us,
+                                      uint32_t budget_us,
+                                      uint32_t hook_count,
+                                      uint32_t hook_instruction_interval)
+{
+    lua_script_instance_t *instance = NULL;
+    for (size_t i = 0u; i < g_instance_count; ++i) {
+        if (g_instances[i].alive && g_instances[i].owner_id == owner_id &&
+            g_instances[i].generation == generation) {
+            instance = &g_instances[i];
+            break;
+        }
+    }
+
+    LuaExecutionBudgetReport report = {
+        .stage = LUA_RUNTIME_ERROR_STAGE_TIMER,
+        .owner_id = owner_id,
+        .generation = generation,
+        .elapsed_us = elapsed_us,
+        .budget_us = budget_us,
+        .hook_count = hook_count,
+        .instruction_interval = hook_instruction_interval,
+    };
+    lua_rt_record_budget_error(LUA_RUNTIME_ERROR_STAGE_TIMER, instance,
+                               &report, message);
+    if (instance == NULL && app_id != NULL) {
+        (void)snprintf(g_runtime_error.app_id,
+                       sizeof(g_runtime_error.app_id), "%s", app_id);
+        g_runtime_error.owner_id = owner_id;
+        g_runtime_error.generation = generation;
     }
     lua_rt_stop_after_callback_error(instance);
 }

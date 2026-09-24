@@ -18,13 +18,13 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-#include "perf_monitor.h"
 #include "FreeRTOS.h"
 #include "cmsis_os2.h"
 #include "crc.h"
 #include "dma2d.h"
 #include "fatfs.h"
 #include "i2c.h"
+#include "iwdg.h"
 #include "ltdc.h"
 #include "mdma.h"
 #include "quadspi.h"
@@ -56,7 +56,8 @@
 
 #include "touch.h"
 #include "qflash_font_programmer.h"
-#include "crash_record.h"
+#include "perf_monitor.h"
+#include "watchdog_policy.h"
 
 /* USER CODE END Includes */
 
@@ -161,6 +162,7 @@ int main(void)
   HAL_Init();
 
   /* USER CODE BEGIN Init */
+  WatchdogPolicy_CaptureResetReason();
   PerfMonitor_Init();
   extern uint8_t __sdmmc_ram_start__;
   extern uint8_t __sdmmc_ram_end__;
@@ -176,7 +178,7 @@ int main(void)
   PeriphCommonClock_Config();
 
   /* USER CODE BEGIN SysInit */
-
+  WatchdogPolicy_ConfigureDebugFreeze();
   /* USER CODE END SysInit */
 
   /* Initialize all configured peripherals */
@@ -186,16 +188,7 @@ int main(void)
   MX_FMC_Init();
   MX_RTC_Init();
   MX_USART1_UART_Init();
-  CrashRecord_Init();
-  if (CrashRecord_HasPending()) {
-    CrashRecord record;
-    if (CrashRecord_Read(&record)) {
-      CrashRecord_Print(&record);
-    }
-  }
-  uint32_t sdmmc_init_start = PerfMonitor_Begin();
   MX_SDMMC1_SD_Init();
-  PerfMonitor_End(PERF_MONITOR_STARTUP_SDMMC_INIT, sdmmc_init_start);
   MX_FATFS_Init();
   MX_CRC_Init();
   MX_DMA2D_Init();
@@ -206,7 +199,9 @@ int main(void)
   MX_TIM2_Init();
   MX_TIM3_Init();
   MX_TIM17_Init();
+  MX_IWDG1_Init();
   /* USER CODE BEGIN 2 */
+  WatchdogPolicy_LogResetReason();
   SDRAM_Init();
   sdram_layout_check();
   if (!xhgc_mem_layout_validate()) {
@@ -276,8 +271,10 @@ void SystemClock_Config(void)
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI48|RCC_OSCILLATORTYPE_HSE;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI48|RCC_OSCILLATORTYPE_LSI
+                              |RCC_OSCILLATORTYPE_HSE;
   RCC_OscInitStruct.HSEState = RCC_HSE_ON;
+  RCC_OscInitStruct.LSIState = RCC_LSI_ON;
   RCC_OscInitStruct.HSI48State = RCC_HSI48_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;

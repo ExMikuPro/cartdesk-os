@@ -1,8 +1,9 @@
 /* USER CODE BEGIN Header */
 /**
   ******************************************************************************
-  * @file   fatfs.h
-  * @brief  Header for fatfs applications
+  * @file    iwdg.h
+  * @brief   This file contains all the function prototypes for
+  *          the iwdg.c file
   ******************************************************************************
   * @attention
   *
@@ -17,37 +18,34 @@
   */
 /* USER CODE END Header */
 /* Define to prevent recursive inclusion -------------------------------------*/
-#ifndef __fatfs_H
-#define __fatfs_H
+#ifndef __IWDG_H__
+#define __IWDG_H__
+
 #ifdef __cplusplus
- extern "C" {
+extern "C" {
 #endif
 
-#include "ff.h"
-#include "ff_gen_drv.h"
-#include "sd_diskio.h" /* defines SD_Driver as external */
+/* Includes ------------------------------------------------------------------*/
+#include "main.h"
 
 /* USER CODE BEGIN Includes */
-#include <stdbool.h>
 
 /* USER CODE END Includes */
 
-extern uint8_t retSD; /* Return value for SD */
-extern char SDPath[4]; /* SD logical drive path */
-extern FATFS SDFatFS; /* File system object for SD logical drive */
-extern FIL SDFile; /* File object for SD */
+extern IWDG_HandleTypeDef hiwdg1;
 
-void MX_FATFS_Init(void);
+/* USER CODE BEGIN Private defines */
+
+/* USER CODE END Private defines */
+
+void MX_IWDG1_Init(void);
 
 /* USER CODE BEGIN Prototypes */
-FRESULT SD_FATFS_Mount(void);
-FRESULT SD_FATFS_Unmount(void);
-FRESULT SD_FATFS_Reinitialize(void);
-void SD_FATFS_InvalidateMount(void);
-bool SD_FATFS_IsMounted(void);
 
 /* USER CODE END Prototypes */
+
 #ifdef __cplusplus
 }
 #endif
-#endif /*__fatfs_H */
+
+#endif /* __IWDG_H__ */

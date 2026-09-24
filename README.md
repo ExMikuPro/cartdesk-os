@@ -222,6 +222,8 @@ tests/              host 侧解析测试和 Lua smoke test
 
 ## 重要文档
 
+- [Docs/stability/Lua执行预算与IWDG.md](Docs/stability/Lua执行预算与IWDG.md)：Lua callback/coroutine 执行预算、owner 清理、IWDG 健康策略与验证方法。
+- [Docs/STM32CubeMX_SYNC.md](Docs/STM32CubeMX_SYNC.md)：IOC 与实际硬件初始化的同步边界、Generate Code 保护策略和验证记录。
 - [Docs/memory/SDRAM_Layout_Spec_v1.0.md](Docs/memory/SDRAM_Layout_Spec_v1.0.md)：SDRAM 固定分区。
 - [Docs/CLion_Build_Presets.md](Docs/CLion_Build_Presets.md)：CLion / CMake preset、内存自测和实验构建入口。
 - [Docs/display/DMA2D_适配逻辑.md](Docs/display/DMA2D_适配逻辑.md)：DMA2D 与显示链路说明。

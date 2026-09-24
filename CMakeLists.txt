@@ -18,6 +18,7 @@ message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 option(CARTDESK_ENABLE_BOARD_TESTS "Run board-level test diagnostics at startup" OFF)
 option(CARTDESK_CRASH_TEST_ENABLE "Trigger one deliberate UDF crash at startup" OFF)
 option(CARTDESK_CRASH_BREAK_WHEN_DEBUGGED "Break after saving a crash when a debugger is attached" OFF)
+option(CARTDESK_WATCHDOG_STALL_TEST_ENABLE "Deliberately stop the app task to test IWDG reset" OFF)
 option(CARTDESK_HOST_TESTS_ONLY "Configure only native host tests" OFF)
 option(XHGC_MEMINFO_SELFTEST_ENABLE "Run APP_ARENA_REST meminfo selftest in Debug builds" OFF)
 option(XHGC_DMA_POOL_SELFTEST_ENABLE "Run DMA_POOL allocator meminfo selftest in Debug builds" OFF)
@@ -48,6 +49,7 @@ set(SCREEN_PAGE_DIR ${SCREEN_DIR}/Page)
 set(SCREEN_UTILS_DIR ${SCREEN_DIR}/utils)
 set(SCREEN_ASSETS_DIR ${SCREEN_DIR}/Assets)
 set(DEBUG_DIR ${CORE_DIR}/Debug)
+set(SYSTEM_DIR ${CORE_DIR}/System)
 set(TOOLS_DIR ${PROJECT_ROOT}/tools)
 set(FATFS_DIR ${PROJECT_ROOT}/FATFS)
 set(FATFS_APP_DIR ${FATFS_DIR}/App)
@@ -110,11 +112,16 @@ if(CARTDESK_HOST_TESTS_ONLY)
                      -DBINARY_ROOT=${CMAKE_BINARY_DIR}
                      -P ${PROJECT_ROOT}/tests/lua/syntax_compile_test.cmake)
 
+    if(APPLE)
+        set(CARTDESK_HOST_ASAN_OPTIONS "detect_leaks=0")
+    else()
+        set(CARTDESK_HOST_ASAN_OPTIONS "detect_leaks=1")
+    endif()
     set_tests_properties(lua_random_test lua_storage_test lua_assets_test
             lua_timer_test
             lua_vm_lifecycle_test
             PROPERTIES ENVIRONMENT
-            "ASAN_OPTIONS=detect_leaks=1;UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1")
+            "ASAN_OPTIONS=${CARTDESK_HOST_ASAN_OPTIONS};UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1")
     return()
 endif()
 
@@ -221,10 +228,21 @@ if(CARTDESK_USB_SD_MSC_ENABLE)
 endif()
 
 add_library(cartdesk_common INTERFACE)
+target_compile_options(cartdesk_common INTERFACE
+        # The firmware deliberately traps unaligned accesses.  Keep compiler
+        # generated memset/memcpy sequences byte-safe for packed and Lua-owned
+        # data whose alignment is not guaranteed by the C type system.
+        -mno-unaligned-access
+)
 target_compile_definitions(cartdesk_common INTERFACE
         ${COMMON_DEFINES}
         $<$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>:PERF_MONITOR_ENABLE=1>
+        $<$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>:CARTDESK_WATCHDOG_DEBUG_FREEZE=1>
 )
+if(CARTDESK_WATCHDOG_STALL_TEST_ENABLE)
+    target_compile_definitions(cartdesk_common INTERFACE
+            CARTDESK_WATCHDOG_STALL_TEST_ENABLE=1)
+endif()
 target_include_directories(cartdesk_common INTERFACE
         ${CORE_INC_DIR}
         ${DEBUG_DIR}
@@ -278,7 +296,14 @@ add_library(lua STATIC
         ${LUA_SRC_DIR}/lutf8lib.c
 )
 
-target_compile_options(lua PRIVATE -ffunction-sections -fdata-sections)
+target_compile_options(lua PRIVATE
+        -ffunction-sections
+        -fdata-sections
+        # Lua copies source names from byte-aligned strings.  The firmware
+        # enables UNALIGN_TRP, so the compiler must not fold those memcpy calls
+        # into unaligned word loads.
+        -mno-unaligned-access
+)
 target_include_directories(lua PUBLIC ${LUA_SRC_DIR})
 
 # ==============================================================================
@@ -417,6 +442,8 @@ add_library(lua_port STATIC
         ${LUA_PORT_DIR}/app_arena.h
         ${LUA_PORT_DIR}/lua_app_instance.c
         ${LUA_PORT_DIR}/lua_app_instance.h
+        ${LUA_PORT_DIR}/lua_execution_budget.c
+        ${LUA_PORT_DIR}/lua_execution_budget.h
         ${LUA_PORT_DIR}/lua_cart_resource_cache.c
         ${LUA_PORT_DIR}/lua_cart_resource_cache.h
         ${LUA_PORT_DIR}/lua_port.c
@@ -604,9 +631,11 @@ add_library(app_task STATIC
         ${TASK_DIR}/peripheral_task.h
         ${TASK_DIR}/background_task.c
         ${TASK_DIR}/background_task.h
+        ${SYSTEM_DIR}/watchdog_policy.c
+        ${SYSTEM_DIR}/watchdog_policy.h
 )
 
-target_include_directories(app_task PUBLIC ${TASK_DIR})
+target_include_directories(app_task PUBLIC ${TASK_DIR} ${SYSTEM_DIR})
 target_link_libraries(app_task PUBLIC
         cartdesk_common
         lvgl
@@ -671,6 +700,37 @@ target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
 
 # 添加 STM32CubeMX 生成的源（main.c / 外设初始化 / 启动文件等）
 add_subdirectory(cmake/stm32cubemx)
+
+# CubeMX owns the canonical middleware source paths below.  The project keeps
+# its SD DMA safety and runtime CDC/MSC switching in stable custom translation
+# units so Generate Code cannot overwrite those behaviours.
+set(CARTDESK_CUBEMX_REPLACED_SOURCES
+        ${PROJECT_ROOT}/FATFS/Target/sd_diskio.c
+        ${PROJECT_ROOT}/USB_DEVICE/App/usb_device.c
+        ${PROJECT_ROOT}/USB_DEVICE/App/usbd_desc.c
+        ${PROJECT_ROOT}/USB_DEVICE/Target/usbd_conf.c
+        ${PROJECT_ROOT}/Core/Src/rtc.c
+)
+set_source_files_properties(${CARTDESK_CUBEMX_REPLACED_SOURCES}
+        PROPERTIES HEADER_FILE_ONLY TRUE)
+target_sources(${CMAKE_PROJECT_NAME} PRIVATE
+        ${PROJECT_ROOT}/FATFS/Target/sd_diskio_custom.c
+        ${PROJECT_ROOT}/USB_DEVICE/App/usb_device_custom.c
+        ${PROJECT_ROOT}/USB_DEVICE/App/usbd_desc_custom.c
+        ${PROJECT_ROOT}/USB_DEVICE/Target/usbd_conf_custom.c
+        ${PROJECT_ROOT}/Core/Src/rtc_custom.c
+)
+
+# CubeMX regenerates cmake/stm32cubemx/CMakeLists.txt.  Keep optional MSC build
+# wiring here, in the project-owned CMake file.
+if(CARTDESK_USB_SD_MSC_ENABLE)
+    target_include_directories(stm32cubemx INTERFACE
+            ${CARTDESK_USB_MSC_INCLUDE_DIR})
+    target_sources(${CMAKE_PROJECT_NAME} PRIVATE
+            ${CARTDESK_USB_MSC_APP_SOURCES})
+    target_sources(USB_Device_Library PRIVATE
+            ${CARTDESK_USB_MSC_SOURCES})
+endif()
 
 # Keep interrupt boundaries visible under extreme-size LTO. This avoids
 # cross-unit inlining of complete HAL handlers into high-frequency IRQ stubs.

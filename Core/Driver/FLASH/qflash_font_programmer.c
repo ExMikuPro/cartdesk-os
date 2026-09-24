@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "flash.h"
+#include "iwdg.h"
 #include "quadspi.h"
 #include "sdram_layout.h"
 
@@ -21,6 +22,7 @@ void __attribute__((noinline, used)) QFlashFont_ProgrammerReady(void)
 
 int QFlashFont_ProgramBegin(void)
 {
+    (void)HAL_IWDG_Refresh(&hiwdg1);
     FLASH_Status status = FLASH_Open(&s_program_flash, &hqspi, QFLASH_TOTAL_SIZE);
     if(status == FLASH_OK) {
         status = FLASH_BringUp(&s_program_flash);
@@ -84,6 +86,8 @@ int QFlashFont_ProgramBlock(uint32_t offset, const void *data, uint32_t length)
         return -3;
     }
 
+    /* The GDB-driven programmer runs before the app task owns the watchdog. */
+    (void)HAL_IWDG_Refresh(&hiwdg1);
     invalidate_source_cache(data, length);
 
     FLASH_Status status = FLASH_Erase64K(&s_program_flash, offset);
@@ -103,6 +107,7 @@ int QFlashFont_ProgramFinish(void)
         return -1;
     }
 
+    (void)HAL_IWDG_Refresh(&hiwdg1);
     FLASH_Status status = FLASH_EnableMemoryMapped(&s_program_flash);
     s_program_session_active = false;
     return (int)status;

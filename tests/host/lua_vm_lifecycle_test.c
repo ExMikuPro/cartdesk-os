@@ -59,6 +59,34 @@ static const char k_final_failure_script[] =
       "function init(self) self.state.ready = true end\n"
       "function update(self, dt) end\n"
       "function final(self) error('intentional final failure') end\n";
+static const char k_init_hang_script[] =
+      "function init(self) while true do end end\n";
+static const char k_update_hang_script[] =
+      "function init(self) self.state.ready = true end\n"
+      "function update(self, dt) while true do end end\n";
+static const char k_coroutine_hang_script[] =
+      "local co = coroutine.create(function() while true do end end)\n"
+      "function init(self) self.state.ready = true end\n"
+      "function update(self, dt) coroutine.resume(co) end\n";
+static const char k_yield_resume_script[] =
+      "local co\n"
+      "function init(self)\n"
+      "  co = coroutine.create(function() coroutine.yield(); self.state.done = true end)\n"
+      "end\n"
+      "function update(self, dt)\n"
+      "  if coroutine.status(co) ~= 'dead' then assert(coroutine.resume(co)) end\n"
+      "end\n";
+static const char k_finite_work_script[] =
+      "function init(self) self.state.ready = true end\n"
+      "function update(self, dt)\n"
+      "  local total = 0\n"
+      "  for i = 1, 50000 do total = total + i end\n"
+      "  self.state.total = total\n"
+      "end\n";
+static const char k_final_hang_script[] =
+      "function init(self) self.state.ready = true end\n"
+      "function update(self, dt) end\n"
+      "function final(self) while true do end end\n";
 
 const char* lua_get_boot_script(size_t* length) {
   assert(g_boot_script != NULL);
@@ -276,6 +304,33 @@ static void run_callback_failure(const char* script,
   assert(g_ui_destroy_count == ui_destroyed);
 }
 
+static void run_budget_failure(const char* script,
+                               LuaRuntimeErrorStage expected_stage) {
+  g_boot_script = script;
+  assert(lua_init() == 0);
+  drive_until_error(expected_stage, "Lua execution budget exceeded");
+  LuaRuntimeErrorInfo error;
+  assert(lua_vm_get_runtime_error(&error));
+  assert(error.reason == LUA_RUNTIME_ERROR_REASON_BUDGET_EXCEEDED);
+  assert(error.elapsed_us >= error.budget_us);
+  assert(error.hook_count > 0u);
+  assert(error.hook_instruction_interval > 0u);
+  assert(lua_shutdown() == 0);
+  assert(!g_foundation_active && !g_ui_active);
+}
+
+static void run_normal_cart(const char* script) {
+  g_boot_script = script;
+  assert(lua_init() == 0);
+  for (uint32_t i = 0u; i < 4u; ++i) {
+    g_tick += 20u;
+    lua_update_task();
+    assert(!lua_vm_get_runtime_error(NULL));
+  }
+  assert(lua_shutdown() == 0);
+  assert(!g_foundation_active && !g_ui_active);
+}
+
 int main(void) {
   g_boot_script = k_init_failure_script;
   for (uint32_t i = 0u; i < 50u; ++i) run_init_failure_cycle(i);
@@ -329,6 +384,30 @@ int main(void) {
   assert(!g_foundation_active && !g_ui_active);
   assert(g_foundation_create_count == g_foundation_destroy_count);
   assert(g_ui_create_count == g_ui_destroy_count);
+
+  run_budget_failure(k_init_hang_script, LUA_RUNTIME_ERROR_STAGE_INIT);
+  run_budget_failure(k_update_hang_script, LUA_RUNTIME_ERROR_STAGE_UPDATE);
+  run_budget_failure(k_coroutine_hang_script, LUA_RUNTIME_ERROR_STAGE_UPDATE);
+  run_normal_cart(k_yield_resume_script);
+  run_normal_cart(k_finite_work_script);
+
+  g_boot_script = k_final_hang_script;
+  assert(lua_init() == 0);
+  g_tick += 20u;
+  lua_update_task();
+  assert(lua_shutdown() == 0);
+  LuaRuntimeErrorInfo final_budget_error;
+  assert(lua_vm_get_runtime_error(&final_budget_error));
+  assert(final_budget_error.stage == LUA_RUNTIME_ERROR_STAGE_FINAL);
+  assert(final_budget_error.reason == LUA_RUNTIME_ERROR_REASON_BUDGET_EXCEEDED);
+  assert(!g_foundation_active && !g_ui_active);
+
+  for (uint32_t i = 0u; i < 100u; ++i) {
+    run_budget_failure(k_update_hang_script, LUA_RUNTIME_ERROR_STAGE_UPDATE);
+    run_normal_cart(k_succeeding_script);
+    assert(g_foundation_create_count == g_foundation_destroy_count);
+    assert(g_ui_create_count == g_ui_destroy_count);
+  }
 
   puts("lua_vm_lifecycle_test: ok");
   return 0;

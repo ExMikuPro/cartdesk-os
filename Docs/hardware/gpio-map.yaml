@@ -1,0 +1,459 @@
+mcu: STM32H743XIH6
+package: TFBGA240
+board: TBD
+last_updated: 2026-06-21
+
+reservations:
+  - signal: USB_OTG_FS_DM
+    pin: PA11
+    port: GPIOA
+    bit: 11
+    reason: USB FS MUST be preserved
+  - signal: USB_OTG_FS_DP
+    pin: PA12
+    port: GPIOA
+    bit: 12
+    reason: USB FS MUST be preserved
+  - signal: SWDIO
+    pin: PA13
+    port: GPIOA
+    bit: 13
+    reason: 2-wire SWD debug
+  - signal: SWCLK
+    pin: PA14
+    port: GPIOA
+    bit: 14
+    reason: 2-wire SWD debug
+  - signal: RCC_OSC_IN
+    pin: PH0
+    port: GPIOH
+    bit: 0
+    reason: HSE crystal input
+  - signal: RCC_OSC_OUT
+    pin: PH1
+    port: GPIOH
+    bit: 1
+    reason: HSE crystal output
+
+existing_allocations:
+  - interface: usart1_debug
+    pins: [PA9, PA10]
+    source:
+      - cartdesk_io_pinout.csv
+      - Core/Src/usart.c
+  - interface: i2c1_eeprom
+    pins: [PB8, PB9]
+    source:
+      - cartdesk_io_pinout.csv
+      - Core/Src/i2c.c
+  - interface: i2c2_touch
+    pins: [PH4, PH5]
+    source:
+      - cartdesk_io_pinout.csv
+      - Core/Src/i2c.c
+  - interface: touch_ctrl
+    pins: [PG3, PG7]
+    source:
+      - cartdesk_io_pinout.csv
+      - Core/Src/gpio.c
+  - interface: lcd_backlight
+    pins: [PD13]
+    source:
+      - cartdesk_io_pinout.csv
+      - Core/Src/gpio.c
+  - interface: buzzer
+    pins: [PI8]
+    source:
+      - cartdesk_io_pinout.csv
+      - Core/Src/gpio.c
+  - interface: board_gpio
+    pins: [PA0, PC2, PC13]
+    source:
+      - cartdesk_io_pinout.csv
+      - Core/Driver/GPIO/board_gpio.c
+      - Core/Src/gpio.c
+  - interface: user_gpio_pwm
+    pins: [PA3, PA6, PA7, PB0, PB1]
+    source:
+      - cartdesk_io_pinout.csv
+      - Core/Driver/GPIO/board_gpio.c
+      - Core/Driver/GPIO/board_pwm.c
+  - interface: fmc_sdram
+    pins:
+      - PC0
+      - PD0
+      - PD1
+      - PD8
+      - PD9
+      - PD10
+      - PD14
+      - PD15
+      - PE0
+      - PE1
+      - PE7
+      - PE8
+      - PE9
+      - PE10
+      - PE11
+      - PE12
+      - PE13
+      - PE14
+      - PE15
+      - PF0
+      - PF1
+      - PF2
+      - PF3
+      - PF4
+      - PF5
+      - PF11
+      - PF12
+      - PF13
+      - PF14
+      - PF15
+      - PG0
+      - PG1
+      - PG2
+      - PG4
+      - PG5
+      - PG8
+      - PG15
+      - PH6
+      - PH7
+      - PH8
+      - PH9
+      - PH10
+      - PH11
+      - PH12
+      - PH13
+      - PH14
+      - PH15
+      - PI0
+      - PI1
+      - PI2
+      - PI3
+      - PI4
+      - PI5
+      - PI6
+      - PI7
+      - PI9
+      - PI10
+    source:
+      - cartdesk_io_pinout.csv
+      - Core/Src/fmc.c
+  - interface: ltdc
+    pins:
+      - PI12
+      - PI13
+      - PI14
+      - PI15
+      - PJ0
+      - PJ1
+      - PJ2
+      - PJ3
+      - PJ4
+      - PJ5
+      - PJ6
+      - PJ7
+      - PJ8
+      - PJ9
+      - PJ10
+      - PJ11
+      - PJ12
+      - PJ13
+      - PJ14
+      - PJ15
+      - PK0
+      - PK1
+      - PK2
+      - PK3
+      - PK4
+      - PK5
+      - PK6
+      - PK7
+    source:
+      - cartdesk_io_pinout.csv
+      - Core/Src/ltdc.c
+  - interface: quadspi
+    pins: [PB2, PF6, PF7, PF8, PF9, PG6, PG9, PG14, PH2, PH3]
+    source:
+      - cartdesk_io_pinout.csv
+      - Core/Src/quadspi.c
+  - interface: sdmmc1
+    pins: [PC8, PC9, PC10, PC11, PC12, PD2]
+    source:
+      - cartdesk_io_pinout.csv
+      - Core/Src/sdmmc.c
+
+interfaces:
+  xhgc_cartridge:
+    status: experimental_optional
+    required_for_boot: false
+    required_for_normal_os_operation: false
+    fallback_paths: [SD, QSPI, eMMC]
+    preferred_scheme: C
+    alternative_scheme: B
+    width_v1: 8
+    width_v2: 16
+    little_endian: true
+    v1_required_signals:
+      - XHGC_D0
+      - XHGC_D1
+      - XHGC_D2
+      - XHGC_D3
+      - XHGC_D4
+      - XHGC_D5
+      - XHGC_D6
+      - XHGC_D7
+      - XHGC_I2C_SCL
+      - XHGC_I2C_SDA
+      - XHGC_RD_CLK
+      - XHGC_READY
+      - XHGC_RESET_N
+      - XHGC_CART_DET
+    v1_optional_or_reserved_signals:
+      - XHGC_D8
+      - XHGC_D9
+      - XHGC_D10
+      - XHGC_D11
+      - XHGC_D12
+      - XHGC_D13
+      - XHGC_D14
+      - XHGC_D15
+      - XHGC_CS_N
+      - XHGC_IRQ_N
+      - XHGC_WR_N
+      - XHGC_MODE0
+      - XHGC_MODE1
+    gpio_pressure_drop_order:
+      - XHGC_WR_N
+      - XHGC_IRQ_N
+      - XHGC_MODE0
+      - XHGC_MODE1
+      - XHGC_D8
+      - XHGC_D9
+      - XHGC_D10
+      - XHGC_D11
+      - XHGC_D12
+      - XHGC_D13
+      - XHGC_D14
+      - XHGC_D15
+    rejected_schemes:
+      - name: A
+        reason: uses PA11 and PA12, which conflict with USB FS
+    signals:
+      - signal: XHGC_D0
+        pin: PE2
+        port: GPIOE
+        bit: 2
+        direction: input
+        required_v1: true
+        required_v2: true
+        risk_class: Preferred
+      - signal: XHGC_D1
+        pin: PE3
+        port: GPIOE
+        bit: 3
+        direction: input
+        required_v1: true
+        required_v2: true
+        risk_class: Preferred
+      - signal: XHGC_D2
+        pin: PE4
+        port: GPIOE
+        bit: 4
+        direction: input
+        required_v1: true
+        required_v2: true
+        risk_class: Preferred
+      - signal: XHGC_D3
+        pin: PE5
+        port: GPIOE
+        bit: 5
+        direction: input
+        required_v1: true
+        required_v2: true
+        risk_class: Preferred
+      - signal: XHGC_D4
+        pin: PE6
+        port: GPIOE
+        bit: 6
+        direction: input
+        required_v1: true
+        required_v2: true
+        risk_class: Preferred
+      - signal: XHGC_D5
+        pin: PD3
+        port: GPIOD
+        bit: 3
+        direction: input
+        required_v1: true
+        required_v2: true
+        risk_class: Preferred
+      - signal: XHGC_D6
+        pin: PD4
+        port: GPIOD
+        bit: 4
+        direction: input
+        required_v1: true
+        required_v2: true
+        risk_class: Preferred
+      - signal: XHGC_D7
+        pin: PD5
+        port: GPIOD
+        bit: 5
+        direction: input
+        required_v1: true
+        required_v2: true
+        risk_class: Preferred
+      - signal: XHGC_D8
+        pin: PD6
+        port: GPIOD
+        bit: 6
+        direction: input
+        required_v1: false
+        required_v2: true
+        risk_class: Preferred
+      - signal: XHGC_D9
+        pin: PD7
+        port: GPIOD
+        bit: 7
+        direction: input
+        required_v1: false
+        required_v2: true
+        risk_class: Preferred
+      - signal: XHGC_D10
+        pin: PD11
+        port: GPIOD
+        bit: 11
+        direction: input
+        required_v1: false
+        required_v2: true
+        risk_class: Preferred
+      - signal: XHGC_D11
+        pin: PD12
+        port: GPIOD
+        bit: 12
+        direction: input
+        required_v1: false
+        required_v2: true
+        risk_class: Preferred
+      - signal: XHGC_D12
+        pin: PC1
+        port: GPIOC
+        bit: 1
+        direction: input
+        required_v1: false
+        required_v2: true
+        risk_class: Preferred
+      - signal: XHGC_D13
+        pin: PC3
+        port: GPIOC
+        bit: 3
+        direction: input
+        required_v1: false
+        required_v2: true
+        risk_class: Preferred
+      - signal: XHGC_D14
+        pin: PC4
+        port: GPIOC
+        bit: 4
+        direction: input
+        required_v1: false
+        required_v2: true
+        risk_class: Preferred
+      - signal: XHGC_D15
+        pin: PC5
+        port: GPIOC
+        bit: 5
+        direction: input
+        required_v1: false
+        required_v2: true
+        risk_class: Preferred
+      - signal: XHGC_I2C_SCL
+        pin: PB6
+        port: GPIOB
+        bit: 6
+        direction: bidirectional_open_drain
+        required_v1: true
+        required_v2: true
+        risk_class: Preferred
+      - signal: XHGC_I2C_SDA
+        pin: PB7
+        port: GPIOB
+        bit: 7
+        direction: bidirectional_open_drain
+        required_v1: true
+        required_v2: true
+        risk_class: Preferred
+      - signal: XHGC_RD_CLK
+        pin: PG10
+        port: GPIOG
+        bit: 10
+        direction: input
+        required_v1: true
+        required_v2: true
+        risk_class: Preferred
+      - signal: XHGC_READY
+        pin: PG11
+        port: GPIOG
+        bit: 11
+        direction: input
+        required_v1: true
+        required_v2: true
+        risk_class: Preferred
+      - signal: XHGC_RESET_N
+        pin: PG12
+        port: GPIOG
+        bit: 12
+        direction: output
+        required_v1: true
+        required_v2: true
+        risk_class: Preferred
+      - signal: XHGC_CART_DET
+        pin: PG13
+        port: GPIOG
+        bit: 13
+        direction: input
+        required_v1: true
+        required_v2: true
+        risk_class: Usable with caution
+      - signal: XHGC_CS_N
+        pin: PB10
+        port: GPIOB
+        bit: 10
+        direction: output
+        required_v1: false
+        required_v2: true
+        risk_class: Preferred
+      - signal: XHGC_IRQ_N
+        pin: PB11
+        port: GPIOB
+        bit: 11
+        direction: input
+        required_v1: false
+        required_v2: false
+        risk_class: Preferred
+      - signal: XHGC_WR_N
+        pin: PB12
+        port: GPIOB
+        bit: 12
+        direction: output
+        required_v1: false
+        required_v2: false
+        risk_class: Preferred
+      - signal: XHGC_MODE0
+        pin: PA1
+        port: GPIOA
+        bit: 1
+        direction: output
+        required_v1: false
+        required_v2: false
+        risk_class: Preferred
+      - signal: XHGC_MODE1
+        pin: PA2
+        port: GPIOA
+        bit: 2
+        direction: output
+        required_v1: false
+        required_v2: false
+        risk_class: Preferred
