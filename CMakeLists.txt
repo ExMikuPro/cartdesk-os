@@ -23,6 +23,7 @@ option(CARTDESK_HOST_TESTS_ONLY "Configure only native host tests" OFF)
 option(XHGC_MEMINFO_SELFTEST_ENABLE "Run APP_ARENA_REST meminfo selftest in Debug builds" OFF)
 option(XHGC_DMA_POOL_SELFTEST_ENABLE "Run DMA_POOL allocator meminfo selftest in Debug builds" OFF)
 option(XHGC_DMA2D_SELFTEST_ENABLE "Enable the DMA2D standalone GDB mailbox self-test" OFF)
+option(CARTDESK_LTDC_SYNC_TRACE_ENABLE "Enable the debug-only LTDC/LVGL presentation timing trace" OFF)
 option(XHGC_MEM_OVERLAY_ENABLE "Enable LCD memory debug overlay" OFF)
 option(XHGC_MEM_OVERLAY_BOOT_VISIBLE "Show LCD memory debug overlay at startup" OFF)
 option(XHGC_ENABLE_EXPERIMENTAL_CART_RESOURCE_CACHE "Enable legacy experimental cart resource cache owner for RESOURCE_ARENA" OFF)
@@ -245,6 +246,11 @@ if(XHGC_DMA2D_SELFTEST_ENABLE AND
     list(APPEND COMMON_DEFINES XHGC_DMA2D_SELFTEST_ENABLE=1)
 endif()
 
+if(CARTDESK_LTDC_SYNC_TRACE_ENABLE AND
+   (CMAKE_BUILD_TYPE STREQUAL "Debug" OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo"))
+    list(APPEND COMMON_DEFINES CARTDESK_LTDC_SYNC_TRACE_ENABLE=1)
+endif()
+
 if(XHGC_MEM_OVERLAY_ENABLE)
     list(APPEND COMMON_DEFINES XHGC_MEM_OVERLAY_ENABLE=1)
     if(XHGC_MEM_OVERLAY_BOOT_VISIBLE)
@@ -365,6 +371,8 @@ target_link_libraries(lvgl PUBLIC cartdesk_common)
 # 目标 3: drv_display —— 显示相关硬件驱动（LCD / SDRAM / LVGL Port）
 # ==============================================================================
 add_library(drv_display STATIC
+        ${DEBUG_DIR}/display_trace.c
+        ${DEBUG_DIR}/display_trace.h
         ${DRIVER_DIR}/LCD/lcd.c
         ${DRIVER_DIR}/LCD/lcd.h
         ${DRIVER_DIR}/SDRAM/sdram.c

@@ -65,6 +65,21 @@
             }
         },
         {
+            "name": "Debug-LTDC-Sync-Trace",
+            "displayName": "Debug LTDC/LVGL 时序追踪",
+            "description": "启用默认关闭的 DWT LTDC/LVGL presentation ring trace；仅用于目标板诊断。",
+            "inherits": "default",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "CARTDESK_LTDC_SYNC_TRACE_ENABLE": "ON",
+                "XHGC_MEMINFO_SELFTEST_ENABLE": "OFF",
+                "XHGC_DMA_POOL_SELFTEST_ENABLE": "OFF",
+                "XHGC_MEM_OVERLAY_ENABLE": "OFF",
+                "XHGC_MEM_OVERLAY_BOOT_VISIBLE": "OFF",
+                "XHGC_ENABLE_EXPERIMENTAL_CART_RESOURCE_CACHE": "OFF"
+            }
+        },
+        {
             "name": "Debug-MemInfo-SelfTest",
             "displayName": "Debug 内存统计自测",
             "description": "启用 meminfo/app_arena 自测，用于验证 APP_ARENA_REST used/peak/reset/fail 统计是否正确。默认固件不应使用此配置。",
@@ -201,6 +216,13 @@
         {
             "name": "Debug-Memory-Overlay",
             "configurePreset": "Debug-Memory-Overlay",
+            "targets": [
+                "cartdesk-os"
+            ]
+        },
+        {
+            "name": "Debug-LTDC-Sync-Trace",
+            "configurePreset": "Debug-LTDC-Sync-Trace",
             "targets": [
                 "cartdesk-os"
             ]

@@ -69,6 +69,12 @@ uint32_t disp_get_fps(void);
 void lv_port_disp_signal_vsync(void);
 
 /**
+ * @brief 由 LTDC reload IRQ 确认最近一次 LVGL VBlank presentation 已生效
+ * @note  仅执行序号更新和 ISR-safe semaphore signaling；不调用 LVGL API。
+ */
+void lv_port_disp_signal_reload_complete(void);
+
+/**
  * @brief LTDC行中断回调
  * @note  兼容旧调用点，保留为空实现
  */

@@ -27,6 +27,7 @@
 #include "ltdc.h"
 #include "dma2d.h"
 #include "lv_port_disp.h"
+#include "display_trace.h"
 #include <string.h>
 #include <math.h>
 
@@ -346,6 +347,7 @@ void LCD_SetLayerVisible(uint32_t LayerIndex, uint8_t Status) {
     } else {
         __HAL_LTDC_LAYER_DISABLE(&hltdc, LayerIndex);
     }
+    DisplayTrace_LegacyReloadRequest();
     HAL_LTDC_Reload(&hltdc, LTDC_RELOAD_VERTICAL_BLANKING);
 }
 
@@ -1261,6 +1263,7 @@ void LCD_DoubleBufferInit(void) {
     layer1->CFBAR = layer_info[1].front_addr;
 
     // VBlank reload：让 CFBAR 在 VBlank 生效
+    DisplayTrace_LegacyReloadRequest();
     HAL_LTDC_Reload(&hltdc, LTDC_RELOAD_VERTICAL_BLANKING);
 
     // 【修复】正确计算LineEvent：使用AccumulatedActiveH + 1确保在VBlank区域触发
@@ -1306,11 +1309,14 @@ uint8_t LCD_IsPendingSwap(uint8_t Layer) {
  *       这里提供完整实现供参考
  */
 void HAL_LTDC_LineEventCallback(LTDC_HandleTypeDef *hltdc_param) {
+    DisplayTrace_LtdcLineEvent();
     // VBlank计数+1（用于上层按帧节流）
     g_ltdc_vblank_cnt++;
 
     // 直接通知LVGL移植层：当前已经进入LineEvent/VBlank阶段
     lv_port_disp_signal_vsync();
+
+    bool legacy_reload_needed = false;
 
     // 检查每个layer是否有pending swap
     for (uint8_t layer = 0; layer < 2; layer++) {
@@ -1327,15 +1333,32 @@ void HAL_LTDC_LineEventCallback(LTDC_HandleTypeDef *hltdc_param) {
             ltdc_layer->CFBAR = layer_info[layer].front_addr;
 
             layer_info[layer].pending_swap = 0;
+            legacy_reload_needed = true;
         }
     }
 
-    // 【关键】请求 VBlank reload（让刚写的 CFBAR 在 VBlank 生效，避免撕裂）
-    HAL_LTDC_Reload(hltdc_param, LTDC_RELOAD_VERTICAL_BLANKING);
+    /* Do not generate an unrelated RR every VBlank: an RR is the presentation
+     * acknowledgement for the request that changed LTDC shadow configuration. */
+    if (legacy_reload_needed) {
+        DisplayTrace_LegacyReloadRequest();
+        HAL_LTDC_Reload(hltdc_param, LTDC_RELOAD_VERTICAL_BLANKING);
+    }
 
     // 【关键】重新设置下一次 LineEvent（HAL只触发一次，需要每次重新arm）
     uint32_t line_event = hltdc_param->Init.AccumulatedActiveH + 1;
     HAL_LTDC_ProgramLineEvent(hltdc_param, line_event);
+}
+
+void HAL_LTDC_ReloadEventCallback(LTDC_HandleTypeDef *hltdc_param)
+{
+    (void)hltdc_param;
+    DisplayTrace_LtdcReloadEvent();
+    lv_port_disp_signal_reload_complete();
+}
+
+void HAL_LTDC_ErrorCallback(LTDC_HandleTypeDef *hltdc_param)
+{
+    DisplayTrace_LtdcError(hltdc_param->ErrorCode, hltdc_param->Instance->ISR);
 }
 /* ============================================================================
  *                         内联辅助函数（颜色处理）

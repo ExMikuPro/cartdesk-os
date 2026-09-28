@@ -32,7 +32,7 @@ Lua VM 位于 runtime 核心。`lua_rt_init_state()` 创建 `lua_State`，打开
 输入、渲染、音频、存档与 Lua/runtime 的关系如下：
 
 - 输入：GT911 触摸由 `Core/APPS/LVGL/port/lv_port_indev.c` 注册为 LVGL pointer indev。Lua button 的 LVGL 事件回调通过 owner 定向输入队列投递，然后 runtime 在 `LUA_SCHED_INPUT` 阶段调用对应实例的 `on_input(self, action_id, action)`。
-- 渲染：LVGL 显示移植在 `Core/APPS/LVGL/port/lv_port_disp.c`，使用 LTDC + 双缓冲 + VBlank flush。Lua 通过 `lua_port.c` 暴露的 `ui.label`、`ui.button`、`ui.image` 在应用专属根容器创建 LVGL 对象，渲染由 LVGL/LTDC 链路完成。
+- 渲染：LVGL 显示移植在 `Core/APPS/LVGL/port/lv_port_disp.c`，使用 LTDC + DIRECT 双缓冲。Layer 1 以 NoReload + VBlank reload 提交，ReloadEvent acknowledgement 后才结束对应 LVGL flush。Lua 通过 `lua_port.c` 暴露的 `ui.label`、`ui.button`、`ui.image` 在应用专属根容器创建 LVGL 对象，渲染由 LVGL/LTDC 链路完成。
 - 音频：`Core/Cart/xhgc_cart.h` 定义了 `XHGC_RES_SOUND` 资源类型，但当前未找到 Lua 音频模块、音频调度器或 runtime 音频 API。音频系统与 Lua 层的交互为“未确认”。
 - 存档：当前确认的持久化路径是 SD/FatFs 读取 cart 和 Lua bytecode 文件。未找到 Lua 层 save/KV/storage API；`Docs/display/launcher_action_hints.md` 和 launcher 注释提到 favorite/KV 为未来存储层。Lua 存档能力为“未确认”。
 
@@ -103,7 +103,7 @@ flowchart TD
 | Resource Index | 加载 XHGCIDX2，建立路径到 DATA 偏移的元数据表 | `Core/Cart/cart_index.c`、`Core/Cart/cart_index.h` | 已确认 | 线性查找 path_hash + path 字符串。 |
 | Memory Layout / DMA_POOL | SDRAM zone table、meminfo、临时 DMA buffer allocator、cache helper | `Core/Memory/xhgc_memory_layout.c`、`xhgc_meminfo.c`、`xhgc_dcache.c`、`Core/Driver/SDRAM/sdram.c` | 已确认 | DMA_POOL 为 reset 型线性 allocator；固定 DMA target 不从 DMA_POOL 分配。 |
 | Resource Manager | image/data 异步加载、handle/refcount、scene arena 管理 | `Core/LuaPort/resource_manager.c`、`resource_manager.h` | 已确认 | 支持 BGRA8888、JPEG、JPEG+A8；storage format 与 READY runtime BGRA8888 分离。 |
-| Display Renderer | LVGL display port、LTDC 双缓冲、VSync flush | `Core/APPS/LVGL/port/lv_port_disp.c`、`Core/Driver/LCD/lcd.c` | 已确认 | `lv_port_disp.c` 直接设置 LTDC Layer1 地址并 VBlank reload。 |
+| Display Renderer | LVGL display port、LTDC 双缓冲、VSync flush | `Core/APPS/LVGL/port/lv_port_disp.c`、`Core/Driver/LCD/lcd.c` | 已确认 | `lv_port_disp.c` 对 Layer 1 使用 NoReload 后请求 VBlank reload，并由 ReloadEvent 解除 flush ownership barrier。 |
 | Input System | GT911 触摸接入 LVGL pointer indev | `Core/APPS/LVGL/port/lv_port_indev.c`、`Core/Driver/TOUCH/*` | 已确认 | Lua 层输入主要来自 Lua UI widget 的 LVGL 事件回调。 |
 | Audio System | cart 格式预留 SOUND 资源类型 | `Core/Cart/xhgc_cart.h` | 未确认 | 未找到 Lua 音频 API、音频驱动调度或 sound resource loader。 |
 | Storage / Save | SD/FatFs 作为 cart、Lua 文件读取介质 | `Core/Src/lua_vm.c`、`Core/Cart/*.c`、`FATFS/*` | 部分已确认 | 读取已确认；Lua 存档/保存 API 未确认。 |
@@ -179,7 +179,7 @@ cart entry 选择：
 1. Lua 脚本通过 `ui.label()`、`ui.button()`、`ui.image()` 创建 LVGL 对象并得到安全 handle。
 2. 脚本通过 `ui.patch(handle, properties)` 修改已有 UI 对象。
 3. LVGL 对象绘制由 `lvgl_task_handler()`/LVGL timer 机制推进。
-4. `lv_port_disp.c` 的 `disp_flush()` 等待 VSync 后将 LTDC Layer1 地址切到当前 LVGL render buffer，并调用 `lv_display_flush_ready()`。
+4. `lv_port_disp.c` 的 `disp_flush()` 等待 VSync 后将 Layer 1 shadow 地址设为当前 LVGL render buffer，并请求 VBlank reload；ReloadEvent 通过 app-task 的 `flush_wait_cb` 确认后，LVGL 才结束该 flush。
 
 ### SDRAM / DMA_POOL 初始化和统计
 

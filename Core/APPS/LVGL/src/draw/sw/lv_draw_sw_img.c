@@ -14,6 +14,8 @@
 #include "lv_draw_sw.h"
 #if LV_USE_DRAW_SW
 
+#include "display_trace.h"
+
 #include "../../display/lv_display_private.h"
 #include "../../core/lv_refr_private.h"
 #include "../../core/lv_global.h"
@@ -214,6 +216,7 @@ static void img_draw_core(lv_draw_task_t * t, const lv_draw_image_dsc_t * draw_d
                           const lv_image_decoder_dsc_t * decoder_dsc, lv_draw_image_sup_t * sup,
                           const lv_area_t * img_coords, const lv_area_t * clipped_img_area)
 {
+    DisplayTrace_SwImage();
     bool transformed = draw_dsc->rotation != 0 || draw_dsc->scale_x != LV_SCALE_NONE ||
                        draw_dsc->scale_y != LV_SCALE_NONE ? true : false;
 

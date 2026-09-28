@@ -15,6 +15,7 @@
 #include "cart_log.h"
 #include "cart_system_icons.h"
 #include "dma2d_selftest.h"
+#include "display_trace.h"
 #include "launcher_store.h"
 #include "lua_runtime_task.h"
 #include "usb_sd_transfer_mode.h"
@@ -103,6 +104,91 @@ static lv_obj_t *s_main_container = NULL;
 static lv_obj_t *s_slots[DESIGN_APP_COUNT];
 static lv_obj_t *s_slot_labels[DESIGN_APP_COUNT];
 static lv_obj_t *s_slot_images[DESIGN_APP_COUNT];
+#if CARTDESK_LTDC_SYNC_TRACE_ENABLE
+static lv_obj_t *s_box_scroll_container;
+static lv_obj_t *s_slot_trace_rects[DESIGN_APP_COUNT];
+static lv_image_dsc_t s_slot_trace_xrgb_dsc[DESIGN_APP_COUNT];
+static lv_obj_t *s_scroll_capture_frame_marker;
+
+enum {
+    LAUNCHER_SLOT_TRACE_VISUAL_IMAGE = 0u,
+    LAUNCHER_SLOT_TRACE_VISUAL_EMPTY = 1u,
+    LAUNCHER_SLOT_TRACE_VISUAL_OPAQUE_RECT = 2u,
+    LAUNCHER_SLOT_TRACE_VISUAL_XRGB_IMAGE = 3u
+};
+
+/* GDB mailbox.  The app task owns all LVGL changes after reading this value. */
+volatile uint32_t g_launcher_slot_trace_visual_mode;
+volatile uint32_t g_launcher_slot_trace_alpha_fixed_pixels;
+static uint32_t s_launcher_slot_trace_visual_mode;
+
+enum {
+    SCROLL_CAPTURE_COMMAND_NONE = 0u,
+    SCROLL_CAPTURE_COMMAND_START = 1u,
+    SCROLL_CAPTURE_COMMAND_CANCEL = 2u
+};
+
+enum {
+    SCROLL_CAPTURE_STATE_IDLE = 0u,
+    SCROLL_CAPTURE_STATE_RUNNING = 1u,
+    SCROLL_CAPTURE_STATE_WAITING_RENDER = 2u,
+    SCROLL_CAPTURE_STATE_WAITING_CAPTURE = 3u,
+    SCROLL_CAPTURE_STATE_DONE = 4u,
+    SCROLL_CAPTURE_STATE_ERROR = 5u
+};
+
+volatile uint32_t g_scroll_capture_command;
+volatile int32_t g_scroll_capture_delta_px = 240;
+volatile uint32_t g_scroll_capture_steps = 12u;
+volatile uint32_t g_scroll_capture_step_interval_ms;
+volatile uint32_t g_scroll_capture_state;
+volatile uint32_t g_scroll_capture_step;
+volatile uint32_t g_scroll_capture_frame_seq;
+volatile int32_t g_scroll_capture_start_x;
+volatile int32_t g_scroll_capture_scroll_x;
+volatile int32_t g_scroll_capture_target_x;
+volatile int32_t g_scroll_capture_fb_a_scroll_x;
+volatile int32_t g_scroll_capture_fb_b_scroll_x;
+volatile uint32_t g_scroll_capture_marker_frame_seq;
+volatile uint32_t g_scroll_capture_icons_ready;
+
+volatile uint32_t g_fb_capture_request_step = UINT32_MAX;
+volatile uint32_t g_fb_capture_ready;
+volatile uint32_t g_fb_capture_frame_seq;
+volatile uint32_t g_fb_capture_fb_a_seq;
+volatile uint32_t g_fb_capture_fb_b_seq;
+volatile int32_t g_fb_capture_fb_a_scroll_x;
+volatile int32_t g_fb_capture_fb_b_scroll_x;
+volatile uint32_t g_fb_capture_presented_seq;
+volatile uint32_t g_fb_capture_pending_seq;
+volatile uint32_t g_fb_capture_render_seq;
+volatile uint32_t g_fb_capture_reload_request_seq;
+volatile uint32_t g_fb_capture_reload_complete_seq;
+volatile uint32_t g_fb_capture_front_fb;
+volatile uint32_t g_fb_capture_pending_fb;
+volatile uint32_t g_fb_capture_ltdc_srcr;
+volatile uint32_t g_fb_capture_ltdc_isr;
+volatile uint32_t g_fb_capture_ltdc_cpsr;
+volatile uint32_t g_fb_capture_ltdc_cdsr;
+
+static uint32_t s_scroll_capture_applied_frame_seq;
+static uint32_t s_scroll_capture_next_step_tick;
+
+__attribute__((noinline, used)) void LauncherScrollCapture_IconsReady(void)
+{
+    __asm volatile("" ::: "memory");
+}
+
+__attribute__((noinline, used)) void LauncherScrollCapture_CaptureReady(void)
+{
+    __asm volatile("" ::: "memory");
+}
+
+__attribute__((noinline, used)) void LauncherScrollCapture_TimingComplete(void)
+{
+    __asm volatile("" ::: "memory");
+}
+#endif
 static lv_obj_t *s_circles[DESIGN_CIRCLE_COUNT];
 static lv_obj_t *s_circle_icons[DESIGN_CIRCLE_COUNT];
 static lv_obj_t *s_circle_labels[DESIGN_CIRCLE_COUNT];
@@ -570,7 +656,185 @@ static void prv_configure_slot_image(int slot)
     s_image_dsc[slot].header.stride = CART_BIN_PREVIEW_STRIDE;
     s_image_dsc[slot].data_size = CART_BIN_PREVIEW_SIZE;
     s_image_dsc[slot].data = (const uint8_t *)launcher_get_big_icon((uint8_t)slot);
+#if CARTDESK_LTDC_SYNC_TRACE_ENABLE
+    /* Both A/B descriptors intentionally share these exact pixels.  Normalize
+     * alpha in the trace-only build so descriptor format is the sole variable. */
+    uint32_t *pixels = launcher_get_big_icon((uint8_t)slot);
+    for(uint32_t pixel = 0u; pixel < (CART_BIN_PREVIEW_W * CART_BIN_PREVIEW_H); pixel++) {
+        if((pixels[pixel] & UINT32_C(0xFF000000)) != UINT32_C(0xFF000000)) {
+            pixels[pixel] |= UINT32_C(0xFF000000);
+            ++g_launcher_slot_trace_alpha_fixed_pixels;
+        }
+    }
+    s_slot_trace_xrgb_dsc[slot] = s_image_dsc[slot];
+    s_slot_trace_xrgb_dsc[slot].header.cf = LV_COLOR_FORMAT_XRGB8888;
+#endif
 }
+
+#if CARTDESK_LTDC_SYNC_TRACE_ENABLE
+static void prv_apply_slot_trace_visual_mode(void)
+{
+    uint32_t mode = g_launcher_slot_trace_visual_mode;
+
+    if(mode > LAUNCHER_SLOT_TRACE_VISUAL_XRGB_IMAGE) {
+        mode = LAUNCHER_SLOT_TRACE_VISUAL_IMAGE;
+        g_launcher_slot_trace_visual_mode = mode;
+    }
+
+    for(int slot = 0; slot < DESIGN_APP_COUNT; slot++) {
+        if(s_slot_images[slot] != NULL) {
+            const lv_image_dsc_t *source =
+                mode == LAUNCHER_SLOT_TRACE_VISUAL_XRGB_IMAGE
+                    ? &s_slot_trace_xrgb_dsc[slot]
+                    : &s_image_dsc[slot];
+            lv_image_set_src(s_slot_images[slot], source);
+            lv_obj_set_hidden(s_slot_images[slot],
+                              mode != LAUNCHER_SLOT_TRACE_VISUAL_IMAGE &&
+                              mode != LAUNCHER_SLOT_TRACE_VISUAL_XRGB_IMAGE);
+        }
+
+        if(s_slot_trace_rects[slot] != NULL) {
+            lv_obj_set_hidden(s_slot_trace_rects[slot],
+                              mode != LAUNCHER_SLOT_TRACE_VISUAL_OPAQUE_RECT ||
+                              s_slot_images[slot] == NULL);
+        }
+    }
+
+    s_launcher_slot_trace_visual_mode = mode;
+}
+
+static void prv_scroll_capture_update_marker(uint32_t frame_seq)
+{
+    if(s_scroll_capture_frame_marker == NULL) {
+        return;
+    }
+
+    uint32_t rgb = ((frame_seq & UINT32_C(0xFF)) << 16) |
+                   (((frame_seq >> 8) & UINT32_C(0xFF)) << 8) |
+                   ((frame_seq >> 16) & UINT32_C(0xFF));
+    g_scroll_capture_marker_frame_seq = frame_seq;
+    lv_obj_set_style_bg_color(s_scroll_capture_frame_marker, lv_color_hex(rgb), LV_PART_MAIN);
+}
+
+static void prv_scroll_capture_publish_ready(void)
+{
+    g_fb_capture_frame_seq = g_display_frame_seq;
+    g_fb_capture_fb_a_seq = g_display_fb_a_frame_seq;
+    g_fb_capture_fb_b_seq = g_display_fb_b_frame_seq;
+    g_fb_capture_fb_a_scroll_x = g_scroll_capture_fb_a_scroll_x;
+    g_fb_capture_fb_b_scroll_x = g_scroll_capture_fb_b_scroll_x;
+    g_fb_capture_presented_seq = g_display_presented_frame_seq;
+    g_fb_capture_pending_seq = g_display_pending_frame_seq;
+    g_fb_capture_render_seq = g_display_frame_seq;
+    g_fb_capture_reload_request_seq = g_display_reload_requests;
+    g_fb_capture_reload_complete_seq = g_display_reload_complete_signals;
+    g_fb_capture_front_fb = g_display_front_fb;
+    g_fb_capture_pending_fb = g_display_pending_fb;
+    g_fb_capture_ltdc_srcr = LTDC->SRCR;
+    g_fb_capture_ltdc_isr = LTDC->ISR;
+    g_fb_capture_ltdc_cpsr = LTDC->CPSR;
+    g_fb_capture_ltdc_cdsr = LTDC->CDSR;
+    g_scroll_capture_frame_seq = g_display_frame_seq;
+    g_fb_capture_ready = 1u;
+    g_scroll_capture_state = SCROLL_CAPTURE_STATE_WAITING_CAPTURE;
+    __DMB();
+    LauncherScrollCapture_CaptureReady();
+}
+
+static void prv_scroll_capture_poll(void)
+{
+    if(g_scroll_capture_command == SCROLL_CAPTURE_COMMAND_CANCEL) {
+        g_scroll_capture_command = SCROLL_CAPTURE_COMMAND_NONE;
+        g_fb_capture_ready = 0u;
+        g_scroll_capture_state = SCROLL_CAPTURE_STATE_IDLE;
+        return;
+    }
+
+    if(g_scroll_capture_command == SCROLL_CAPTURE_COMMAND_START) {
+        g_scroll_capture_command = SCROLL_CAPTURE_COMMAND_NONE;
+        g_fb_capture_ready = 0u;
+        g_scroll_capture_step = 0u;
+        if(s_box_scroll_container == NULL || g_scroll_capture_steps == 0u) {
+            g_scroll_capture_state = SCROLL_CAPTURE_STATE_ERROR;
+            return;
+        }
+        g_scroll_capture_start_x = lv_obj_get_scroll_x(s_box_scroll_container);
+        g_scroll_capture_scroll_x = g_scroll_capture_start_x;
+        g_scroll_capture_target_x = g_scroll_capture_start_x;
+        g_scroll_capture_fb_a_scroll_x = g_scroll_capture_start_x;
+        g_scroll_capture_fb_b_scroll_x = g_scroll_capture_start_x;
+        g_scroll_capture_frame_seq = g_display_frame_seq;
+        s_scroll_capture_next_step_tick = HAL_GetTick();
+        g_scroll_capture_state = SCROLL_CAPTURE_STATE_RUNNING;
+        if(g_fb_capture_request_step == 0u) {
+            prv_scroll_capture_publish_ready();
+            return;
+        }
+    }
+
+    if(g_scroll_capture_state == SCROLL_CAPTURE_STATE_WAITING_CAPTURE) {
+        if(g_fb_capture_ready != 0u) {
+            return;
+        }
+        if(g_scroll_capture_step >= g_scroll_capture_steps) {
+            g_scroll_capture_state = SCROLL_CAPTURE_STATE_DONE;
+            LauncherScrollCapture_TimingComplete();
+            return;
+        }
+        s_scroll_capture_next_step_tick = HAL_GetTick() + g_scroll_capture_step_interval_ms;
+        g_scroll_capture_state = SCROLL_CAPTURE_STATE_RUNNING;
+    }
+
+    if(g_scroll_capture_state == SCROLL_CAPTURE_STATE_WAITING_RENDER) {
+        if(g_display_frame_seq == s_scroll_capture_applied_frame_seq) {
+            return;
+        }
+
+        g_scroll_capture_scroll_x = lv_obj_get_scroll_x(s_box_scroll_container);
+        g_scroll_capture_frame_seq = g_display_frame_seq;
+        if(g_display_fb_a_frame_seq == g_display_frame_seq) {
+            g_scroll_capture_fb_a_scroll_x = g_scroll_capture_scroll_x;
+        }
+        if(g_display_fb_b_frame_seq == g_display_frame_seq) {
+            g_scroll_capture_fb_b_scroll_x = g_scroll_capture_scroll_x;
+        }
+        if(g_fb_capture_request_step == g_scroll_capture_step) {
+            prv_scroll_capture_publish_ready();
+            return;
+        }
+        if(g_scroll_capture_step >= g_scroll_capture_steps) {
+            g_scroll_capture_state = SCROLL_CAPTURE_STATE_DONE;
+            LauncherScrollCapture_TimingComplete();
+            return;
+        }
+        s_scroll_capture_next_step_tick = HAL_GetTick() + g_scroll_capture_step_interval_ms;
+        g_scroll_capture_state = SCROLL_CAPTURE_STATE_RUNNING;
+    }
+
+    if(g_scroll_capture_state != SCROLL_CAPTURE_STATE_RUNNING ||
+       (int32_t)(HAL_GetTick() - s_scroll_capture_next_step_tick) < 0) {
+        return;
+    }
+
+    uint32_t next_step = g_scroll_capture_step + 1u;
+    int64_t scaled_delta = (int64_t)g_scroll_capture_delta_px * (int64_t)next_step;
+    int32_t target_x = g_scroll_capture_start_x +
+                       (int32_t)(scaled_delta / (int64_t)g_scroll_capture_steps);
+    int32_t previous_x = lv_obj_get_scroll_x(s_box_scroll_container);
+
+    g_scroll_capture_target_x = target_x;
+    g_scroll_capture_step = next_step;
+    prv_scroll_capture_update_marker(g_display_frame_seq + 1u);
+    lv_obj_scroll_to_x(s_box_scroll_container, target_x, LV_ANIM_OFF);
+    g_scroll_capture_scroll_x = lv_obj_get_scroll_x(s_box_scroll_container);
+    if(g_scroll_capture_scroll_x == previous_x && target_x != previous_x) {
+        g_scroll_capture_state = SCROLL_CAPTURE_STATE_ERROR;
+        return;
+    }
+    s_scroll_capture_applied_frame_seq = g_display_frame_seq;
+    g_scroll_capture_state = SCROLL_CAPTURE_STATE_WAITING_RENDER;
+}
+#endif
 
 static void prv_attach_slot_image(int slot)
 {
@@ -589,6 +853,9 @@ static void prv_attach_slot_image(int slot)
         lv_obj_set_scrollable(s_slot_images[slot], false);
     }
     lv_image_set_src(s_slot_images[slot], &s_image_dsc[slot]);
+#if CARTDESK_LTDC_SYNC_TRACE_ENABLE
+    prv_apply_slot_trace_visual_mode();
+#endif
 }
 
 static void prv_update_slot_label(int slot)
@@ -854,6 +1121,38 @@ static void prv_circle_clicked_cb(lv_event_t *e)
 /*  子模块创建                                                          */
 /* ------------------------------------------------------------------ */
 
+#if CARTDESK_LTDC_SYNC_TRACE_ENABLE
+static void prv_create_scroll_capture_markers(lv_obj_t *parent)
+{
+    static const uint32_t calibration_colors[] = {
+        UINT32_C(0xFF0000), UINT32_C(0x00FF00), UINT32_C(0x0000FF),
+        UINT32_C(0xFFFFFF), UINT32_C(0x000000)
+    };
+
+    for(uint32_t index = 0u;
+        index < (sizeof(calibration_colors) / sizeof(calibration_colors[0]));
+        index++) {
+        lv_obj_t *block = lv_obj_create(parent);
+        lv_obj_remove_style_all(block);
+        lv_obj_set_size(block, 4, 4);
+        lv_obj_set_pos(block, (int32_t)(index * 4u), 0);
+        lv_obj_set_style_bg_color(block, lv_color_hex(calibration_colors[index]), LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(block, LV_OPA_COVER, LV_PART_MAIN);
+        lv_obj_set_clickable(block, false);
+        lv_obj_set_scrollable(block, false);
+    }
+
+    s_scroll_capture_frame_marker = lv_obj_create(parent);
+    lv_obj_remove_style_all(s_scroll_capture_frame_marker);
+    lv_obj_set_size(s_scroll_capture_frame_marker, 16, 4);
+    lv_obj_set_pos(s_scroll_capture_frame_marker, 0, 4);
+    lv_obj_set_style_bg_opa(s_scroll_capture_frame_marker, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_clickable(s_scroll_capture_frame_marker, false);
+    lv_obj_set_scrollable(s_scroll_capture_frame_marker, false);
+    prv_scroll_capture_update_marker(0u);
+}
+#endif
+
 static void prv_create_box_area(lv_obj_t *parent)
 {
     const int container_height = BOX_Y_OFFSET + BOX_HEIGHT + 10;
@@ -869,6 +1168,9 @@ static void prv_create_box_area(lv_obj_t *parent)
     lv_obj_set_scroll_dir(box_container, LV_DIR_HOR);
     lv_obj_set_style_anim_duration(box_container, 0, 0);
     lv_obj_set_scroll_elastic(box_container, false);
+#if CARTDESK_LTDC_SYNC_TRACE_ENABLE
+    s_box_scroll_container = box_container;
+#endif
 
     lv_obj_t *content_container = lv_obj_create(box_container);
     lv_obj_set_size(content_container, content_width, container_height + 60);
@@ -902,6 +1204,20 @@ static void prv_create_box_area(lv_obj_t *parent)
             lv_obj_set_style_border_width(s_slot_images[i], 0, LV_PART_MAIN);
             lv_obj_set_scrollable(s_slot_images[i], false);
         }
+
+#if CARTDESK_LTDC_SYNC_TRACE_ENABLE
+        /* Keep this object in all A/B modes; only visibility changes at runtime. */
+        s_slot_trace_rects[i] = lv_obj_create(slot_container);
+        lv_obj_remove_style_all(s_slot_trace_rects[i]);
+        lv_obj_set_size(s_slot_trace_rects[i], BOX_WIDTH, BOX_HEIGHT);
+        lv_obj_center(s_slot_trace_rects[i]);
+        lv_obj_set_style_bg_color(s_slot_trace_rects[i], lv_color_hex(0x3A86FF), LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(s_slot_trace_rects[i], LV_OPA_COVER, LV_PART_MAIN);
+        lv_obj_set_style_border_width(s_slot_trace_rects[i], 0, LV_PART_MAIN);
+        lv_obj_set_clickable(s_slot_trace_rects[i], false);
+        lv_obj_set_scrollable(s_slot_trace_rects[i], false);
+        lv_obj_set_hidden(s_slot_trace_rects[i], true);
+#endif
 
         lv_obj_add_event_cb(slot_container, prv_box_clicked_cb, LV_EVENT_CLICKED, NULL);
         s_slots[i] = slot_container;
@@ -1335,6 +1651,12 @@ void Launcher_Task(void)
     }
 #endif
 
+#if CARTDESK_LTDC_SYNC_TRACE_ENABLE
+    if(g_launcher_slot_trace_visual_mode != s_launcher_slot_trace_visual_mode) {
+        prv_apply_slot_trace_visual_mode();
+    }
+#endif
+
     if (s_runtime_screen != NULL && LuaRuntimeTask_HasError() &&
         LuaRuntimeTask_GetState() == LUA_RUNTIME_STATE_ERROR &&
         !s_runtime_error_visible) {
@@ -1348,6 +1670,13 @@ void Launcher_Task(void)
             prv_load_cached_icon_step();
         }
 
+#if CARTDESK_LTDC_SYNC_TRACE_ENABLE
+        if(g_scroll_capture_icons_ready == 0u && s_cached_icon_cursor >= DESIGN_APP_COUNT) {
+            g_scroll_capture_icons_ready = 1u;
+            LauncherScrollCapture_IconsReady();
+        }
+#endif
+
         uint32_t now = HAL_GetTick();
         if(!UsbSdTransferMode_IsActive() &&
            (int32_t)(now - s_next_cart_probe_ms) >= 0) {
@@ -1355,6 +1684,10 @@ void Launcher_Task(void)
             prv_probe_game_card();
         }
     }
+
+#if CARTDESK_LTDC_SYNC_TRACE_ENABLE
+    prv_scroll_capture_poll();
+#endif
 
     if (!s_runtime_exit_pending) {
         return;
@@ -1383,6 +1716,10 @@ void DesignLauncher_Create(lv_display_t *disp)
     if (!s_launcher_assets_initialized) {
         launcher_cache_init();
         memset(s_image_dsc, 0, sizeof(s_image_dsc));
+#if CARTDESK_LTDC_SYNC_TRACE_ENABLE
+        memset(s_slot_trace_xrgb_dsc, 0, sizeof(s_slot_trace_xrgb_dsc));
+        g_launcher_slot_trace_alpha_fixed_pixels = 0u;
+#endif
         memset(s_apps, 0, sizeof(s_apps));
         for(uint8_t slot = 0u; slot < DESIGN_APP_COUNT; slot++) {
             (void)LauncherStore_Get(slot, &s_apps[slot]);
@@ -1392,6 +1729,25 @@ void DesignLauncher_Create(lv_display_t *disp)
         s_launcher_assets_initialized = true;
     }
     memset(s_slot_images, 0, sizeof(s_slot_images));
+#if CARTDESK_LTDC_SYNC_TRACE_ENABLE
+    memset(s_slot_trace_rects, 0, sizeof(s_slot_trace_rects));
+    g_launcher_slot_trace_visual_mode = LAUNCHER_SLOT_TRACE_VISUAL_IMAGE;
+    s_launcher_slot_trace_visual_mode = LAUNCHER_SLOT_TRACE_VISUAL_IMAGE;
+    s_scroll_capture_frame_marker = NULL;
+    g_scroll_capture_command = SCROLL_CAPTURE_COMMAND_NONE;
+    g_scroll_capture_state = SCROLL_CAPTURE_STATE_IDLE;
+    g_scroll_capture_step = 0u;
+    g_scroll_capture_frame_seq = 0u;
+    g_scroll_capture_start_x = 0;
+    g_scroll_capture_scroll_x = 0;
+    g_scroll_capture_target_x = 0;
+    g_scroll_capture_fb_a_scroll_x = 0;
+    g_scroll_capture_fb_b_scroll_x = 0;
+    g_scroll_capture_marker_frame_seq = 0u;
+    g_scroll_capture_icons_ready = 0u;
+    g_fb_capture_request_step = UINT32_MAX;
+    g_fb_capture_ready = 0u;
+#endif
 
     /* 主容器 */
     s_main_container = lv_obj_create(scr);
@@ -1408,6 +1764,9 @@ void DesignLauncher_Create(lv_display_t *disp)
     prv_create_status_label(s_main_container);
     launcher_action_hints_init(&s_action_hints, s_main_container);
     launcher_action_hints_set_callback(&s_action_hints, prv_action_hint_clicked_cb, NULL);
+#if CARTDESK_LTDC_SYNC_TRACE_ENABLE
+    prv_create_scroll_capture_markers(s_main_container);
+#endif
 
     s_selected_index = 0;
     s_app_launch_armed = false;
@@ -1437,6 +1796,11 @@ void DesignLauncher_Destroy(void)
     s_status_label = NULL;
     s_info_popup = NULL;
     memset(s_circle_icons, 0, sizeof(s_circle_icons));
+#if CARTDESK_LTDC_SYNC_TRACE_ENABLE
+    s_box_scroll_container = NULL;
+    memset(s_slot_trace_rects, 0, sizeof(s_slot_trace_rects));
+    s_scroll_capture_frame_marker = NULL;
+#endif
     /*
      * SDRAM 图片槽是固定 launcher cache 分区，不需要 free。
      * 如果将来需要复用这段地址，在这里清零即可：

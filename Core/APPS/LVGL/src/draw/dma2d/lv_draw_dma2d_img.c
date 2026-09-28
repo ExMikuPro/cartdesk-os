@@ -13,6 +13,7 @@
 #include "../lv_draw_image_private.h"
 #include "../../image/lv_image_decoder_private.h"
 #include "../../misc/lv_area_private.h"
+#include "display_trace.h"
 
 /*********************
  *      DEFINES
@@ -133,6 +134,13 @@ static void lv_draw_dma2d_image_core(lv_draw_task_t * t, const lv_draw_image_dsc
     }
 
     lv_draw_dma2d_configure_and_start_transfer(&conf);
+    DisplayTrace_Dma2dImageDraw((uint32_t)conf.mode, (uint32_t)image_cf,
+                                (uint32_t)output_cf, image_stride,
+                                (uint32_t)dest_stride,
+                                img_coords->x1, img_coords->y1,
+                                img_coords->x2, img_coords->y2,
+                                clipped_img_area->x1, clipped_img_area->y1,
+                                clipped_img_area->x2, clipped_img_area->y2);
 }
 
 #endif /*LV_USE_DRAW_DMA2D*/

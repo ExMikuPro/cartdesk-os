@@ -10,6 +10,8 @@
 #include "lv_draw_dma2d_private.h"
 #if LV_USE_DRAW_DMA2D
 
+#include "display_trace.h"
+
 /*********************
  *      DEFINES
  *********************/
@@ -81,6 +83,7 @@ void lv_draw_dma2d_fill(lv_draw_task_t * t, void * first_pixel, int32_t w, int32
     }
 
     lv_draw_dma2d_configure_and_start_transfer(&conf);
+    DisplayTrace_Dma2dFill();
 }
 
 /**********************
