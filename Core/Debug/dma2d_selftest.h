@@ -27,7 +27,8 @@ typedef struct {
 enum {
     DMA2D_SELFTEST_COMMAND_NONE = 0u,
     DMA2D_SELFTEST_COMMAND_R2M_FILL = 1u,
-    DMA2D_SELFTEST_COMMAND_M2M_TIGHT = 2u
+    DMA2D_SELFTEST_COMMAND_M2M_TIGHT = 2u,
+    DMA2D_SELFTEST_COMMAND_M2M_STRIDED = 3u
 };
 
 enum {
@@ -65,6 +66,9 @@ extern volatile uint32_t g_dma2d_test_width;
 extern volatile uint32_t g_dma2d_test_height;
 extern volatile uint32_t g_dma2d_test_source_address;
 extern volatile uint32_t g_dma2d_test_destination_address;
+extern volatile uint32_t g_dma2d_test_source_stride;
+extern volatile uint32_t g_dma2d_test_destination_stride;
+extern volatile uint32_t g_dma2d_test_operation;
 extern volatile DMA2D_SelftestRegisterSnapshot g_dma2d_test_registers;
 
 void DMA2D_Selftest_Poll(void);
