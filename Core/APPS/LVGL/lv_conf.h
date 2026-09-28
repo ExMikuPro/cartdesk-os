@@ -1,6 +1,6 @@
 /**
  * @file lv_conf.h
- * @brief LVGL 9.5 配置文件 - 针对STM32H743优化
+ * @brief LVGL 9.6 配置文件 - 针对STM32H743优化
  *
  * 配置说明:
  * - MCU: STM32H743 (Cortex-M7, 480MHz)
@@ -52,8 +52,11 @@
    COLOR SETTINGS
  *====================*/
 
-/* Color depth: 32 for ARGB8888 */
-#define LV_COLOR_DEPTH 32
+/*
+ * LVGL 9.6 no longer uses LV_COLOR_DEPTH as its primary configuration.
+ * lv_port_disp.c remains the authority for the actual ARGB8888 display format.
+ */
+#define LV_COLOR_FORMAT_DEFAULT LV_COLOR_FORMAT_ARGB8888
 
 /*=========================
    MEMORY SETTINGS

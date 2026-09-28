@@ -4,7 +4,6 @@
 #include "lv_port_tick.h"
 #include "lvgl.h"
 #include "stm32h7xx_hal.h"
-#include "src/tick/lv_tick.h"
 
 /*********************
  *      DEFINES

@@ -170,6 +170,7 @@ set(FREERTOS_INCLUDES
 
 set(LVGL_PUBLIC_INCLUDES
         ${LVGL_DIR}
+        ${LVGL_DIR}/include
         ${LVGL_DIR}/src
         ${LVGL_DIR}/src/core
         ${LVGL_DIR}/font

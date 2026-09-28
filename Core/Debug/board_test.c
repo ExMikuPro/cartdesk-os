@@ -152,8 +152,8 @@ void BoardTest_StartTouchDrag(void)
   lv_obj_set_style_bg_color(s_drag_box, lv_color_hex(0x3DCCA3), 0);
   lv_obj_set_style_border_width(s_drag_box, 0, 0);
 
-  lv_obj_add_flag(s_drag_box, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_add_flag(s_drag_box, LV_OBJ_FLAG_PRESS_LOCK);
+  lv_obj_set_clickable(s_drag_box, true);
+  lv_obj_set_press_lock(s_drag_box, true);
   lv_obj_add_event_cb(s_drag_box, drag_box_event_cb, LV_EVENT_PRESSED, NULL);
   lv_obj_add_event_cb(s_drag_box, drag_box_event_cb, LV_EVENT_PRESSING, NULL);
   lv_obj_add_event_cb(s_drag_box, drag_box_event_cb, LV_EVENT_RELEASED, NULL);

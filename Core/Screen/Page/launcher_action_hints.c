@@ -66,7 +66,7 @@ static uint16_t prv_layout_items(LauncherActionHints *hints,
 
     for (uint8_t i = 0; i < LAUNCHER_ACTION_HINT_MAX_ITEMS; ++i) {
         if (hints->items[i] != NULL) {
-            lv_obj_add_flag(hints->items[i], LV_OBJ_FLAG_HIDDEN);
+            lv_obj_set_hidden(hints->items[i], true);
         }
     }
 
@@ -80,15 +80,15 @@ static uint16_t prv_layout_items(LauncherActionHints *hints,
         lv_obj_set_size(hints->items[i], width, ACTION_HINT_BAR_HEIGHT - ACTION_HINT_BAR_PAD_Y * 2);
         lv_obj_set_pos(hints->items[i], x, ACTION_HINT_BAR_PAD_Y);
         if (items[i].enabled) {
-            lv_obj_add_flag(hints->items[i], LV_OBJ_FLAG_CLICKABLE);
+            lv_obj_set_clickable(hints->items[i], true);
         } else {
-            lv_obj_remove_flag(hints->items[i], LV_OBJ_FLAG_CLICKABLE);
+            lv_obj_set_clickable(hints->items[i], false);
         }
         lv_obj_remove_state(hints->items[i], LV_STATE_DISABLED);
         if (!items[i].enabled) {
             lv_obj_add_state(hints->items[i], LV_STATE_DISABLED);
         }
-        lv_obj_remove_flag(hints->items[i], LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_hidden(hints->items[i], false);
         hints->actions[i] = items[i].action;
         hints->enabled[i] = items[i].enabled;
 
@@ -224,10 +224,10 @@ void launcher_action_hints_init(LauncherActionHints *hints, lv_obj_t *parent)
     lv_obj_set_style_border_width(hints->root, 0, 0);
     lv_obj_set_style_radius(hints->root, 0, 0);
     lv_obj_set_style_pad_all(hints->root, 0, 0);
-    lv_obj_remove_flag(hints->root, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_remove_flag(hints->root, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_remove_flag(hints->root, LV_OBJ_FLAG_CLICK_FOCUSABLE);
-    lv_obj_add_flag(hints->root, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_scrollable(hints->root, false);
+    lv_obj_set_clickable(hints->root, false);
+    lv_obj_set_click_focusable(hints->root, false);
+    lv_obj_set_hidden(hints->root, true);
 
     for (uint8_t i = 0; i < LAUNCHER_ACTION_HINT_MAX_ITEMS; ++i) {
         hints->items[i] = lv_obj_create(hints->root);
@@ -238,19 +238,19 @@ void launcher_action_hints_init(LauncherActionHints *hints, lv_obj_t *parent)
         lv_obj_set_style_bg_opa(hints->items[i], LV_OPA_TRANSP, 0);
         lv_obj_set_style_border_width(hints->items[i], 0, 0);
         lv_obj_set_style_pad_all(hints->items[i], 0, 0);
-        lv_obj_remove_flag(hints->items[i], LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_remove_flag(hints->items[i], LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_remove_flag(hints->items[i], LV_OBJ_FLAG_CLICK_FOCUSABLE);
+        lv_obj_set_scrollable(hints->items[i], false);
+        lv_obj_set_clickable(hints->items[i], false);
+        lv_obj_set_click_focusable(hints->items[i], false);
         lv_obj_add_event_cb(hints->items[i], prv_item_clicked_cb, LV_EVENT_CLICKED, hints);
-        lv_obj_add_flag(hints->items[i], LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_hidden(hints->items[i], true);
 
         hints->labels[i] = lv_label_create(hints->items[i]);
 
         if (hints->labels[i] != NULL) {
             lv_obj_set_style_text_font(hints->labels[i], UiFont_GetSystem(16u), 0);
             lv_label_set_long_mode(hints->labels[i], LV_LABEL_LONG_CLIP);
-            lv_obj_remove_flag(hints->labels[i], LV_OBJ_FLAG_CLICKABLE);
-            lv_obj_remove_flag(hints->labels[i], LV_OBJ_FLAG_CLICK_FOCUSABLE);
+            lv_obj_set_clickable(hints->labels[i], false);
+            lv_obj_set_click_focusable(hints->labels[i], false);
         }
     }
 }
@@ -276,9 +276,9 @@ void launcher_action_hints_set_visible(LauncherActionHints *hints, bool visible)
 
     hints->visible = visible;
     if (visible) {
-        lv_obj_remove_flag(hints->root, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_hidden(hints->root, false);
     } else {
-        lv_obj_add_flag(hints->root, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_hidden(hints->root, true);
     }
 }
 

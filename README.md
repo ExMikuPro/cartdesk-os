@@ -4,7 +4,7 @@
 
 # cartdesk-os
 
-`cartdesk-os` 是一个运行在 STM32H743 上的嵌入式桌面/启动器固件。它以 LVGL 9.5 为图形层，使用 LTDC + SDRAM 做 800x480 ARGB8888 显示，内置 Lua 运行时，并通过 SD 卡里的 `cart.bin` 读取应用标题、预览图和入口脚本。
+`cartdesk-os` 是一个运行在 STM32H743 上的嵌入式桌面/启动器固件。它以 LVGL 9.6.0 为图形层，使用 LTDC + SDRAM 做 800x480 ARGB8888 显示，内置 Lua 运行时，并通过 SD 卡里的 `cart.bin` 读取应用标题、预览图和入口脚本。
 
 打包器仓库：[ExMikuPro/xhgc-pack](https://github.com/ExMikuPro/xhgc-pack)
 
@@ -12,7 +12,7 @@
 
 ## 当前能力
 
-- LVGL 9.5 图形栈，包含显示、tick、输入设备移植层。
+- LVGL 9.6.0 图形栈，包含显示、tick、输入设备移植层。
 - LTDC 双缓冲显示链路，配合 VBlank/page flip 降低撕裂。
 - 64 MiB 外部 SDRAM 固定分区，用于 framebuffer、保留的 SDRAM_LVGL_HEAP、DMA pool、launcher cache 和应用资源区；LVGL runtime heap 当前位于片内 RAM。
 - SD 卡 `cart.bin` 读取，launcher 可显示卡带标题和 200x200 ARGB8888 预览图。
@@ -202,7 +202,7 @@ end
 
 ```text
 Core/
-  APPS/LVGL/        LVGL 9.5 源码、配置和移植层
+  APPS/LVGL/        LVGL 9.6.0 源码、配置和移植层
   APPS/TASK/        四业务任务、IO/audio 队列、统一任务消息
   Cart/             cart.bin / XHGC 卡带格式解析
   Driver/           LCD、SDRAM、触摸、Flash、EEPROM、GPIO、RNG 等驱动

@@ -16,9 +16,6 @@
 
 #if LV_USE_OS == LV_OS_CMSIS_RTOS2
 
-#include "../misc/lv_log.h"
-#include "../misc/lv_timer.h"
-
 /*********************
  *      DEFINES
  *********************/
@@ -101,6 +98,7 @@ lv_result_t lv_mutex_init(lv_mutex_t * mutex)
 
 lv_result_t lv_mutex_lock(lv_mutex_t * mutex)
 {
+    /* CartDesk uses mutexes across FreeRTOS tasks; acquisition must block. */
     osStatus_t status = osMutexAcquire(*mutex, osWaitForever);
     if(status != osOK)  {
         LV_LOG_WARN("Error: failed to lock cmsis-rtos2 mutex %d", (int)status);

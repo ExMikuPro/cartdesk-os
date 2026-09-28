@@ -138,7 +138,8 @@ bool lua_ui_owner_create(lua_State* L,
   lv_obj_remove_style_all(root);
   lv_obj_set_pos(root, 0, 0);
   lv_obj_set_size(root, LV_PCT(100), LV_PCT(100));
-  lv_obj_remove_flag(root, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_clickable(root, false);
+  lv_obj_set_scrollable(root, false);
 
   memset(owner, 0, sizeof(*owner));
   owner->vm = L;
@@ -441,8 +442,7 @@ bool lua_ui_apply_hidden(lua_State* L,
   }
   bool hidden = lua_toboolean(L, -1);
   lua_pop(L, 1);
-  if (hidden) lv_obj_add_flag(object, LV_OBJ_FLAG_HIDDEN);
-  else lv_obj_remove_flag(object, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_set_hidden(object, hidden);
   return true;
 }
 

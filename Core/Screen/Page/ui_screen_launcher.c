@@ -260,12 +260,12 @@ static void prv_set_status_text(const char *text)
     }
 
     if (text == NULL || text[0] == '\0') {
-        lv_obj_add_flag(s_status_label, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_hidden(s_status_label, true);
         return;
     }
 
     lv_label_set_text(s_status_label, text);
-    lv_obj_remove_flag(s_status_label, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_hidden(s_status_label, false);
 }
 
 static const char *prv_get_selected_app_title(void)
@@ -392,7 +392,7 @@ static void prv_show_selected_app_info(void)
     lv_obj_set_style_border_width(s_info_popup, 2, 0);
     lv_obj_set_style_radius(s_info_popup, 4, 0);
     lv_obj_set_style_pad_all(s_info_popup, 14, 0);
-    lv_obj_remove_flag(s_info_popup, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scrollable(s_info_popup, false);
 
     snprintf(text, sizeof(text),
              "App info\nTitle: %s\nZH: %s\nPub: %s\nVer: %s\nEntry: %s\nFW: %s\nID: %08lX%08lX\nSIZE: %s\nCARD: %s",
@@ -586,7 +586,7 @@ static void prv_attach_slot_image(int slot)
         lv_obj_set_size(s_slot_images[slot], BOX_WIDTH, BOX_HEIGHT);
         lv_obj_center(s_slot_images[slot]);
         lv_obj_set_style_border_width(s_slot_images[slot], 0, LV_PART_MAIN);
-        lv_obj_remove_flag(s_slot_images[slot], LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_scrollable(s_slot_images[slot], false);
     }
     lv_image_set_src(s_slot_images[slot], &s_image_dsc[slot]);
 }
@@ -764,7 +764,7 @@ static void prv_set_selection(lv_obj_t *selected_obj)
 
     for (int i = 0; i < DESIGN_APP_COUNT; i++) {
         lv_obj_set_style_border_color(s_slots[i], lv_color_hex(COLOR_BLACK), LV_PART_MAIN);
-        lv_obj_add_flag(s_slot_labels[i], LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_hidden(s_slot_labels[i], true);
     }
     for (int i = 0; i < DESIGN_CIRCLE_COUNT; i++) {
         lv_obj_set_style_border_color(s_circles[i], lv_color_hex(COLOR_BLACK), 0);
@@ -772,7 +772,7 @@ static void prv_set_selection(lv_obj_t *selected_obj)
         if (s_circle_icons[i] != NULL) {
             lv_obj_set_style_image_recolor(s_circle_icons[i], lv_color_hex(COLOR_BLACK), LV_PART_MAIN);
         }
-        lv_obj_add_flag(s_circle_labels[i], LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_hidden(s_circle_labels[i], true);
     }
 
     if (selected_obj == NULL) return;
@@ -781,7 +781,7 @@ static void prv_set_selection(lv_obj_t *selected_obj)
 
     for (int i = 0; i < DESIGN_APP_COUNT; i++) {
         if (s_slots[i] == selected_obj) {
-            lv_obj_remove_flag(s_slot_labels[i], LV_OBJ_FLAG_HIDDEN);
+            lv_obj_set_hidden(s_slot_labels[i], false);
             s_selected_index = i;
             if (old_selected_index != s_selected_index) {
                 s_app_launch_armed = false;
@@ -797,7 +797,7 @@ static void prv_set_selection(lv_obj_t *selected_obj)
             if (s_circle_icons[i] != NULL) {
                 lv_obj_set_style_image_recolor(s_circle_icons[i], lv_color_hex(COLOR_CYAN), LV_PART_MAIN);
             }
-            lv_obj_remove_flag(s_circle_labels[i], LV_OBJ_FLAG_HIDDEN);
+            lv_obj_set_hidden(s_circle_labels[i], false);
             s_selected_index = -(i + 1);
             s_app_launch_armed = false;
             prv_info_popup_close_cb(NULL);
@@ -868,7 +868,7 @@ static void prv_create_box_area(lv_obj_t *parent)
     lv_obj_set_scrollbar_mode(box_container, LV_SCROLLBAR_MODE_OFF);
     lv_obj_set_scroll_dir(box_container, LV_DIR_HOR);
     lv_obj_set_style_anim_duration(box_container, 0, 0);
-    lv_obj_remove_flag(box_container, LV_OBJ_FLAG_SCROLL_ELASTIC);
+    lv_obj_set_scroll_elastic(box_container, false);
 
     lv_obj_t *content_container = lv_obj_create(box_container);
     lv_obj_set_size(content_container, content_width, container_height + 60);
@@ -876,7 +876,7 @@ static void prv_create_box_area(lv_obj_t *parent)
     lv_obj_set_style_border_width(content_container, 0, 0);
     lv_obj_set_style_pad_all(content_container, 0, 0);
     lv_obj_set_scrollbar_mode(content_container, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_remove_flag(content_container, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scrollable(content_container, false);
 
     for (int i = 0; i < DESIGN_APP_COUNT; i++) {
         const int box_x = 20 + i * (BOX_WIDTH + BOX_SPACING);
@@ -889,9 +889,9 @@ static void prv_create_box_area(lv_obj_t *parent)
         lv_obj_set_style_radius(slot_container, 0, LV_PART_MAIN);
         lv_obj_set_style_border_color(slot_container,
             (i == 0) ? lv_color_hex(COLOR_CYAN) : lv_color_hex(COLOR_BLACK), LV_PART_MAIN);
-        lv_obj_remove_flag(slot_container, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_scrollable(slot_container, false);
         lv_obj_set_scrollbar_mode(slot_container, LV_SCROLLBAR_MODE_OFF);
-        lv_obj_add_flag(slot_container, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_clickable(slot_container, true);
 
         /* 缓存图标会在 Launcher_Task 中分步从 QFlash littlefs 恢复到 SDRAM。 */
         if (s_image_dsc[i].data != NULL) {
@@ -900,7 +900,7 @@ static void prv_create_box_area(lv_obj_t *parent)
             lv_obj_center(s_slot_images[i]);
             lv_image_set_src(s_slot_images[i], &s_image_dsc[i]);
             lv_obj_set_style_border_width(s_slot_images[i], 0, LV_PART_MAIN);
-            lv_obj_remove_flag(s_slot_images[i], LV_OBJ_FLAG_SCROLLABLE);
+            lv_obj_set_scrollable(s_slot_images[i], false);
         }
 
         lv_obj_add_event_cb(slot_container, prv_box_clicked_cb, LV_EVENT_CLICKED, NULL);
@@ -914,11 +914,11 @@ static void prv_create_box_area(lv_obj_t *parent)
         lv_obj_set_pos(label, box_x, 45);
         lv_obj_set_width(label, BOX_WIDTH);
         lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
-        lv_obj_add_flag(label, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_hidden(label, true);
         s_slot_labels[i] = label;
     }
 
-    lv_obj_remove_flag(s_slot_labels[0], LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_hidden(s_slot_labels[0], false);
 }
 
 static void prv_create_circle_area(lv_obj_t *parent)
@@ -943,7 +943,7 @@ static void prv_create_circle_area(lv_obj_t *parent)
         lv_obj_set_style_outline_opa(circle, LV_OPA_COVER, 0);
         lv_obj_set_style_outline_pad(circle, 0, 0);
         lv_obj_set_style_pad_all(circle, 0, 0);
-        lv_obj_remove_flag(circle, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_scrollable(circle, false);
         lv_obj_add_event_cb(circle, prv_circle_clicked_cb, LV_EVENT_CLICKED, NULL);
         s_circles[i] = circle;
 
@@ -956,7 +956,8 @@ static void prv_create_circle_area(lv_obj_t *parent)
                 lv_obj_set_pos(icon,
                                (diameter - SYSTEM_ICON_SIZE) / 2 + s_system_entries[i].icon_offset_x,
                                (diameter - SYSTEM_ICON_SIZE) / 2 + s_system_entries[i].icon_offset_y);
-                lv_obj_remove_flag(icon, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+                lv_obj_set_clickable(icon, false);
+                lv_obj_set_scrollable(icon, false);
                 lv_obj_set_style_image_recolor(icon, lv_color_hex(COLOR_BLACK), LV_PART_MAIN);
                 lv_obj_set_style_image_recolor_opa(icon, LV_OPA_COVER, LV_PART_MAIN);
                 s_circle_icons[i] = icon;
@@ -970,7 +971,7 @@ static void prv_create_circle_area(lv_obj_t *parent)
         lv_obj_set_pos(label, cx - 40, CIRCLE_Y + diameter + 5);
         lv_obj_set_width(label, diameter + 80);
         lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
-        lv_obj_add_flag(label, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_hidden(label, true);
         s_circle_labels[i] = label;
     }
 }
@@ -994,7 +995,7 @@ static void prv_create_status_label(lv_obj_t *parent)
     lv_label_set_long_mode(s_status_label, LV_LABEL_LONG_DOT);
     lv_obj_set_width(s_status_label, SCREEN_W - 80);
     lv_obj_set_pos(s_status_label, 40, LINE_Y + 16);
-    lv_obj_add_flag(s_status_label, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_hidden(s_status_label, true);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1399,7 +1400,7 @@ void DesignLauncher_Create(lv_display_t *disp)
     lv_obj_set_style_bg_color(s_main_container, lv_color_hex(COLOR_BG), 0);
     lv_obj_set_style_border_width(s_main_container, 0, 0);
     lv_obj_set_style_pad_all(s_main_container, 0, 0);
-    lv_obj_remove_flag(s_main_container, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scrollable(s_main_container, false);
 
     prv_create_box_area(s_main_container);
     prv_create_circle_area(s_main_container);

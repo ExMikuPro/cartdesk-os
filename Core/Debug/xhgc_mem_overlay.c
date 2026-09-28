@@ -100,7 +100,7 @@ static void xhgc_mem_overlay_create_label(void)
     lv_obj_set_style_pad_top(s_mem_overlay_label, 4, 0);
     lv_obj_set_style_pad_bottom(s_mem_overlay_label, 4, 0);
     lv_obj_set_style_radius(s_mem_overlay_label, 3, 0);
-    lv_obj_add_flag(s_mem_overlay_label, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_hidden(s_mem_overlay_label, true);
 }
 
 void xhgc_mem_overlay_init(void)
@@ -119,11 +119,11 @@ void xhgc_mem_overlay_set_visible(bool visible)
     }
 
     if (visible) {
-        lv_obj_remove_flag(s_mem_overlay_label, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_hidden(s_mem_overlay_label, false);
         s_mem_overlay_last_update_ms = 0u;
         xhgc_mem_overlay_update();
     } else {
-        lv_obj_add_flag(s_mem_overlay_label, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_hidden(s_mem_overlay_label, true);
     }
 }
 

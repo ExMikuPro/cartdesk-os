@@ -95,12 +95,9 @@ void lv_obj_set_pos(lv_obj_t* object, int32_t x, int32_t y) {
 void lv_obj_set_size(lv_obj_t* object, int32_t width, int32_t height) {
   object->width = width; object->height = height;
 }
-void lv_obj_remove_flag(lv_obj_t* object, uint32_t flags) {
-  (void)object; (void)flags;
-}
-void lv_obj_add_flag(lv_obj_t* object, uint32_t flags) {
-  (void)object; (void)flags;
-}
+void lv_obj_set_hidden(lv_obj_t* object, bool enabled) { (void)object; (void)enabled; }
+void lv_obj_set_clickable(lv_obj_t* object, bool enabled) { (void)object; (void)enabled; }
+void lv_obj_set_scrollable(lv_obj_t* object, bool enabled) { (void)object; (void)enabled; }
 void lv_obj_center(lv_obj_t* object) { (void)object; }
 void lv_label_set_text(lv_obj_t* object, const char* text) {
   (void)snprintf(object->text, sizeof(object->text), "%s", text ? text : "");

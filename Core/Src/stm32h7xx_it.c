@@ -25,8 +25,8 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "lv_port_disp.h"
+#include "lvgl.h"
 #include "draw/dma2d/lv_draw_dma2d.h"
-#include "tick/lv_tick.h"
 #include "FreeRTOS.h"
 #include "task.h"
 #include "perf_monitor.h"
