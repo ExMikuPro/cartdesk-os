@@ -2,7 +2,7 @@
 
 `SizeDebug-DMA2D-SelfTest` 是仅用于目标板诊断的构建配置。它不使用 LVGL、Lua、JPEG、Cart 或 resource manager 参与 DMA2D 测试；GDB 只写 mailbox，实际 DMA2D 操作在 `Launcher_Task()` 的正常 app task 上下文执行。
 
-当前只实现并允许执行 L1 / Test 1。其它 standalone 或 Resource Pipeline V2 integration 层级尚未实现，不能将本文件或该 preset 解释为其已通过真机验证。
+当前实现并允许执行 L1 与 L2。其它 standalone 或 Resource Pipeline V2 integration 层级尚未实现，不能将本文件或该 preset 解释为其已通过真机验证。
 
 ## 构建与触发
 
@@ -12,7 +12,7 @@ cmake --build --preset SizeDebug-DMA2D-SelfTest
 arm-none-eabi-gdb -x tools/gdb/dma2d_selftest.gdb
 ```
 
-脚本使用仓库根目录的 `CartDeck.cfg` 对应 OpenOCD 会话。GDB 写 `g_dma2d_test_command = 1` 请求 R2M fill。脚本打印结果、首个错误像素和 DMA2D 寄存器快照；HardFault、MemManage、BusFault、UsageFault 由已有 crash record 保存 PC、LR、SP、CFSR、HFSR、MMFAR、BFAR。
+脚本使用仓库根目录的 `CartDeck.cfg` 对应 OpenOCD 会话。GDB 写 `g_dma2d_test_command = 1` 请求 R2M fill，写 `2` 请求 M2M tight 坐标矩阵。脚本默认运行 command 1；它打印结果、首个错误像素和 DMA2D 寄存器快照。HardFault、MemManage、BusFault、UsageFault 由已有 crash record 保存 PC、LR、SP、CFSR、HFSR、MMFAR、BFAR。
 
 ## L1 — R2M fill
 
@@ -38,6 +38,17 @@ CPU 先把整个 framebuffer 初始化为 `0xFF112233`。DMA2D R2M 再将 `(137,
 
 DMA_POOL 位于 SDRAM `0xD1465000..0xD1865000`，由 `Core/Memory/xhgc_memory_layout.c` 定义。启动期 MPU 将 SDRAM 地址窗口配置为 non-cacheable，故 L1 不用于验证 cache coherency；它仍通过 `xhgc_dcache_*` 按 32-byte cache-line 维护范围，固定 CPU/DMA 的测试边界。DCache 矩阵属于后续层级。
 
+## L2 — M2M tight source
+
+L2 以紧凑的 `200 × 200 ARGB8888` source（`FGOR=0`）写到 800 pixel stride 的 framebuffer。source 每个像素编码自己的 `(x,y)`，因此可识别错误的 source 行步进或像素地址。destination 逐一测试：
+
+```text
+x = 0, 1, 7, 31, 32, 137, 599
+y = 0, 1, 37, 279
+```
+
+每一组都重新初始化 destination、执行 DMA2D、检查 guard，并比较完整 framebuffer。L2 同样显式使用 `LOM=0` 和 `OOR=600`。
+
 ## 真机检查结果
 
 2026-09-28，使用 `CartDeck.cfg`、OpenOCD 0.12.0、ST-Link 和
@@ -50,5 +61,8 @@ DMA_POOL 位于 SDRAM `0xD1465000..0xD1865000`，由 `Core/Memory/xhgc_memory_la
 | Guard regions | PASS | both guard regions unchanged |
 | LOM / OOR / NLR | PASS | `LOM=0`、`OOR=600`、`NLR=0x00C800C8` |
 | R2M timing | Observed | 582814 cycles / 1214 µs |
+| M2M tight coordinate matrix | PASS | 28 groups; `state=2`、`pass=1`、`fail=0` |
 
 Snapshot: `CR=0x00030000`、`ISR=0x00000002`、`OMAR=0xD14A6024`、`OPFCCR=0x00000000`。因此，当前证据表明 DMA2D R2M 二维填充和任意非零的本例 `x=137,y=83` 地址计算正确；本结果不能外推为 FGOR、BGOR、alpha、JPEG 或 cache matrix 已验证。
+
+L2 最后一组的 snapshot 为 `LOM=0`、`FGOR=0`、`OOR=600`、`NLR=0x00C800C8`，计时为 1229425 cycles / 2561 µs。它确认 tight source 与这些非对齐 destination 坐标的二维寻址正确；仍不能外推为 strided source、BGOR、alpha、JPEG 或 cache matrix 已验证。
