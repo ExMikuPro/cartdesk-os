@@ -155,11 +155,6 @@ static void disp_flush(lv_display_t *disp, const lv_area_t *area, uint8_t *px_ma
         return;
     }
 
-#if USE_VSYNC
-    /* 等待垂直消隐期 */
-    disp_wait_for_vsync();
-#endif
-
 #if USE_DOUBLE_BUFFER
     /* Invariants:
      * 1. LTDC scanout front buffer is never written by LVGL.
@@ -257,10 +252,12 @@ static void disp_drain_reload_completion(void)
 static void disp_flush_wait(lv_display_t *disp)
 {
     (void)disp;
+    uint32_t first_wait_start = PerfMonitor_Begin();
     uint32_t request_seq = g_ltdc_reload_request_seq;
     uint32_t draw_fb = g_ltdc_reload_pending_fb;
     uint32_t started = HAL_GetTick();
 
+    RuntimeStats_BeginLvglFlushWait();
     DisplayTrace_FlushWaitBegin(draw_fb);
     while (g_ltdc_reload_complete_seq != request_seq) {
         uint32_t elapsed = HAL_GetTick() - started;
@@ -287,6 +284,11 @@ static void disp_flush_wait(lv_display_t *disp)
     }
 
     DisplayTrace_FlushWaitEnd(draw_fb);
+    RuntimeStats_EndLvglFlushWait();
+    if (g_first_flush_wait_pending) {
+        PerfMonitor_End(PERF_MONITOR_STARTUP_FIRST_FLUSH_WAIT, first_wait_start);
+        g_first_flush_wait_pending = false;
+    }
     disp_finish_flush(disp, false);
 }
 
@@ -296,8 +298,6 @@ static void disp_flush_wait(lv_display_t *disp)
 static void disp_wait_for_vsync(void)
 {
 #if USE_VSYNC
-    uint32_t first_wait_start = PerfMonitor_Begin();
-    RuntimeStats_BeginLvglFlushWait();
     DisplayTrace_VsyncWaitBegin();
 
     /* 清除标志 */
@@ -317,11 +317,6 @@ static void disp_wait_for_vsync(void)
         DisplayTrace_VsyncWaitEnd(1u);
     }
 
-    RuntimeStats_EndLvglFlushWait();
-    if (g_first_flush_wait_pending) {
-        PerfMonitor_End(PERF_MONITOR_STARTUP_FIRST_FLUSH_WAIT, first_wait_start);
-        g_first_flush_wait_pending = false;
-    }
 #endif
 }
 

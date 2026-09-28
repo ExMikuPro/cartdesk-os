@@ -38,7 +38,9 @@ typedef enum {
     DISPLAY_TRACE_FLUSH_WAIT_END,
     DISPLAY_TRACE_FLUSH_COMPLETE,
     DISPLAY_TRACE_RELOAD_WAIT_TIMEOUT,
-    DISPLAY_TRACE_RELOAD_REJECTED
+    DISPLAY_TRACE_RELOAD_REJECTED,
+    DISPLAY_TRACE_BUFFER_SYNC_BEGIN,
+    DISPLAY_TRACE_BUFFER_SYNC_END
 } DisplayTraceEventType;
 
 typedef struct {
@@ -50,6 +52,8 @@ typedef struct {
     uint32_t ltdc_front;
     uint32_t pending_fb;
     uint32_t flags;
+    uint32_t value;
+    uint32_t aux;
 } DisplayTraceEvent;
 
 enum {
@@ -90,7 +94,7 @@ typedef struct {
 
 #if CARTDESK_LTDC_SYNC_TRACE_ENABLE
 
-#define DISPLAY_TRACE_CAPACITY 256u
+#define DISPLAY_TRACE_CAPACITY 512u
 
 enum {
     DISPLAY_TRACE_COMMAND_NONE = 0u,
@@ -166,6 +170,9 @@ void DisplayTrace_ConfigureFramebuffers(uint32_t fb_a, uint32_t fb_b, uint32_t f
 void DisplayTrace_RefreshBegin(uint32_t render_fb);
 void DisplayTrace_RenderBegin(uint32_t render_fb);
 void DisplayTrace_RenderEnd(uint32_t render_fb);
+void DisplayTrace_BufferSyncBegin(void);
+void DisplayTrace_BufferSyncArea(uint32_t area_px);
+void DisplayTrace_BufferSyncEnd(void);
 void DisplayTrace_FlushEnter(uint32_t draw_fb, uint32_t area_px, uint32_t full_screen);
 void DisplayTrace_VsyncWaitBegin(void);
 void DisplayTrace_VsyncWaitEnd(uint32_t observed);
@@ -205,6 +212,9 @@ static inline void DisplayTrace_ConfigureFramebuffers(uint32_t fb_a, uint32_t fb
 static inline void DisplayTrace_RefreshBegin(uint32_t render_fb) { (void)render_fb; }
 static inline void DisplayTrace_RenderBegin(uint32_t render_fb) { (void)render_fb; }
 static inline void DisplayTrace_RenderEnd(uint32_t render_fb) { (void)render_fb; }
+static inline void DisplayTrace_BufferSyncBegin(void) {}
+static inline void DisplayTrace_BufferSyncArea(uint32_t area_px) { (void)area_px; }
+static inline void DisplayTrace_BufferSyncEnd(void) {}
 static inline void DisplayTrace_FlushEnter(uint32_t draw_fb, uint32_t area_px, uint32_t full_screen)
 {
     (void)draw_fb;

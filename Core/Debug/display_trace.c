@@ -80,6 +80,8 @@ volatile uint32_t g_display_first_violation_front_fb;
 
 static uint32_t s_vsync_wait_start_cycle;
 static uint32_t s_render_start_cycle;
+static uint32_t s_buffer_sync_pixels;
+static uint32_t s_buffer_sync_area_count;
 
 static uint32_t DisplayTrace_IsEnabled(void)
 {
@@ -169,9 +171,12 @@ static void DisplayTrace_Reset(void)
     g_display_first_violation_front_fb = DISPLAY_TRACE_FB_NONE;
     s_vsync_wait_start_cycle = 0u;
     s_render_start_cycle = 0u;
+    s_buffer_sync_pixels = 0u;
+    s_buffer_sync_area_count = 0u;
 }
 
-static void DisplayTrace_Record(DisplayTraceEventType event, uint32_t draw_fb, uint32_t flags)
+static void DisplayTrace_RecordValues(DisplayTraceEventType event, uint32_t draw_fb,
+                                      uint32_t flags, uint32_t value, uint32_t aux)
 {
     uint32_t primask;
     uint32_t slot;
@@ -191,12 +196,19 @@ static void DisplayTrace_Record(DisplayTraceEventType event, uint32_t draw_fb, u
     g_display_trace_ring[slot].ltdc_front = g_display_front_fb;
     g_display_trace_ring[slot].pending_fb = g_display_pending_fb;
     g_display_trace_ring[slot].flags = flags;
+    g_display_trace_ring[slot].value = value;
+    g_display_trace_ring[slot].aux = aux;
     g_display_trace_write_index = (slot + 1u) % DISPLAY_TRACE_CAPACITY;
     if (g_display_trace_count < DISPLAY_TRACE_CAPACITY) {
         ++g_display_trace_count;
     }
     __DMB();
     __set_PRIMASK(primask);
+}
+
+static void DisplayTrace_Record(DisplayTraceEventType event, uint32_t draw_fb, uint32_t flags)
+{
+    DisplayTrace_RecordValues(event, draw_fb, flags, 0u, 0u);
 }
 
 static void DisplayTrace_SaveFirstViolation(uint32_t render_fb)
@@ -280,6 +292,25 @@ void DisplayTrace_RenderEnd(uint32_t render_fb_address)
     DisplayTrace_Record(DISPLAY_TRACE_RENDER_END, DisplayTrace_ClassifyFramebuffer(render_fb_address), 0u);
 }
 
+void DisplayTrace_BufferSyncBegin(void)
+{
+    s_buffer_sync_pixels = 0u;
+    s_buffer_sync_area_count = 0u;
+    DisplayTrace_Record(DISPLAY_TRACE_BUFFER_SYNC_BEGIN, g_display_render_fb, 0u);
+}
+
+void DisplayTrace_BufferSyncArea(uint32_t area_px)
+{
+    s_buffer_sync_pixels += area_px;
+    ++s_buffer_sync_area_count;
+}
+
+void DisplayTrace_BufferSyncEnd(void)
+{
+    DisplayTrace_RecordValues(DISPLAY_TRACE_BUFFER_SYNC_END, g_display_render_fb, 0u,
+                              s_buffer_sync_pixels, s_buffer_sync_area_count);
+}
+
 void DisplayTrace_FlushEnter(uint32_t draw_fb_address, uint32_t area_px, uint32_t full_screen)
 {
     uint32_t draw_fb = DisplayTrace_ClassifyFramebuffer(draw_fb_address);
@@ -310,7 +341,7 @@ void DisplayTrace_FlushEnter(uint32_t draw_fb_address, uint32_t area_px, uint32_
             DisplayTrace_SaveFirstViolation(draw_fb);
         }
     }
-    DisplayTrace_Record(DISPLAY_TRACE_FLUSH_ENTER, draw_fb, flags);
+    DisplayTrace_RecordValues(DISPLAY_TRACE_FLUSH_ENTER, draw_fb, flags, area_px, full_screen);
 }
 
 void DisplayTrace_VsyncWaitBegin(void)

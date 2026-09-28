@@ -10,7 +10,7 @@
 set pagination off
 set confirm off
 set print pretty on
-set print elements 256
+set print elements 512
 file build/Debug-LTDC-Sync-Trace/cartdesk-os.elf
 target extended-remote localhost:3333
 

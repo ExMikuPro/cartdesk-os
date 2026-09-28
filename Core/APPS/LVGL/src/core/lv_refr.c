@@ -18,6 +18,7 @@
 #include "lv_global.h"
 #include "../lvgl_public.h"
 #include "lv_obj_style_internal.h"
+#include "display_trace.h"
 
 /*********************
  *      DEFINES
@@ -689,6 +690,7 @@ static void refr_sync_areas(void)
     /*With double buffered direct mode synchronize the rendered areas to the other buffer*/
     /*We need to wait for ready here to not mess up the active screen*/
     wait_for_flushing(disp_refr);
+    DisplayTrace_BufferSyncBegin();
 
     /*Iterate through invalidated areas to see if sync area should be copied*/
     uint16_t i;
@@ -767,6 +769,7 @@ static void refr_sync_areas(void)
             lv_display_rotate_area(disp_refr, sync_area);
         }
 #endif /* LV_DRAW_TRANSFORM_USE_MATRIX */
+        DisplayTrace_BufferSyncArea((uint32_t)lv_area_get_size(sync_area));
         /*Call sync callback (if set)*/
         if(disp_refr->sync_cb) {
             /*Set syncing flags*/
@@ -787,6 +790,7 @@ static void refr_sync_areas(void)
 
     /*Clear sync areas*/
     lv_ll_clear(&disp_refr->sync_areas);
+    DisplayTrace_BufferSyncEnd();
     LV_PROFILER_REFR_END;
 }
 
