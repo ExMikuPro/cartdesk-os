@@ -32,6 +32,9 @@
 #define DMA2D_SELFTEST_STRIDED_HEIGHT 256u
 #define DMA2D_SELFTEST_STRIDED_PIXELS (DMA2D_SELFTEST_STRIDED_WIDTH * DMA2D_SELFTEST_STRIDED_HEIGHT)
 #define DMA2D_SELFTEST_STRIDED_BYTES (DMA2D_SELFTEST_STRIDED_PIXELS * DMA2D_SELFTEST_BPP)
+#define DMA2D_SELFTEST_PFC_BPP 2u
+#define DMA2D_SELFTEST_PFC_TIGHT_BYTES (DMA2D_SELFTEST_TIGHT_PIXELS * DMA2D_SELFTEST_PFC_BPP)
+#define DMA2D_SELFTEST_PFC_STRIDED_BYTES (DMA2D_SELFTEST_STRIDED_PIXELS * DMA2D_SELFTEST_PFC_BPP)
 
 volatile uint32_t g_dma2d_test_command;
 volatile uint32_t g_dma2d_test_state;
@@ -59,6 +62,8 @@ static uint32_t *s_allocation;
 static uint32_t *s_framebuffer;
 static uint32_t *s_tight_source;
 static uint32_t *s_strided_source;
+static uint16_t *s_pfc_tight_source;
+static uint16_t *s_pfc_strided_source;
 
 static void snapshot_registers(void)
 {
@@ -169,6 +174,59 @@ static bool prepare_strided_source(void)
         }
     }
     xhgc_dcache_clean_range(s_strided_source, DMA2D_SELFTEST_STRIDED_BYTES);
+    __DSB();
+    return true;
+}
+
+static uint16_t pfc_source_pixel(uint32_t x, uint32_t y)
+{
+    static const uint16_t palette[] = {
+        UINT16_C(0xF800), UINT16_C(0x07E0), UINT16_C(0x001F), UINT16_C(0xFFFF),
+        UINT16_C(0x0000), UINT16_C(0x8410), UINT16_C(0xFFE0), UINT16_C(0x07FF),
+        UINT16_C(0xF81F), UINT16_C(0x1234), UINT16_C(0x2A95), UINT16_C(0x6B4D)
+    };
+    return palette[(x + (3u * y)) % (sizeof(palette) / sizeof(palette[0]))];
+}
+
+static uint32_t rgb565_to_argb8888(uint16_t source)
+{
+    uint32_t r5 = (source >> 11) & 0x1Fu;
+    uint32_t g6 = (source >> 5) & 0x3Fu;
+    uint32_t b5 = source & 0x1Fu;
+    uint32_t r8 = (r5 << 3) | (r5 >> 2);
+    uint32_t g8 = (g6 << 2) | (g6 >> 4);
+    uint32_t b8 = (b5 << 3) | (b5 >> 2);
+    return UINT32_C(0xFF000000) | (r8 << 16) | (g8 << 8) | b8;
+}
+
+static bool prepare_pfc_sources(void)
+{
+    if (s_pfc_tight_source == NULL) {
+        s_pfc_tight_source = SDRAM_DmaPoolAlloc(DMA2D_SELFTEST_PFC_TIGHT_BYTES, 32u);
+        if (s_pfc_tight_source == NULL) {
+            fail(UINT32_MAX, UINT32_MAX, DMA2D_SELFTEST_PFC_TIGHT_BYTES, 0u);
+            return false;
+        }
+    }
+    if (s_pfc_strided_source == NULL) {
+        s_pfc_strided_source = SDRAM_DmaPoolAlloc(DMA2D_SELFTEST_PFC_STRIDED_BYTES, 32u);
+        if (s_pfc_strided_source == NULL) {
+            fail(UINT32_MAX, UINT32_MAX, DMA2D_SELFTEST_PFC_STRIDED_BYTES, 0u);
+            return false;
+        }
+    }
+    for (uint32_t y = 0u; y < DMA2D_SELFTEST_RECT_HEIGHT; ++y) {
+        for (uint32_t x = 0u; x < DMA2D_SELFTEST_RECT_WIDTH; ++x) {
+            s_pfc_tight_source[y * DMA2D_SELFTEST_RECT_WIDTH + x] = pfc_source_pixel(x, y);
+        }
+    }
+    for (uint32_t y = 0u; y < DMA2D_SELFTEST_STRIDED_HEIGHT; ++y) {
+        for (uint32_t x = 0u; x < DMA2D_SELFTEST_STRIDED_WIDTH; ++x) {
+            s_pfc_strided_source[y * DMA2D_SELFTEST_STRIDED_WIDTH + x] = pfc_source_pixel(x, y);
+        }
+    }
+    xhgc_dcache_clean_range(s_pfc_tight_source, DMA2D_SELFTEST_PFC_TIGHT_BYTES);
+    xhgc_dcache_clean_range(s_pfc_strided_source, DMA2D_SELFTEST_PFC_STRIDED_BYTES);
     __DSB();
     return true;
 }
@@ -415,12 +473,93 @@ static bool run_m2m_strided_at(uint32_t source_x, uint32_t source_y,
     return true;
 }
 
+static bool run_pfc_at(const uint16_t *source, uint32_t source_stride,
+                       uint32_t source_x, uint32_t source_y,
+                       uint32_t destination_x, uint32_t destination_y)
+{
+    uint32_t wait_start = DWT->CYCCNT;
+    uint32_t destination_offset =
+        ((destination_y * DMA2D_SELFTEST_FB_WIDTH) + destination_x) * DMA2D_SELFTEST_BPP;
+    uint32_t source_offset = ((source_y * source_stride) + source_x) * DMA2D_SELFTEST_PFC_BPP;
+    if (!prepare_buffer()) return false;
+    g_dma2d_test_stage = DMA2D_SELFTEST_STAGE_DMA2D;
+    g_dma2d_test_source_address = (uint32_t)(uintptr_t)((const uint8_t *)source + source_offset);
+    g_dma2d_test_destination_address = (uint32_t)(uintptr_t)((uint8_t *)s_framebuffer + destination_offset);
+    g_dma2d_test_source_stride = source_stride;
+    g_dma2d_test_destination_stride = DMA2D_SELFTEST_FB_WIDTH;
+    while ((DMA2D->CR & DMA2D_CR_START) != 0u) {
+        if ((DWT->CYCCNT - wait_start) > DMA2D_SELFTEST_TIMEOUT_CYCLES) {
+            fail(UINT32_MAX, UINT32_MAX, 0u, DMA2D->CR);
+            return false;
+        }
+    }
+    DMA2D->IFCR = DMA2D_IFCR_CTEIF | DMA2D_IFCR_CTCIF | DMA2D_IFCR_CTWIF |
+                  DMA2D_IFCR_CAECIF | DMA2D_IFCR_CCTCIF | DMA2D_IFCR_CCEIF;
+    DMA2D->FGMAR = g_dma2d_test_source_address;
+    DMA2D->FGOR = source_stride - DMA2D_SELFTEST_RECT_WIDTH;
+    DMA2D->FGPFCCR = DMA2D_INPUT_RGB565;
+    DMA2D->BGMAR = 0u;
+    DMA2D->BGOR = 0u;
+    DMA2D->BGPFCCR = 0u;
+    DMA2D->OMAR = g_dma2d_test_destination_address;
+    DMA2D->OOR = DMA2D_SELFTEST_FB_WIDTH - DMA2D_SELFTEST_RECT_WIDTH;
+    DMA2D->OPFCCR = DMA2D_OUTPUT_ARGB8888;
+    DMA2D->NLR = (DMA2D_SELFTEST_RECT_WIDTH << DMA2D_NLR_PL_Pos) |
+                 (DMA2D_SELFTEST_RECT_HEIGHT << DMA2D_NLR_NL_Pos);
+    DMA2D->CR = DMA2D_M2M_PFC;
+    g_dma2d_test_lom = (DMA2D->CR & DMA2D_CR_LOM) != 0u ? 1u : 0u;
+    __DSB();
+    uint32_t transfer_start = DWT->CYCCNT;
+    DMA2D->CR |= DMA2D_CR_START;
+    while ((DMA2D->CR & DMA2D_CR_START) != 0u) {
+        if ((DWT->CYCCNT - transfer_start) > DMA2D_SELFTEST_TIMEOUT_CYCLES) {
+            g_dma2d_test_cycles = DWT->CYCCNT - transfer_start;
+            fail(UINT32_MAX, UINT32_MAX, 0u, DMA2D->CR);
+            return false;
+        }
+    }
+    g_dma2d_test_cycles = DWT->CYCCNT - transfer_start;
+    g_dma2d_test_time_us = SystemCoreClock >= 1000000u ?
+        g_dma2d_test_cycles / (SystemCoreClock / 1000000u) : 0u;
+    snapshot_registers();
+    if ((g_dma2d_test_registers.isr & (DMA2D_ISR_TEIF | DMA2D_ISR_CEIF)) != 0u) {
+        fail(UINT32_MAX, UINT32_MAX, 0u, g_dma2d_test_registers.isr);
+        return false;
+    }
+    DMA2D->IFCR = DMA2D_IFCR_CTEIF | DMA2D_IFCR_CTCIF | DMA2D_IFCR_CTWIF |
+                  DMA2D_IFCR_CAECIF | DMA2D_IFCR_CCTCIF | DMA2D_IFCR_CCEIF;
+    xhgc_dcache_invalidate_range(s_allocation, DMA2D_SELFTEST_TOTAL_BYTES);
+    __DSB();
+    g_dma2d_test_stage = DMA2D_SELFTEST_STAGE_GUARD;
+    if (!check_guards()) return false;
+    g_dma2d_test_stage = DMA2D_SELFTEST_STAGE_COMPARE;
+    for (uint32_t y = 0u; y < DMA2D_SELFTEST_FB_HEIGHT; ++y) {
+        for (uint32_t x = 0u; x < DMA2D_SELFTEST_FB_WIDTH; ++x) {
+            bool inside = x >= destination_x && x < destination_x + DMA2D_SELFTEST_RECT_WIDTH &&
+                          y >= destination_y && y < destination_y + DMA2D_SELFTEST_RECT_HEIGHT;
+            uint32_t expected = DMA2D_SELFTEST_BACKGROUND;
+            if (inside) {
+                uint32_t source_pixel_x = source_x + x - destination_x;
+                uint32_t source_pixel_y = source_y + y - destination_y;
+                expected = rgb565_to_argb8888(source[source_pixel_y * source_stride + source_pixel_x]);
+            }
+            uint32_t actual = s_framebuffer[y * DMA2D_SELFTEST_FB_WIDTH + x];
+            if (actual != expected) {
+                fail(x, y, expected, actual);
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 void DMA2D_Selftest_Poll(void)
 {
     uint32_t command = g_dma2d_test_command;
     if ((command != DMA2D_SELFTEST_COMMAND_R2M_FILL &&
          command != DMA2D_SELFTEST_COMMAND_M2M_TIGHT &&
-         command != DMA2D_SELFTEST_COMMAND_M2M_STRIDED) ||
+         command != DMA2D_SELFTEST_COMMAND_M2M_STRIDED &&
+         command != DMA2D_SELFTEST_COMMAND_M2M_PFC) ||
         g_dma2d_test_state == DMA2D_SELFTEST_STATE_RUNNING) return;
     g_dma2d_test_command = DMA2D_SELFTEST_COMMAND_NONE;
     g_dma2d_test_case = command;
@@ -456,7 +595,7 @@ void DMA2D_Selftest_Poll(void)
                 if (!run_m2m_tight_at(x_positions[xi], y_positions[yi])) return;
             }
         }
-    } else {
+    } else if (command == DMA2D_SELFTEST_COMMAND_M2M_STRIDED) {
         static const uint16_t source_x_positions[] = {0u, 1u, 7u, 17u, 31u, 32u, 55u};
         static const uint16_t source_y_positions[] = {0u, 1u, 23u, 37u};
         static const uint16_t destination_x_positions[] = {599u, 137u, 32u, 31u, 7u, 1u, 0u};
@@ -472,6 +611,13 @@ void DMA2D_Selftest_Poll(void)
         }
         g_dma2d_test_case = 29u;
         if (!run_m2m_strided_at(56u, 56u, 0u, 0u)) return;
+    } else {
+        g_dma2d_test_stage = DMA2D_SELFTEST_STAGE_ALLOCATE;
+        if (!prepare_pfc_sources()) return;
+        g_dma2d_test_case = 1u;
+        if (!run_pfc_at(s_pfc_tight_source, DMA2D_SELFTEST_RECT_WIDTH, 0u, 0u, 137u, 83u)) return;
+        g_dma2d_test_case = 2u;
+        if (!run_pfc_at(s_pfc_strided_source, DMA2D_SELFTEST_STRIDED_WIDTH, 17u, 23u, 137u, 83u)) return;
     }
     g_dma2d_test_stage = DMA2D_SELFTEST_STAGE_COMPLETE;
     ++g_dma2d_test_pass;

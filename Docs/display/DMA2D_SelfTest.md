@@ -2,7 +2,7 @@
 
 `SizeDebug-DMA2D-SelfTest` 是仅用于目标板诊断的构建配置。它不使用 LVGL、Lua、JPEG、Cart 或 resource manager 参与 DMA2D 测试；GDB 只写 mailbox，实际 DMA2D 操作在 `Launcher_Task()` 的正常 app task 上下文执行。
 
-当前实现并允许执行 L1、L2 与 L3。其它 standalone 或 Resource Pipeline V2 integration 层级尚未实现，不能将本文件或该 preset 解释为其已通过真机验证。
+当前实现并允许执行 L1 至 L4。其它 standalone 或 Resource Pipeline V2 integration 层级尚未实现，不能将本文件或该 preset 解释为其已通过真机验证。
 
 ## 构建与触发
 
@@ -12,7 +12,7 @@ cmake --build --preset SizeDebug-DMA2D-SelfTest
 arm-none-eabi-gdb -x tools/gdb/dma2d_selftest.gdb
 ```
 
-脚本使用仓库根目录的 `CartDeck.cfg` 对应 OpenOCD 会话。GDB 写 `g_dma2d_test_command = 1` 请求 R2M fill，写 `2` 请求 M2M tight 坐标矩阵，写 `3` 请求 M2M strided-source 坐标矩阵。脚本默认运行 command 3；它打印结果、首个错误像素、operation/case、source/destination address 与 stride，以及 DMA2D 寄存器快照。HardFault、MemManage、BusFault、UsageFault 由已有 crash record 保存 PC、LR、SP、CFSR、HFSR、MMFAR、BFAR。
+脚本使用仓库根目录的 `CartDeck.cfg` 对应 OpenOCD 会话。GDB 写 `g_dma2d_test_command = 1` 请求 R2M fill，写 `2` 请求 M2M tight 坐标矩阵，写 `3` 请求 M2M strided-source 坐标矩阵，写 `4` 请求 RGB565 M2M PFC。脚本默认运行 command 4；它打印结果、首个错误像素、operation/case、source/destination address 与 stride，以及 DMA2D 寄存器快照。HardFault、MemManage、BusFault、UsageFault 由已有 crash record 保存 PC、LR、SP、CFSR、HFSR、MMFAR、BFAR。
 
 ## L1 — R2M fill
 
@@ -97,3 +97,24 @@ ELF SHA-256 为 `a15b8d6e29d547cf842313b0355fa8b6001a718417835756b9565abd163617a
 `cycles=1678120`、`time_us=3496`、`CR=0x00000000`、`ISR=0x00000002`、`FGMAR=0xD14730E0`、
 `FGOR=56`、`OMAR=0xD14A5080`、`OOR=600`、`OPFCCR=0x00000000`、`NLR=0x00C800C8`。此 timing
 仅为最后一个 200×200 transfer 的观测值，不构成 Phase 8 性能结论。
+
+## L4 — M2M PFC RGB565 → ARGB8888
+
+L4 不依赖 JPEG、LVGL、Resource V2 或现有 DMA2D helper。它以独立 RGB565 source 测试红、绿、蓝、白、黑、灰、黄、青、品红，以及 `0x1234`、`0x2A95`、`0x6B4D` 等非极值位型；CPU reference 显式将 `R5/G6/B5` 通过 bit replication 展开为 `R8/G8/B8`，并固定 alpha 为 `255`。
+
+先执行 tight `200 × 200` source（`FGOR=0`），再执行 physical `256 × 256` strided source 的 `(sx, sy)=(17, 23)` region（`FGOR=56`）。两者均输出到 `(137,83)` 的 ARGB8888 framebuffer，使用 `OOR=600`，并逐像素比较完整 framebuffer 与两端 guard。
+
+### L4 真机检查结果
+
+2026-09-28（Asia/Tokyo），CartDeck / STM32H743、ST-Link、OpenOCD 0.12.0；本次烧录
+ELF SHA-256 为 `f406d02f9f19aa9a93c6931d98586139c51641af695dac0038be0619ec29e197`。
+
+| Test | Result | LTDC | DCache | Key registers | Fault |
+| --- | --- | --- | --- | --- | --- |
+| RGB565 PFC tight | PASS | isolated | SDRAM non-cacheable | `FGOR=0`, `OOR=600` | 0 |
+| RGB565 PFC strided | PASS | isolated | SDRAM non-cacheable | `LOM=0`, `FGOR=56`, `OOR=600`, `NLR=0x00C800C8` | 0 |
+| CPU reference / guard / full compare | PASS | isolated | SDRAM non-cacheable | ARGB8888 bit-replication output | 0 |
+
+strided case mailbox：`state=2`、`pass=1`、`fail=0`、`operation=4`、`case=2`、fault=0；
+`FGMAR=0xD147B6A2`、`FGOR=56`、`FGPFCCR=0x00000002 (RGB565)`、`OMAR=0xD14D98A4`、
+`OOR=600`、`OPFCCR=0x00000000 (ARGB8888)`、`NLR=0x00C800C8`、`cycles=1092332`、`time_us=2275`。

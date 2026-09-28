@@ -20,7 +20,7 @@ load
 monitor reset halt
 tbreak Launcher_Task
 continue
-set variable g_dma2d_test_command = 3
+set variable g_dma2d_test_command = 4
 finish
 
 printf "\nDMA2D self-test: state=%lu stage=%lu pass=%lu fail=%lu operation=%lu case=%lu fault=%lu\n", g_dma2d_test_state, g_dma2d_test_stage, g_dma2d_test_pass, g_dma2d_test_fail, g_dma2d_test_operation, g_dma2d_test_case, $dma2d_selftest_fault
