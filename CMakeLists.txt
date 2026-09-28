@@ -22,6 +22,7 @@ option(CARTDESK_WATCHDOG_STALL_TEST_ENABLE "Deliberately stop the app task to te
 option(CARTDESK_HOST_TESTS_ONLY "Configure only native host tests" OFF)
 option(XHGC_MEMINFO_SELFTEST_ENABLE "Run APP_ARENA_REST meminfo selftest in Debug builds" OFF)
 option(XHGC_DMA_POOL_SELFTEST_ENABLE "Run DMA_POOL allocator meminfo selftest in Debug builds" OFF)
+option(XHGC_DMA2D_SELFTEST_ENABLE "Enable the DMA2D standalone GDB mailbox self-test" OFF)
 option(XHGC_MEM_OVERLAY_ENABLE "Enable LCD memory debug overlay" OFF)
 option(XHGC_MEM_OVERLAY_BOOT_VISIBLE "Show LCD memory debug overlay at startup" OFF)
 option(XHGC_ENABLE_EXPERIMENTAL_CART_RESOURCE_CACHE "Enable legacy experimental cart resource cache owner for RESOURCE_ARENA" OFF)
@@ -236,6 +237,11 @@ endif()
 
 if(XHGC_DMA_POOL_SELFTEST_ENABLE AND CMAKE_BUILD_TYPE STREQUAL "Debug")
     list(APPEND COMMON_DEFINES XHGC_DMA_POOL_SELFTEST_ENABLE=1)
+endif()
+
+if(XHGC_DMA2D_SELFTEST_ENABLE AND
+   (CMAKE_BUILD_TYPE STREQUAL "Debug" OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo"))
+    list(APPEND COMMON_DEFINES XHGC_DMA2D_SELFTEST_ENABLE=1)
 endif()
 
 if(XHGC_MEM_OVERLAY_ENABLE)
@@ -686,6 +692,8 @@ target_include_directories(board_test PUBLIC
 target_link_libraries(board_test PUBLIC cartdesk_common lvgl drv_display drv_storage)
 
 add_library(runtime_debug STATIC
+        ${DEBUG_DIR}/dma2d_selftest.c
+        ${DEBUG_DIR}/dma2d_selftest.h
         ${DEBUG_DIR}/perf_monitor.c
         ${DEBUG_DIR}/perf_monitor.h
         ${DEBUG_DIR}/runtime_stats.c

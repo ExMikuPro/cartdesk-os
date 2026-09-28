@@ -77,6 +77,7 @@ cmake --build --preset Release -j8
 | `Debug-MemInfo-SelfTest` | 在 Debug 基础上启用 `XHGC_MEMINFO_SELFTEST_ENABLE`。 | 验证 `APP_ARENA_REST` / meminfo 的 `used`、`peak`、`reset`、`fail` 统计行为。 |
 | `Debug-DmaPool-SelfTest` | 在 Debug 基础上启用 `XHGC_DMA_POOL_SELFTEST_ENABLE`。 | 验证 `DMA_POOL` 的临时 buffer 分配、对齐、越界失败记录和 reset 统计。 |
 | `Debug-All-Memory-SelfTest` | 同时启用 meminfo 和 DMA_POOL 两组 Debug-only 内存自测。 | 本地集中回归内存统计相关行为，不建议作为默认刷机配置。 |
+| `SizeDebug-DMA2D-SelfTest` | 在 SizeDebug 中启用 DMA2D standalone GDB mailbox。 | 仅用于目标板 R2M、后续二维寻址与 cache 诊断；不会改变默认 Debug、Release 或 SizeDebug 行为。 |
 | `Debug-Experimental-CartCache` | 在 Debug 基础上启用 `XHGC_ENABLE_EXPERIMENTAL_CART_RESOURCE_CACHE`。 | 研究实验性 `lua_cart_resource_cache` 路径，不用于稳定版本。 |
 | `Release` | 正式发布构建，关闭所有 Debug-only 自测、overlay 和实验缓存。 | 生成接近正式发布形态的固件。 |
 | `Release-MinSize` | 在 `Release` 基础上额外启用 `CARTDESK_EXTREME_SIZE_OPT`，通过 LTO 并排除部分 demo / 调试源码进一步压缩体积。 | 需要尽量缩小固件体积、但又不想改变默认 `Release` 语义时。 |

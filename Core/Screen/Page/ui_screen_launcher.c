@@ -14,6 +14,7 @@
 #include "cart_io_service.h"
 #include "cart_log.h"
 #include "cart_system_icons.h"
+#include "dma2d_selftest.h"
 #include "launcher_store.h"
 #include "lua_runtime_task.h"
 #include "usb_sd_transfer_mode.h"
@@ -1136,6 +1137,10 @@ bool Launcher_HandleIoCompletion(const cart_io_completion_t *completion)
 
 void Launcher_Task(void)
 {
+#if XHGC_DMA2D_SELFTEST_ENABLE
+    /* GDB writes the mailbox only; this executes in the app task. */
+    DMA2D_Selftest_Poll();
+#endif
 #if PERF_MONITOR_ENABLE
     if (g_lua_budget_board_command == 1u) {
         g_lua_budget_board_completed = 0u;
