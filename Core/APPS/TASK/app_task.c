@@ -13,6 +13,7 @@
 #include "lcd.h"
 #include "lua_runtime_task.h"
 #include "lua_foundation.h"
+#include "lua_ui.h"
 #include "lv_port_disp.h"
 #include "lv_port_indev.h"
 #include "lvgl.h"
@@ -20,6 +21,7 @@
 #include "main.h"
 #include "perf_monitor.h"
 #include "qflash_font.h"
+#include "resource_manager.h"
 #include "runtime_stats.h"
 #include "watchdog_policy.h"
 #include "task.h"
@@ -40,12 +42,16 @@ static void process_worker_completions(void)
     cart_io_completion_t io_completion;
     while(handled < APP_COMPLETION_BUDGET &&
           CartIoService_TryReceive(&io_completion)) {
-        if(!lua_foundation_handle_io_completion(&io_completion) &&
+        if(!res_manager_handle_io_completion(&io_completion) &&
+           !lua_foundation_handle_io_completion(&io_completion) &&
            !Launcher_HandleIoCompletion(&io_completion)) {
             if(io_completion.operation == CART_IO_OP_STORAGE_LOAD ||
                io_completion.operation == CART_IO_OP_STORAGE_COMMIT ||
                io_completion.operation == CART_IO_OP_STORAGE_CLEAR) {
                 CartTaskBuffer_Release(&io_completion.result.storage.buffer);
+            } else if(io_completion.operation == CART_IO_OP_RESOURCE_INDEX_READ ||
+                      io_completion.operation == CART_IO_OP_RESOURCE_BLOB_READ) {
+                CartTaskBuffer_Release(&io_completion.result.buffer);
             }
             ++s_app_stats.stale_completion;
         }
@@ -133,6 +139,7 @@ void CartdeskAppTask_Run(void *argument)
     for (;;) {
         RuntimeStats_BeginSection(RUNTIME_STATS_SECTION_FRAME);
         process_worker_completions();
+        lua_ui_image_process_pending();
 
         bool qflash_exclusive = CartIoService_IsQflashExclusive();
 

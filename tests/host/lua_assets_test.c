@@ -25,6 +25,8 @@ static bool g_resource_available = true;
 static uint32_t g_acquire_count;
 static uint32_t g_release_count;
 static image_resource_t g_image;
+static data_resource_t g_data = {"test-data", 9u};
+static res_state_t g_state = RES_READY;
 
 lua_State* lua_foundation_main_thread(lua_State* L) { return L; }
 bool lua_foundation_same_vm(lua_State* left, lua_State* right) {
@@ -65,6 +67,9 @@ res_handle_t res_acquire_image(const char* path, res_lifetime_t lifetime) {
   ++g_acquire_count;
   return (res_handle_t){1u, 1u};
 }
+res_handle_t res_acquire_data(const char* path, res_lifetime_t lifetime) {
+  return res_acquire_image(path, lifetime);
+}
 bool res_handle_valid(res_handle_t handle) {
   return handle.index == 1u && handle.generation == 1u;
 }
@@ -74,7 +79,20 @@ void res_release(res_handle_t handle) {
 }
 bool res_retain(res_handle_t handle) { return res_handle_valid(handle); }
 const image_resource_t* res_get_image(res_handle_t handle) {
-  return res_handle_valid(handle) ? &g_image : NULL;
+  return res_handle_valid(handle) && g_state == RES_READY ? &g_image : NULL;
+}
+const data_resource_t* res_get_data(res_handle_t handle) {
+  return res_handle_valid(handle) && g_state == RES_READY ? &g_data : NULL;
+}
+res_state_t res_handle_state(res_handle_t handle) {
+  return res_handle_valid(handle) ? g_state : RES_FAILED;
+}
+const char* res_handle_error(res_handle_t handle) {
+  if (!res_handle_valid(handle)) return "invalid asset handle";
+  return g_state == RES_FAILED ? "injected async failure" : NULL;
+}
+uint32_t res_get_storage_size(res_handle_t handle) {
+  return res_handle_valid(handle) ? g_data.size : 0u;
 }
 const char* res_last_error(void) { return "injected asset load failure"; }
 
@@ -83,6 +101,13 @@ static void push_image_call(void) {
   lua_getfield(g_vm, -1, "image");
   lua_pushliteral(g_vm, "images/test.bin");
   assert(lua_pcall(g_vm, 1, LUA_MULTRET, 0) == LUA_OK);
+}
+
+static void call_method(int handle_idx, const char* method, int results) {
+  handle_idx = lua_absindex(g_vm, handle_idx);
+  lua_getfield(g_vm, handle_idx, method);
+  lua_pushvalue(g_vm, handle_idx);
+  assert(lua_pcall(g_vm, 1, results, 0) == LUA_OK);
 }
 
 int main(void) {
@@ -109,6 +134,34 @@ int main(void) {
   assert(lua_isnil(g_vm, -2));
   assert(strcmp(lua_tostring(g_vm, -1), "injected asset load failure") == 0);
   assert(g_acquire_count == 1000u && g_release_count == 1000u);
+  lua_assets_owner_destroy(g_vm, OWNER_ID, OWNER_GENERATION);
+
+  lua_settop(g_vm, 0);
+  assert(lua_assets_owner_create(g_vm, OWNER_ID, OWNER_GENERATION));
+  g_resource_available = true;
+  g_state = RES_LOADING;
+  assert(luaopen_assets(g_vm) == 1);
+  lua_getfield(g_vm, -1, "data");
+  lua_pushliteral(g_vm, "assets/sample.txt");
+  assert(lua_pcall(g_vm, 1, 1, 0) == LUA_OK);
+  int data_handle = lua_gettop(g_vm);
+  assert(lua_isuserdata(g_vm, data_handle));
+  call_method(data_handle, "status", 1);
+  assert(strcmp(lua_tostring(g_vm, -1), "loading") == 0);
+  lua_pop(g_vm, 1);
+  call_method(data_handle, "ready", 1);
+  assert(!lua_toboolean(g_vm, -1));
+  lua_pop(g_vm, 1);
+  call_method(data_handle, "bytes", 2);
+  assert(lua_isnil(g_vm, -2));
+  assert(strcmp(lua_tostring(g_vm, -1), "not ready") == 0);
+  lua_pop(g_vm, 2);
+  g_state = RES_READY;
+  call_method(data_handle, "bytes", 1);
+  size_t data_size = 0u;
+  assert(strcmp(lua_tolstring(g_vm, -1, &data_size), "test-data") == 0);
+  assert(data_size == 9u);
+  lua_pop(g_vm, 1);
   lua_assets_owner_destroy(g_vm, OWNER_ID, OWNER_GENERATION);
 
   lua_close(g_vm);

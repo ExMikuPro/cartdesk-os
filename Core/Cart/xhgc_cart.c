@@ -63,6 +63,90 @@ static uint32_t read_le32(const uint8_t *p)
            ((uint32_t)p[3] << 24);
 }
 
+int xhgc_ximg_v2_parse(const void *blob,
+                       uint32_t blob_size,
+                       uint8_t expected_format,
+                       uint16_t expected_width,
+                       uint16_t expected_height,
+                       XHGC_XimgV2 *out_image)
+{
+    const uint8_t *bytes = (const uint8_t *)blob;
+    uint16_t width;
+    uint16_t height;
+    uint8_t format;
+    uint32_t jpeg_offset;
+    uint32_t jpeg_size;
+    uint32_t a8_offset;
+    uint32_t a8_size;
+    uint32_t a8_stride;
+    uint64_t jpeg_end;
+    uint64_t a8_end;
+
+    if (!bytes || !out_image || blob_size < XHGC_XIMG_V2_HEADER_SIZE) {
+        return XHGC_CART_E_PARAM;
+    }
+    memset(out_image, 0, sizeof(*out_image));
+    if (memcmp(bytes, XHGC_XIMG_MAGIC, 4u) != 0) return XHGC_CART_E_MAGIC;
+    if (read_le16(bytes + 4u) != XHGC_XIMG_V2_VERSION) return XHGC_CART_E_VERSION;
+    if (read_le16(bytes + 6u) != XHGC_XIMG_V2_HEADER_SIZE) return XHGC_CART_E_FORMAT;
+
+    width = read_le16(bytes + 8u);
+    height = read_le16(bytes + 10u);
+    format = bytes[12u];
+    jpeg_offset = read_le32(bytes + 16u);
+    jpeg_size = read_le32(bytes + 20u);
+    a8_offset = read_le32(bytes + 24u);
+    a8_size = read_le32(bytes + 28u);
+    a8_stride = read_le32(bytes + 32u);
+    if (width == 0u || height == 0u || bytes[13u] != 0u ||
+        read_le16(bytes + 14u) != 0u) {
+        return XHGC_CART_E_FORMAT;
+    }
+    for (uint32_t i = 36u; i < XHGC_XIMG_V2_HEADER_SIZE; ++i) {
+        if (bytes[i] != 0u) return XHGC_CART_E_FORMAT;
+    }
+    if (format != expected_format || width != expected_width ||
+        height != expected_height ||
+        (format != XHGC_IMG_JPEG && format != XHGC_IMG_JPEG_A8)) {
+        return XHGC_CART_E_FORMAT;
+    }
+    jpeg_end = (uint64_t)jpeg_offset + (uint64_t)jpeg_size;
+    if (jpeg_offset != XHGC_XIMG_V2_HEADER_SIZE || jpeg_size < 4u ||
+        jpeg_end > blob_size || bytes[jpeg_offset] != 0xFFu ||
+        bytes[jpeg_offset + 1u] != 0xD8u ||
+        bytes[jpeg_end - 2u] != 0xFFu || bytes[jpeg_end - 1u] != 0xD9u) {
+        return XHGC_CART_E_FORMAT;
+    }
+
+    if (format == XHGC_IMG_JPEG) {
+        if (a8_offset != 0u || a8_size != 0u || a8_stride != 0u ||
+            jpeg_end != blob_size) {
+            return XHGC_CART_E_FORMAT;
+        }
+    } else {
+        uint64_t expected_a8 = (uint64_t)width * (uint64_t)height;
+        a8_end = (uint64_t)a8_offset + (uint64_t)a8_size;
+        if (a8_offset < jpeg_end || (a8_offset & 3u) != 0u ||
+            a8_size != expected_a8 || a8_stride != width ||
+            a8_end != blob_size) {
+            return XHGC_CART_E_FORMAT;
+        }
+        for (uint64_t i = jpeg_end; i < a8_offset; ++i) {
+            if (bytes[i] != 0u) return XHGC_CART_E_FORMAT;
+        }
+    }
+
+    out_image->width = width;
+    out_image->height = height;
+    out_image->format = format;
+    out_image->jpeg_offset = jpeg_offset;
+    out_image->jpeg_size = jpeg_size;
+    out_image->a8_offset = a8_offset;
+    out_image->a8_size = a8_size;
+    out_image->a8_stride = a8_stride;
+    return XHGC_CART_OK;
+}
+
 static uint64_t read_le64(const uint8_t *p)
 {
     return ((uint64_t)read_le32(p)) | ((uint64_t)read_le32(p + 4u) << 32);

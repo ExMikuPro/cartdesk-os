@@ -313,6 +313,100 @@ static void test_result_strings(void)
     EXPECT_STREQ(xhgc_cart_result_string(-1000), "unknown cart error");
 }
 
+static uint32_t build_ximg_v2(uint8_t *blob, uint8_t format)
+{
+    static const uint8_t jpeg[] = {0xFFu, 0xD8u, 0x11u, 0x22u, 0xFFu, 0xD9u};
+    uint32_t jpeg_end = XHGC_XIMG_V2_HEADER_SIZE + (uint32_t)sizeof(jpeg);
+    uint32_t a8_offset = (jpeg_end + 3u) & ~3u;
+    uint32_t blob_size = format == XHGC_IMG_JPEG ? jpeg_end : a8_offset + 6u;
+    memset(blob, 0, blob_size);
+    memcpy(blob, XHGC_XIMG_MAGIC, 4u);
+    wr16(blob + 4u, XHGC_XIMG_V2_VERSION);
+    wr16(blob + 6u, XHGC_XIMG_V2_HEADER_SIZE);
+    wr16(blob + 8u, 3u);
+    wr16(blob + 10u, 2u);
+    blob[12u] = format;
+    wr32(blob + 16u, XHGC_XIMG_V2_HEADER_SIZE);
+    wr32(blob + 20u, (uint32_t)sizeof(jpeg));
+    memcpy(blob + XHGC_XIMG_V2_HEADER_SIZE, jpeg, sizeof(jpeg));
+    if (format == XHGC_IMG_JPEG_A8) {
+        wr32(blob + 24u, a8_offset);
+        wr32(blob + 28u, 6u);
+        wr32(blob + 32u, 3u);
+        blob[a8_offset] = 0u;
+        blob[a8_offset + 1u] = 32u;
+        blob[a8_offset + 2u] = 64u;
+        blob[a8_offset + 3u] = 128u;
+        blob[a8_offset + 4u] = 192u;
+        blob[a8_offset + 5u] = 255u;
+    }
+    return blob_size;
+}
+
+static void test_ximg_v2_parser(void)
+{
+    uint8_t blob[96];
+    XHGC_XimgV2 parsed;
+    uint32_t size = build_ximg_v2(blob, XHGC_IMG_JPEG);
+    EXPECT_EQ_INT(xhgc_ximg_v2_parse(blob, size, XHGC_IMG_JPEG, 3u, 2u,
+                                     &parsed), XHGC_CART_OK);
+    EXPECT_EQ_INT(parsed.jpeg_offset, XHGC_XIMG_V2_HEADER_SIZE);
+    EXPECT_EQ_INT(parsed.a8_size, 0u);
+
+    size = build_ximg_v2(blob, XHGC_IMG_JPEG_A8);
+    EXPECT_EQ_INT(xhgc_ximg_v2_parse(blob, size, XHGC_IMG_JPEG_A8, 3u, 2u,
+                                     &parsed), XHGC_CART_OK);
+    EXPECT_EQ_INT(parsed.a8_stride, 3u);
+    EXPECT_EQ_INT(parsed.a8_size, 6u);
+
+    EXPECT_EQ_INT(xhgc_ximg_v2_parse(blob, XHGC_XIMG_V2_HEADER_SIZE - 1u,
+                                     XHGC_IMG_JPEG_A8, 3u, 2u, &parsed),
+                  XHGC_CART_E_PARAM);
+    blob[0u] = 'Y';
+    EXPECT_EQ_INT(xhgc_ximg_v2_parse(blob, size, XHGC_IMG_JPEG_A8, 3u, 2u,
+                                     &parsed), XHGC_CART_E_MAGIC);
+    (void)build_ximg_v2(blob, XHGC_IMG_JPEG_A8);
+    blob[4u] = 3u;
+    EXPECT_EQ_INT(xhgc_ximg_v2_parse(blob, size, XHGC_IMG_JPEG_A8, 3u, 2u,
+                                     &parsed), XHGC_CART_E_VERSION);
+    (void)build_ximg_v2(blob, XHGC_IMG_JPEG_A8);
+    wr16(blob + 6u, 47u);
+    EXPECT_EQ_INT(xhgc_ximg_v2_parse(blob, size, XHGC_IMG_JPEG_A8, 3u, 2u,
+                                     &parsed), XHGC_CART_E_FORMAT);
+    (void)build_ximg_v2(blob, XHGC_IMG_JPEG_A8);
+    wr32(blob + 16u, 52u);
+    EXPECT_EQ_INT(xhgc_ximg_v2_parse(blob, size, XHGC_IMG_JPEG_A8, 3u, 2u,
+                                     &parsed), XHGC_CART_E_FORMAT);
+    (void)build_ximg_v2(blob, XHGC_IMG_JPEG_A8);
+    wr32(blob + 20u, UINT32_MAX);
+    EXPECT_EQ_INT(xhgc_ximg_v2_parse(blob, size, XHGC_IMG_JPEG_A8, 3u, 2u,
+                                     &parsed), XHGC_CART_E_FORMAT);
+    (void)build_ximg_v2(blob, XHGC_IMG_JPEG_A8);
+    wr32(blob + 24u, UINT32_MAX);
+    EXPECT_EQ_INT(xhgc_ximg_v2_parse(blob, size, XHGC_IMG_JPEG_A8, 3u, 2u,
+                                     &parsed), XHGC_CART_E_FORMAT);
+    (void)build_ximg_v2(blob, XHGC_IMG_JPEG_A8);
+    wr32(blob + 28u, 5u);
+    EXPECT_EQ_INT(xhgc_ximg_v2_parse(blob, size, XHGC_IMG_JPEG_A8, 3u, 2u,
+                                     &parsed), XHGC_CART_E_FORMAT);
+    (void)build_ximg_v2(blob, XHGC_IMG_JPEG_A8);
+    wr32(blob + 32u, 2u);
+    EXPECT_EQ_INT(xhgc_ximg_v2_parse(blob, size, XHGC_IMG_JPEG_A8, 3u, 2u,
+                                     &parsed), XHGC_CART_E_FORMAT);
+    (void)build_ximg_v2(blob, XHGC_IMG_JPEG_A8);
+    blob[XHGC_XIMG_V2_HEADER_SIZE + 5u] = 0u;
+    EXPECT_EQ_INT(xhgc_ximg_v2_parse(blob, size, XHGC_IMG_JPEG_A8, 3u, 2u,
+                                     &parsed), XHGC_CART_E_FORMAT);
+    (void)build_ximg_v2(blob, XHGC_IMG_JPEG_A8);
+    EXPECT_EQ_INT(xhgc_ximg_v2_parse(blob, size, XHGC_IMG_JPEG_A8, 2u, 2u,
+                                     &parsed), XHGC_CART_E_FORMAT);
+    EXPECT_EQ_INT(xhgc_ximg_v2_parse(blob, size, XHGC_IMG_JPEG, 3u, 2u,
+                                     &parsed), XHGC_CART_E_FORMAT);
+    blob[12u] = XHGC_IMG_LVGL_BIN;
+    EXPECT_EQ_INT(xhgc_ximg_v2_parse(blob, size, XHGC_IMG_LVGL_BIN, 3u, 2u,
+                                     &parsed), XHGC_CART_E_FORMAT);
+}
+
 int main(void)
 {
     test_valid_header_and_manf();
@@ -320,6 +414,7 @@ int main(void)
     test_index_find_and_read();
     test_range_protection();
     test_result_strings();
+    test_ximg_v2_parser();
 
     if (g_failures != 0) {
         printf("%d test failure(s)\n", g_failures);

@@ -156,6 +156,99 @@ void cart_index_reset(void)
   s_last_error = NULL;
 }
 
+bool cart_index_parse(const void *index_bytes,
+                      uint32_t index_size,
+                      uint64_t data_offset,
+                      uint32_t data_size)
+{
+  const uint8_t *bytes = (const uint8_t *)index_bytes;
+  uint16_t version;
+  uint16_t entry_size;
+  uint32_t count;
+  uint32_t entries_off;
+  uint32_t strings_off;
+  uint32_t strings_size;
+  uint32_t flags;
+  uint64_t entries_end;
+
+  cart_index_reset();
+  if (!bytes || index_size < CART_INDEX_HEADER_SIZE) {
+    s_last_error = "cart index bytes are required";
+    return false;
+  }
+  if (memcmp(bytes, XHGC_INDEX_MAGIC, XHGC_INDEX_MAGIC_SIZE) != 0) {
+    s_last_error = "invalid cart index magic";
+    return false;
+  }
+  version = read_le16(bytes + 8u);
+  entry_size = read_le16(bytes + 10u);
+  count = read_le32(bytes + 12u);
+  entries_off = read_le32(bytes + 16u);
+  strings_off = read_le32(bytes + 20u);
+  strings_size = read_le32(bytes + 24u);
+  flags = read_le32(bytes + 28u);
+  entries_end = (uint64_t)entries_off + (uint64_t)count * XHGC_INDEX_ENTRY_SIZE;
+  if (version != XHGC_INDEX_VERSION || entry_size != XHGC_INDEX_ENTRY_SIZE ||
+      flags != 0u || entries_off < CART_INDEX_HEADER_SIZE ||
+      entries_end > index_size || strings_off < entries_end ||
+      (uint64_t)strings_off + strings_size != index_size ||
+      count > CART_INDEX_MAX_RESOURCES) {
+    s_last_error = "invalid cart index";
+    return false;
+  }
+
+  for (uint32_t i = 0u; i < count; ++i) {
+    const uint8_t *ent = bytes + entries_off + i * XHGC_INDEX_ENTRY_SIZE;
+    uint32_t path_off = read_le32(ent + 4u);
+    uint32_t data_end;
+    uint16_t flags16 = read_le16(ent + 26u);
+    uint32_t reserved = read_le32(ent + 28u);
+    cart_res_meta_t *meta = &s_meta[i];
+    uint32_t cursor = 0u;
+
+    meta->path_hash = read_le32(ent);
+    meta->data_off = read_le32(ent + 8u);
+    meta->size = read_le32(ent + 12u);
+    meta->crc32 = read_le32(ent + 16u);
+    meta->type = ent[20u];
+    meta->format = ent[21u];
+    meta->width = read_le16(ent + 22u);
+    meta->height = read_le16(ent + 24u);
+    if (flags16 != 0u || reserved != 0u || path_off >= strings_size ||
+        add_overflow_u32(meta->data_off, meta->size, &data_end) ||
+        data_end > data_size) {
+      s_last_error = "invalid cart index entry";
+      cart_index_reset();
+      s_last_error = "invalid cart index entry";
+      return false;
+    }
+    while (path_off + cursor < strings_size &&
+           cursor + 1u < CART_INDEX_PATH_MAX) {
+      uint8_t ch = bytes[strings_off + path_off + cursor];
+      s_paths[i][cursor] = (char)ch;
+      if (ch == 0u) break;
+      ++cursor;
+    }
+    if (cursor + 1u >= CART_INDEX_PATH_MAX ||
+        path_off + cursor >= strings_size ||
+        s_paths[i][cursor] != '\0' ||
+        !cart_path_is_valid(s_paths[i]) ||
+        meta->path_hash != fnv1a32(s_paths[i])) {
+      cart_index_reset();
+      s_last_error = "invalid cart index path";
+      return false;
+    }
+    meta->path = s_paths[i];
+  }
+
+  s_data_offset = data_offset;
+  s_data_size = data_size;
+  s_count = (uint16_t)count;
+  s_loaded = true;
+  s_last_error = NULL;
+  return true;
+}
+
 bool cart_index_load(const char *cart_path)
 {
   char fatfs_path[256];

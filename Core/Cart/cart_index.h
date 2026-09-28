@@ -20,6 +20,10 @@ typedef struct {
 } cart_res_meta_t;
 
 bool cart_index_load(const char *cart_path);
+bool cart_index_parse(const void *index_bytes,
+                      uint32_t index_size,
+                      uint64_t data_offset,
+                      uint32_t data_size);
 void cart_index_reset(void);
 bool cart_index_is_loaded(void);
 const cart_res_meta_t *cart_index_find(const char *path);

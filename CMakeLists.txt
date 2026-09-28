@@ -80,16 +80,38 @@ if(CARTDESK_HOST_TESTS_ONLY)
     )
     target_include_directories(task_message_contract_test PRIVATE ${TASK_DIR})
 
+    add_executable(resource_manager_test
+            ${PROJECT_ROOT}/tests/host/resource_manager_test.c
+            ${LUA_PORT_DIR}/resource_manager.c
+    )
+    target_include_directories(resource_manager_test PRIVATE
+            ${PROJECT_ROOT}/tests/host/include
+            ${LUA_PORT_DIR}
+            ${TASK_DIR}
+            ${CART_DIR}
+            ${CORE_INC_DIR}
+    )
+    target_compile_definitions(resource_manager_test PRIVATE
+            XHGC_CART_NO_FATFS=1
+            XHGC_CART_NO_FLASH=1
+    )
+
     if(NOT MSVC)
         target_compile_options(xhgc_cart_host_test PRIVATE
                 -Wall -Wextra -Werror -Wconversion -Wsign-conversion)
         target_compile_options(task_message_contract_test PRIVATE
                 -Wall -Wextra -Werror -Wconversion -Wsign-conversion)
+        target_compile_options(resource_manager_test PRIVATE
+                -Wall -Wextra -Werror -Wconversion -Wsign-conversion
+                -fsanitize=address,undefined -fno-omit-frame-pointer)
+        target_link_options(resource_manager_test PRIVATE
+                -fsanitize=address,undefined -fno-omit-frame-pointer)
     endif()
 
     foreach(host_test IN ITEMS
             xhgc_cart_host_test
             task_message_contract_test
+            resource_manager_test
             lua_runtime_task_test
             lua_ui_owner_test
             lua_foundation_owner_test
@@ -117,7 +139,7 @@ if(CARTDESK_HOST_TESTS_ONLY)
     else()
         set(CARTDESK_HOST_ASAN_OPTIONS "detect_leaks=1")
     endif()
-    set_tests_properties(lua_random_test lua_storage_test lua_assets_test
+    set_tests_properties(resource_manager_test lua_random_test lua_storage_test lua_assets_test
             lua_timer_test
             lua_vm_lifecycle_test
             PROPERTIES ENVIRONMENT
@@ -458,6 +480,8 @@ add_library(lua_port STATIC
         ${LUA_PORT_DIR}/resource_arena_owner.h
         ${LUA_PORT_DIR}/resource_manager.c
         ${LUA_PORT_DIR}/resource_manager.h
+        ${LUA_PORT_DIR}/cart_jpeg_decoder.c
+        ${LUA_PORT_DIR}/cart_jpeg_decoder.h
         ${LUA_PORT_DIR}/modules/lua_assets.c
         ${LUA_PORT_DIR}/modules/lua_crc.c
         ${LUA_PORT_DIR}/modules/lua_log.c

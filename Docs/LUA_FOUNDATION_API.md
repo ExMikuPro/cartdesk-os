@@ -42,11 +42,15 @@ assert(ui.patch(title, { text="Updated", opacity=220 }))
 ## assets
 
 - `assets.exists(path)` 返回 `true/false`。
-- `assets.image(path)` 返回 image asset full userdata。
-- `assets.data(path)` 返回准确长度的 Lua binary string，单次上限 256 KiB。
+- `assets.image(path)` 立即返回 image asset full userdata，初始可为 `loading`。
+- `assets.data(path)` 立即返回 data asset full userdata，单项仍限制为 256 KiB。
+- 两类 handle 均提供 `ready()`、`status()`、`error()` 和 `size()`；data handle 额外通过
+  `bytes()` 读取已完成的 RAM 数据。LOADING 时 `bytes()` 返回 `nil, "not ready"`，FAILED
+  时返回 `nil, <error>`，不会同步访问 SD 或自动 yield。
 
 路径只允许当前 Cart INDEX 内的相对逻辑路径；拒绝绝对路径、`..` 和越界 DATA。
-图片继续复用 `resource_manager`/`RESOURCE_ARENA`，不暴露像素地址。
+图片继续复用 `resource_manager`/`RESOURCE_ARENA`，不暴露像素地址。`ui.image.src` 可绑定
+path、READY handle 或 LOADING handle；资源完成后由 app task 安全点自动更新 LVGL。
 
 ## storage
 

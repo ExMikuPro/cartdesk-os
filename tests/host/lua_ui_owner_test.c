@@ -8,8 +8,10 @@
 #include <string.h>
 
 #include "lauxlib.h"
+#include "lua_assets.h"
 #include "lua_ui.h"
 #include "lua_vm.h"
+#include "xhgc_cart.h"
 
 static lv_obj_t s_screen;
 static unsigned s_delete_count;
@@ -18,6 +20,13 @@ static bool s_fail_next_create;
 static uint32_t s_input_owner;
 static uint32_t s_input_generation;
 static char s_input_id[LUA_INPUT_ACTION_ID_MAX];
+static res_state_t s_image_state = RES_LOADING;
+static uint8_t s_image_pixels[8] = {1u, 2u, 3u, 255u, 4u, 5u, 6u, 128u};
+static image_resource_t s_image_resource = {
+  .pixels = s_image_pixels, .size = sizeof(s_image_pixels),
+  .width = 2u, .height = 1u, .format = XHGC_IMG_BGRA8888,
+};
+static unsigned s_image_release_count;
 
 lv_obj_t* lv_screen_active(void) {
   return &s_screen;
@@ -40,6 +49,7 @@ lv_obj_t* lv_obj_create(lv_obj_t* parent) {
 
 lv_obj_t* lv_label_create(lv_obj_t* parent) { return lv_obj_create(parent); }
 lv_obj_t* lv_button_create(lv_obj_t* parent) { return lv_obj_create(parent); }
+lv_obj_t* lv_image_create(lv_obj_t* parent) { return lv_obj_create(parent); }
 
 static void detach_object(lv_obj_t* object) {
   if (!object || !object->parent) return;
@@ -123,6 +133,32 @@ void lv_obj_remove_state(lv_obj_t* object, uint32_t state) {
   (void)object; (void)state;
 }
 lv_color_t lv_color_hex(uint32_t color) { return color; }
+uint32_t lv_draw_buf_width_to_stride(uint32_t width, lv_color_format_t format) {
+  (void)format;
+  return width * 4u;
+}
+void lv_image_set_src(lv_obj_t* object, const void* source) {
+  assert(object && !object->deleted);
+  object->image_src = source;
+}
+void lv_image_set_inner_align(lv_obj_t* object, uint32_t align) {
+  (void)object; (void)align;
+}
+int32_t lv_obj_get_width(const lv_obj_t* object) { return object->width; }
+int32_t lv_obj_get_height(const lv_obj_t* object) { return object->height; }
+void lv_obj_invalidate(lv_obj_t* object) { object->invalidated = true; }
+void lv_obj_set_style_image_opa(lv_obj_t* object, lv_opa_t opacity,
+                                int32_t selector) {
+  (void)object; (void)opacity; (void)selector;
+}
+void lv_obj_set_style_image_recolor(lv_obj_t* object, lv_color_t color,
+                                    int32_t selector) {
+  (void)object; (void)color; (void)selector;
+}
+void lv_obj_set_style_image_recolor_opa(lv_obj_t* object, lv_opa_t opacity,
+                                        int32_t selector) {
+  (void)object; (void)opacity; (void)selector;
+}
 
 lv_event_dsc_t* lv_obj_add_event_cb(lv_obj_t* object,
                                     lv_event_cb_t callback,
@@ -158,9 +194,45 @@ static void send_event(lv_obj_t* object, lv_event_code_t code) {
   }
 }
 
-bool lua_ui_image_patch(lua_State* L, lua_ui_handle_t* handle,
-                        int properties_idx, char* error, size_t error_size) {
-  (void)L; (void)handle; (void)properties_idx; (void)error; (void)error_size;
+bool cart_path_is_valid(const char* path) {
+  return path && path[0] != '/' && strstr(path, "..") == NULL;
+}
+res_handle_t res_acquire_image(const char* path, res_lifetime_t lifetime) {
+  (void)path; (void)lifetime;
+  return (res_handle_t){1u, 1u};
+}
+bool res_handle_valid(res_handle_t handle) {
+  return handle.index == 1u && handle.generation == 1u;
+}
+bool res_get_image_dimensions(res_handle_t handle, uint16_t* width,
+                              uint16_t* height) {
+  if (!res_handle_valid(handle)) return false;
+  *width = 2u; *height = 1u;
+  return true;
+}
+const image_resource_t* res_get_image(res_handle_t handle) {
+  return res_handle_valid(handle) && s_image_state == RES_READY
+      ? &s_image_resource : NULL;
+}
+res_state_t res_handle_state(res_handle_t handle) {
+  return res_handle_valid(handle) ? s_image_state : RES_FAILED;
+}
+void res_release(res_handle_t handle) {
+  assert(res_handle_valid(handle));
+  ++s_image_release_count;
+}
+void* res_alloc_image_view_buffer(size_t size, size_t align) {
+  (void)align;
+  return calloc(1u, size);
+}
+const char* res_last_error(void) { return "host image failure"; }
+bool lua_asset_image_acquire(lua_State* L, int index, res_handle_t* handle,
+                             const image_resource_t** image,
+                             const char** error) {
+  (void)L; (void)index;
+  *handle = (res_handle_t){1u, 1u};
+  *image = s_image_state == RES_READY ? &s_image_resource : NULL;
+  *error = NULL;
   return true;
 }
 
@@ -331,6 +403,39 @@ int main(void) {
   assert(lua_ui_owner_create(L, 3u, 30u));
   lua_ui_owner_enter(L, 3u, 30u);
   lua_settop(L, 0);
+
+  luaopen_ui_image(L);
+  lua_newtable(L);
+  lua_pushliteral(L, "assets/test.png");
+  lua_setfield(L, -2, "src");
+  lua_call(L, 1, 1);
+  lua_ui_handle_t* pending_path = lua_ui_handle_test(L, -1);
+  assert(pending_path && pending_path->object_type == LUA_UI_OBJECT_IMAGE);
+  assert(pending_path->object->image_src == NULL);
+  s_image_state = RES_READY;
+  lua_ui_image_process_pending();
+  assert(pending_path->object->image_src != NULL);
+  assert(pending_path->object->invalidated);
+  lua_settop(L, 0);
+
+  s_image_state = RES_LOADING;
+  (void)luaL_newmetatable(L, LUA_ASSET_HANDLE_MT);
+  lua_pop(L, 1);
+  luaopen_ui_image(L);
+  lua_newtable(L);
+  (void)lua_newuserdatauv(L, 1u, 0);
+  luaL_setmetatable(L, LUA_ASSET_HANDLE_MT);
+  lua_setfield(L, -2, "src");
+  lua_call(L, 1, 1);
+  lua_ui_handle_t* pending_handle = lua_ui_handle_test(L, -1);
+  assert(pending_handle && pending_handle->object->image_src == NULL);
+  lv_obj_delete(pending_handle->object);
+  assert(!pending_handle->alive && pending_handle->object == NULL);
+  s_image_state = RES_READY;
+  lua_ui_image_process_pending();
+  assert(s_image_release_count >= 1u);
+  lua_settop(L, 0);
+
   luaopen_ui_container(L);
   lua_newtable(L);
   s_fail_next_create = true;

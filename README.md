@@ -195,7 +195,7 @@ function final(self)
 end
 ```
 
-当前宿主仅暴露八个正式 Foundation 模块。UI 通过 owner 受控的 full userdata handle 创建和修改；资源通过 Cart INDEX/DATA 与 `resource_manager` 加载；KV 存储使用按 cart ID 隔离的 QFlash littlefs 文件；timer 仅在 app 任务安全点执行 Lua。脚本示例在 [examples/lua](examples/lua)，完整 API 文档在 [Docs/LUA_FOUNDATION_API.md](Docs/LUA_FOUNDATION_API.md)。
+当前宿主仅暴露八个正式 Foundation 模块。UI 通过 owner 受控的 full userdata handle 创建和修改；Resource Pipeline V2 由 IO task 异步读取 Cart INDEX/DATA，支持旧 BGRA8888、JPEG 和 JPEG+A8，`assets.image/data` 返回 LOADING handle，JPEG 由 STM32H743 外设解码并经 DMA2D 转成 RESOURCE_ARENA 中的 BGRA8888；KV 存储使用按 cart ID 隔离的 QFlash littlefs 文件；timer 仅在 app 任务安全点执行 Lua。脚本示例在 [examples/lua](examples/lua)，完整 API 文档在 [Docs/LUA_FOUNDATION_API.md](Docs/LUA_FOUNDATION_API.md)，资源架构见 [Docs/RESOURCE_PIPELINE_V2.md](Docs/RESOURCE_PIPELINE_V2.md)。
 
 ## 目录结构
 

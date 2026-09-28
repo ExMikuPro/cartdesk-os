@@ -1,9 +1,13 @@
 #include "resource_manager.h"
 
 #include <stddef.h>
+#include <stdio.h>
 #include <string.h>
 
+#include "FreeRTOS.h"
 #include "app_arena.h"
+#include "cart_io_service.h"
+#include "cart_jpeg_decoder.h"
 #include "main.h"
 #include "resource_arena_owner.h"
 #include "sdram_layout.h"
@@ -15,6 +19,10 @@
 
 #define RES_HANDLE_INVALID_INDEX UINT16_MAX
 #define RES_IMAGE_ALIGN 32u
+#define RES_DATA_MAX (256u * 1024u)
+#define RES_BLOB_MAX (1024u * 1024u)
+#define RES_INDEX_ENVELOPE_SIZE 12u
+#define XIMG_V1_HEADER_SIZE 24u
 
 static app_arena_t s_scene_arena;
 static res_record_t s_records[RES_MANAGER_MAX_RECORDS];
@@ -22,43 +30,42 @@ static uint16_t s_record_count;
 static bool s_initialized;
 static const char *s_last_error;
 static uint32_t s_scene_arena_peak_bytes;
+static uint32_t s_owner_id;
+static uint32_t s_owner_generation;
+static uint32_t s_session_id;
+static uint32_t s_session_generation;
+static uint32_t s_mount_request_id;
+static bool s_mount_complete;
+static bool s_mount_ready;
 
 static res_handle_t invalid_handle(void)
 {
-  res_handle_t h = { RES_HANDLE_INVALID_INDEX, 0u };
-  return h;
+  return (res_handle_t){ RES_HANDLE_INVALID_INDEX, 0u };
 }
 
-/**
- * @brief  推进资源记录generation以失效旧handle
- * @param  rec: 资源记录指针，NULL时直接返回
- * @retval None
- * @note   - generation回绕到0时会跳到1，避免生成invalid handle的generation值
- *         - 本函数只修改单条资源记录，不释放资源内存
- */
-static void bump_generation(res_record_t *rec)
+static uint16_t read_le16(const uint8_t *p)
 {
-  if (!rec) return;
-  rec->generation++;
-  if (rec->generation == 0u) rec->generation = 1u;
+  return (uint16_t)((uint16_t)p[0] | ((uint16_t)p[1] << 8));
 }
 
-/**
- * @brief  清理资源像素缓冲对应的DCache范围
- * @param  ptr: 像素缓冲起始地址
- * @param  size: 需要清理的字节数
- * @retval None
- * @note   - 维护范围会向外扩展到32字节cache line边界
- *         - 用于cart数据读入RESOURCE_ARENA后交给LVGL/DMA读取
- *         - 平台未声明DCache时为空操作
- */
+static uint32_t read_le32(const uint8_t *p)
+{
+  return (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
+         ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+
+static uint64_t read_le64(const uint8_t *p)
+{
+  return (uint64_t)read_le32(p) | ((uint64_t)read_le32(p + 4u) << 32);
+}
+
 static void clean_dcache_range(const void *ptr, uint32_t size)
 {
 #if defined(__DCACHE_PRESENT) && (__DCACHE_PRESENT == 1U)
   if (!ptr || size == 0u) return;
   uintptr_t start = (uintptr_t)ptr & ~(uintptr_t)31u;
   uintptr_t end = ((uintptr_t)ptr + size + 31u) & ~(uintptr_t)31u;
-  SCB_CleanDCache_by_Addr((uint32_t*)start, (int32_t)(end - start));
+  SCB_CleanDCache_by_Addr((uint32_t *)start, (int32_t)(end - start));
 #else
   (void)ptr;
   (void)size;
@@ -67,24 +74,32 @@ static void clean_dcache_range(const void *ptr, uint32_t size)
 
 static uint32_t arena_size_to_u32(size_t size)
 {
-  return size > (size_t)UINT32_MAX ? UINT32_MAX : (uint32_t)size;
+  return size > UINT32_MAX ? UINT32_MAX : (uint32_t)size;
 }
 
-static void res_manager_track_peak(void)
+static void track_peak(void)
 {
   uint32_t used = arena_size_to_u32(app_arena_used(&s_scene_arena));
-  if (used > s_scene_arena_peak_bytes) {
-    s_scene_arena_peak_bytes = used;
+  if (used > s_scene_arena_peak_bytes) s_scene_arena_peak_bytes = used;
+}
+
+static void bump_generation(res_record_t *record)
+{
+  if (record && ++record->generation == 0u) record->generation = 1u;
+}
+
+static void initialize_records(void)
+{
+  s_record_count = cart_index_count();
+  memset(s_records, 0, sizeof(s_records));
+  for (uint16_t i = 0u; i < s_record_count; ++i) {
+    s_records[i].meta = cart_index_get(i);
+    s_records[i].generation = 1u;
+    s_records[i].lifetime = RES_LIFE_SCENE;
+    s_records[i].state = RES_INDEXED;
   }
 }
 
-/**
- * @brief  初始化资源管理器并申请RESOURCE_ARENA所有权
- * @retval None
- * @note   - 成功时会把RESOURCE_ARENA绑定为场景arena并清空资源记录表
- *         - 失败时会清空本地状态、重置cart index并记录last_error
- *         - 本函数会修改全局资源管理器状态和RESOURCE_ARENA owner
- */
 void res_manager_init(void)
 {
   if (!resource_arena_claim(RESOURCE_ARENA_OWNER_RESOURCE_MANAGER)) {
@@ -96,307 +111,480 @@ void res_manager_init(void)
     cart_index_reset();
     return;
   }
-
-  app_arena_init(&s_scene_arena, (void*)RESOURCE_ARENA_BASE, RESOURCE_ARENA_SIZE);
+  app_arena_init(&s_scene_arena, (void *)RESOURCE_ARENA_BASE,
+                 RESOURCE_ARENA_SIZE);
   memset(s_records, 0, sizeof(s_records));
   s_record_count = 0u;
   s_initialized = true;
   s_last_error = NULL;
   s_scene_arena_peak_bytes = 0u;
+  s_owner_id = s_owner_generation = 0u;
+  s_session_id = s_session_generation = 0u;
+  s_mount_request_id = 0u;
+  s_mount_complete = true;
+  s_mount_ready = false;
   cart_index_reset();
 }
 
-/**
- * @brief  挂载cart资源索引并建立资源记录表
- * @param  cart_path: cart文件路径
- * @retval true=挂载并索引成功, false=初始化失败、索引加载失败或资源数量超限
- * @note   - 未初始化时会先调用res_manager_init
- *         - 会重置场景arena、清空旧记录并重新加载cart index
- *         - 本函数不读取资源像素数据，只记录cart资源元信息
- */
 bool res_manager_mount_cart(const char *cart_path)
 {
   if (!s_initialized) res_manager_init();
   if (!s_initialized) return false;
   app_arena_reset(&s_scene_arena);
-  memset(s_records, 0, sizeof(s_records));
-  s_record_count = 0u;
-  s_scene_arena_peak_bytes = 0u;
-
   if (!cart_index_load(cart_path)) {
     s_last_error = cart_index_last_error();
     return false;
   }
-
-  s_record_count = cart_index_count();
-  if (s_record_count > RES_MANAGER_MAX_RECORDS) {
-    s_last_error = "too many cart resources";
-    return false;
-  }
-
-  for (uint16_t i = 0; i < s_record_count; ++i) {
-    s_records[i].meta = cart_index_get(i);
-    s_records[i].generation = 1u;
-    s_records[i].lifetime = RES_LIFE_SCENE;
-    s_records[i].state = RES_INDEXED;
-  }
-
+  initialize_records();
+  s_mount_complete = s_mount_ready = true;
   s_last_error = NULL;
   return true;
+}
+
+bool res_manager_mount_cart_async(const char *cart_path,
+                                  uint32_t owner_id,
+                                  uint32_t owner_generation)
+{
+  cart_io_request_t request = {0};
+  if (!s_initialized) res_manager_init();
+  if (!s_initialized || !cart_path || cart_path[0] == '\0' ||
+      owner_id == 0u || owner_generation == 0u || strlen(cart_path) >= 64u) {
+    s_last_error = "invalid async resource session";
+    return false;
+  }
+  app_arena_reset(&s_scene_arena);
+  memset(s_records, 0, sizeof(s_records));
+  s_record_count = 0u;
+  cart_index_reset();
+  s_owner_id = owner_id;
+  s_owner_generation = owner_generation;
+  s_session_id = CartIoService_NextRequestId();
+  if (++s_session_generation == 0u) s_session_generation = 1u;
+  s_mount_request_id = CartIoService_NextRequestId();
+  s_mount_complete = false;
+  s_mount_ready = false;
+  request.request_id = s_mount_request_id;
+  request.owner_id = owner_id;
+  request.operation = CART_IO_OP_RESOURCE_SESSION_OPEN;
+  request.params.resource_open.session_id = s_session_id;
+  request.params.resource_open.generation = s_session_generation;
+  (void)snprintf(request.params.resource_open.path,
+                 sizeof(request.params.resource_open.path), "%s", cart_path);
+  if (!CartIoService_Submit(&request, CART_IO_TIMEOUT_CART_HEADER_MS)) {
+    s_mount_complete = true;
+    s_last_error = "resource session queue is full";
+    return false;
+  }
+  s_last_error = NULL;
+  return true;
+}
+
+bool res_manager_mount_complete(void) { return s_mount_complete; }
+bool res_manager_mount_ready(void) { return s_mount_ready; }
+
+static bool submit_index_read(void)
+{
+  cart_io_request_t request = {0};
+  s_mount_request_id = CartIoService_NextRequestId();
+  request.request_id = s_mount_request_id;
+  request.owner_id = s_owner_id;
+  request.operation = CART_IO_OP_RESOURCE_INDEX_READ;
+  request.params.resource_session.session_id = s_session_id;
+  request.params.resource_session.generation = s_session_generation;
+  return CartIoService_Submit(&request, CART_IO_TIMEOUT_SD_READ_MS);
 }
 
 static int find_record(const cart_res_meta_t *meta)
 {
   if (!meta) return -1;
-  for (uint16_t i = 0; i < s_record_count; ++i) {
+  for (uint16_t i = 0u; i < s_record_count; ++i)
     if (s_records[i].meta == meta) return (int)i;
-  }
   return -1;
 }
 
-/**
- * @brief  从当前cart资源索引获取或加载一张BGRA8888图片
- * @param  path: cart内资源路径
- * @param  life: 资源生命周期标记
- * @return 有效handle=获取成功, invalid handle=失败
- * @note   - 未初始化时会先调用res_manager_init
- *         - 首次加载会从RESOURCE_ARENA分配像素缓冲并读取cart数据
- *         - 读取成功后会清理像素缓冲对应DCache，供DMA/LVGL读取
- *         - 已加载资源会增加refcount并复用原像素缓冲
- */
-res_handle_t res_acquire_image(const char *path, res_lifetime_t life)
+static const char *io_error(cart_io_status_t status)
+{
+  switch (status) {
+    case CART_IO_STATUS_TIMEOUT: return "resource read timed out";
+    case CART_IO_STATUS_NO_MEMORY: return "resource I/O memory exhausted";
+    case CART_IO_STATUS_CORRUPT: return "resource CRC or format is corrupt";
+    case CART_IO_STATUS_CANCELLED: return "resource request cancelled";
+    case CART_IO_STATUS_NOT_FOUND: return "resource not found";
+    default: return "resource I/O failed";
+  }
+}
+
+static bool submit_blob(res_record_t *record)
+{
+  cart_io_request_t request = {0};
+  void *buffer;
+  if (!record || !record->meta || record->meta->size == 0u ||
+      record->meta->size > RES_BLOB_MAX) {
+    record->error = "resource blob exceeds 1 MiB staging limit";
+    return false;
+  }
+  buffer = pvPortMalloc(record->meta->size);
+  if (!buffer) {
+    record->error = "resource staging allocation failed";
+    return false;
+  }
+  record->request_id = CartIoService_NextRequestId();
+  request.request_id = record->request_id;
+  request.owner_id = s_owner_id;
+  request.operation = CART_IO_OP_RESOURCE_BLOB_READ;
+  request.params.resource_read.session_id = s_session_id;
+  request.params.resource_read.generation = s_session_generation;
+  request.params.resource_read.data_offset = record->meta->data_off;
+  request.params.resource_read.data_size = record->meta->size;
+  request.params.resource_read.expected_crc32 = record->meta->crc32;
+  request.params.resource_read.output = (cart_task_buffer_t) {
+    .data = buffer, .capacity = record->meta->size, .length = 0u,
+    .owner_id = s_owner_id, .source = CART_BUFFER_SOURCE_RTOS_HEAP,
+  };
+  if (!CartIoService_Submit(&request, CART_IO_TIMEOUT_SD_READ_MS)) {
+    CartTaskBuffer_Release(&request.params.resource_read.output);
+    record->error = "resource request queue is full";
+    return false;
+  }
+  return true;
+}
+
+static res_handle_t acquire(const char *path, res_lifetime_t life,
+                            res_kind_t kind)
 {
   const cart_res_meta_t *meta;
   int index;
-  res_record_t *rec;
-  app_arena_mark_t mark;
-  void *pixels;
-
+  res_record_t *record;
   s_last_error = NULL;
-  if (!s_initialized) res_manager_init();
-  if (!s_initialized) return invalid_handle();
-  if (!cart_index_is_loaded()) {
+  if (!s_initialized || !s_mount_ready || !cart_index_is_loaded()) {
     s_last_error = "cart resource index is not active";
     return invalid_handle();
   }
-  if (!cart_path_is_valid(path)) {
-    s_last_error = "invalid cart resource path";
-    return invalid_handle();
-  }
-
-  meta = cart_index_find(path);
-  if (!meta) {
+  if (!cart_path_is_valid(path) || !(meta = cart_index_find(path))) {
     s_last_error = "resource not found";
     return invalid_handle();
   }
-  if (meta->type != XHGC_RES_IMAGE) {
-    s_last_error = "unsupported resource type";
+  if (kind == RES_KIND_IMAGE &&
+      (meta->type != XHGC_RES_IMAGE ||
+       (meta->format != XHGC_IMG_BGRA8888 && meta->format != XHGC_IMG_JPEG &&
+        meta->format != XHGC_IMG_JPEG_A8))) {
+    s_last_error = "unsupported image resource";
     return invalid_handle();
   }
-  if (meta->format != XHGC_IMG_BGRA8888) {
-    s_last_error = "unsupported image format";
+  if (kind == RES_KIND_DATA && meta->size > RES_DATA_MAX) {
+    s_last_error = "resource exceeds 256 KiB limit";
     return invalid_handle();
   }
-
   index = find_record(meta);
   if (index < 0) {
     s_last_error = "resource record not found";
     return invalid_handle();
   }
-  rec = &s_records[index];
-
-  if (rec->state == RES_READY || rec->state == RES_READY_UNUSED) {
-    if (rec->refcount == UINT16_MAX) {
-      s_last_error = "resource reference overflow";
-      return invalid_handle();
-    }
-    rec->refcount++;
-    rec->state = RES_READY;
-    rec->lifetime = life;
-    return (res_handle_t){ (uint16_t)index, rec->generation };
-  }
-
-  mark = app_arena_mark(&s_scene_arena);
-  rec->state = RES_LOADING;
-  pixels = app_arena_alloc(&s_scene_arena, meta->size, RES_IMAGE_ALIGN);
-  if (!pixels) {
-    rec->state = RES_INDEXED;
-    s_last_error = "not enough app arena memory";
+  record = &s_records[index];
+  if (record->kind != RES_KIND_NONE && record->kind != kind) {
+    s_last_error = "resource is already acquired with another handle type";
     return invalid_handle();
   }
-  if (!cart_read_data(meta->data_off, pixels, meta->size)) {
-    app_arena_reset_to(&s_scene_arena, mark);
-    memset(&rec->image, 0, sizeof(rec->image));
-    rec->refcount = 0u;
-    rec->state = RES_FAILED;
-    s_last_error = "cart read failed";
+  if (record->refcount == UINT16_MAX) {
+    s_last_error = "resource reference overflow";
     return invalid_handle();
   }
-
-  clean_dcache_range(pixels, meta->size);
-  rec->image.pixels = pixels;
-  rec->image.size = meta->size;
-  rec->image.width = meta->width;
-  rec->image.height = meta->height;
-  rec->image.format = meta->format;
-  rec->image.crc32 = meta->crc32;
-  rec->refcount = 1u;
-  rec->lifetime = life;
-  rec->state = RES_READY;
-  res_manager_track_peak();
-  return (res_handle_t){ (uint16_t)index, rec->generation };
+  ++record->refcount;
+  record->kind = kind;
+  record->lifetime = life;
+  if (record->state == RES_READY_UNUSED) record->state = RES_READY;
+  if (record->state == RES_INDEXED) {
+    record->state = RES_LOADING;
+    record->error = NULL;
+    if (!submit_blob(record)) record->state = RES_FAILED;
+  }
+  return (res_handle_t){(uint16_t)index, record->generation};
 }
 
-/**
- * @brief  从资源场景arena分配图片视图临时缓冲
- * @param  size: 申请字节数
- * @param  align: 对齐字节数，按app_arena_alloc规则校验
- * @return 非NULL=分配成功返回缓冲指针, NULL=初始化失败或空间不足
- * @note   - 未初始化时会先调用res_manager_init
- *         - 缓冲归RESOURCE_ARENA场景arena统一管理，不支持单块释放
- */
-void *res_alloc_image_view_buffer(size_t size, size_t align)
+res_handle_t res_acquire_image(const char *path, res_lifetime_t life)
 {
-  void *pixels;
+  return acquire(path, life, RES_KIND_IMAGE);
+}
 
-  s_last_error = NULL;
-  if (!s_initialized) res_manager_init();
-  if (!s_initialized) return NULL;
+res_handle_t res_acquire_data(const char *path, res_lifetime_t life)
+{
+  return acquire(path, life, RES_KIND_DATA);
+}
 
-  pixels = app_arena_alloc(&s_scene_arena, size, align);
-  if (!pixels) {
-    s_last_error = "not enough app arena memory for image view";
+static bool decode_bgra(res_record_t *record, const uint8_t *blob,
+                        uint32_t blob_size)
+{
+  uint32_t pixel_size = (uint32_t)record->meta->width *
+                        (uint32_t)record->meta->height * 4u;
+  const uint8_t *pixels = blob;
+  if (blob_size == pixel_size) {
+    /* legacy raw BGRA8888 */
+  } else if (blob_size == XIMG_V1_HEADER_SIZE + pixel_size &&
+             memcmp(blob, XHGC_XIMG_MAGIC, 4u) == 0 &&
+             read_le16(blob + 4u) == 1u &&
+             read_le16(blob + 6u) == XIMG_V1_HEADER_SIZE &&
+             read_le16(blob + 8u) == record->meta->width &&
+             read_le16(blob + 10u) == record->meta->height &&
+             blob[12u] == XHGC_IMG_BGRA8888 && blob[13u] == 4u &&
+             read_le16(blob + 14u) == 0u &&
+             read_le32(blob + 16u) == (uint32_t)record->meta->width * 4u &&
+             read_le32(blob + 20u) == pixel_size) {
+    pixels = blob + XIMG_V1_HEADER_SIZE;
   } else {
-    res_manager_track_peak();
+    record->error = "invalid BGRA8888 resource";
+    return false;
   }
-  return pixels;
-}
-
-/**
- * @brief  校验资源句柄是否仍指向可用记录
- * @param  h: 待校验资源句柄
- * @retval true=句柄对应READY或READY_UNUSED记录, false=索引越界、generation不匹配或状态不可用
- */
-bool res_handle_valid(res_handle_t h)
-{
-  if (h.index >= s_record_count) return false;
-  if (s_records[h.index].generation != h.generation) return false;
-  return s_records[h.index].state == RES_READY ||
-         s_records[h.index].state == RES_READY_UNUSED;
-}
-
-/**
- * @brief  通过资源句柄获取图片资源描述
- * @param  h: 图片资源句柄
- * @return 非NULL=有效图片资源描述指针, NULL=句柄无效
- * @note   - 返回指针归resource_manager内部记录表所有，调用方不得释放
- */
-const image_resource_t *res_get_image(res_handle_t h)
-{
-  if (!res_handle_valid(h)) return NULL;
-  return &s_records[h.index].image;
-}
-
-/**
- * @brief  释放一次图片资源引用
- * @param  h: 图片资源句柄
- * @retval None
- * @note   - 句柄无效时直接返回
- *         - refcount递减到0后资源状态变为READY_UNUSED
- *         - 本函数不立即回收RESOURCE_ARENA像素内存
- */
-void res_release(res_handle_t h)
-{
-  res_record_t *rec;
-  if (!res_handle_valid(h)) return;
-  rec = &s_records[h.index];
-  if (rec->refcount > 0u) rec->refcount--;
-  if (rec->refcount == 0u) rec->state = RES_READY_UNUSED;
-}
-
-bool res_retain(res_handle_t h)
-{
-  if (!res_handle_valid(h)) return false;
-  res_record_t *rec = &s_records[h.index];
-  if (rec->refcount == UINT16_MAX) return false;
-  ++rec->refcount;
-  rec->state = RES_READY;
+  void *output = app_arena_alloc(&s_scene_arena, pixel_size, RES_IMAGE_ALIGN);
+  if (!output) {
+    record->error = "not enough resource arena memory";
+    return false;
+  }
+  memcpy(output, pixels, pixel_size);
+  record->image = (image_resource_t) {
+    .pixels = output, .size = pixel_size,
+    .width = record->meta->width, .height = record->meta->height,
+    .format = XHGC_IMG_BGRA8888, .crc32 = record->meta->crc32,
+  };
+  clean_dcache_range(output, pixel_size);
   return true;
 }
 
-/**
- * @brief  重置场景资源并释放RESOURCE_ARENA所有权
- * @retval None
- * @note   - 会reset场景arena、清空资源记录表和cart index
- *         - 会把resource_manager初始化状态置为false
- *         - 会调用resource_arena_release释放RESOURCE_ARENA owner
- */
+static bool finish_blob(res_record_t *record, cart_task_buffer_t *buffer)
+{
+  bool ok = false;
+  if (record->kind == RES_KIND_DATA) {
+    void *bytes = app_arena_alloc(&s_scene_arena, buffer->length, 4u);
+    if (bytes) {
+      memcpy(bytes, buffer->data, buffer->length);
+      record->data.bytes = bytes;
+      record->data.size = buffer->length;
+      ok = true;
+    } else {
+      record->error = "not enough resource arena memory";
+    }
+  } else if (record->meta->format == XHGC_IMG_BGRA8888) {
+    ok = decode_bgra(record, (const uint8_t *)buffer->data, buffer->length);
+  } else {
+    uint64_t pixel_size64 = (uint64_t)record->meta->width *
+                            (uint64_t)record->meta->height * 4u;
+    uint32_t scratch_size = CartJpegDecoder_ScratchSize(
+        record->meta->width, record->meta->height);
+    app_arena_mark_t final_mark = app_arena_mark(&s_scene_arena);
+    void *pixels = pixel_size64 <= UINT32_MAX
+        ? app_arena_alloc(&s_scene_arena, (uint32_t)pixel_size64, RES_IMAGE_ALIGN)
+        : NULL;
+    app_arena_mark_t scratch_mark = app_arena_mark(&s_scene_arena);
+    void *scratch = scratch_size != 0u
+        ? app_arena_alloc(&s_scene_arena, scratch_size, RES_IMAGE_ALIGN) : NULL;
+    track_peak();
+    if (pixels && scratch && CartJpegDecoder_DecodeXimgV2(
+                      buffer->data, buffer->length, record->meta->format,
+                      record->meta->width, record->meta->height,
+                      pixels, (uint32_t)pixel_size64, scratch, scratch_size,
+                      &record->error)) {
+      app_arena_reset_to(&s_scene_arena, scratch_mark);
+      record->image = (image_resource_t) {
+        .pixels = pixels, .size = (uint32_t)pixel_size64,
+        .width = record->meta->width, .height = record->meta->height,
+        .format = XHGC_IMG_BGRA8888, .crc32 = record->meta->crc32,
+      };
+      clean_dcache_range(pixels, (uint32_t)pixel_size64);
+      ok = true;
+    } else {
+      app_arena_reset_to(&s_scene_arena, final_mark);
+    }
+    if (!pixels || !scratch) {
+      record->error = "not enough resource arena memory";
+    }
+  }
+  CartTaskBuffer_Release(buffer);
+  record->state = ok ? RES_READY : RES_FAILED;
+  if (ok) {
+    record->error = NULL;
+    track_peak();
+  }
+  return ok;
+}
+
+bool res_manager_handle_io_completion(const cart_io_completion_t *completion)
+{
+  if (!completion) return false;
+  if (completion->operation == CART_IO_OP_RESOURCE_SESSION_OPEN &&
+      completion->request_id == s_mount_request_id) {
+    if (completion->owner_id != s_owner_id ||
+        completion->status != CART_IO_STATUS_OK || !submit_index_read()) {
+      s_mount_complete = true;
+      s_mount_ready = false;
+      s_last_error = io_error(completion->status);
+    }
+    return true;
+  }
+  if (completion->operation == CART_IO_OP_RESOURCE_INDEX_READ &&
+      completion->request_id == s_mount_request_id) {
+    cart_task_buffer_t buffer = completion->result.buffer;
+    bool parsed = false;
+    if (completion->owner_id == s_owner_id &&
+        s_owner_generation != 0u &&
+        completion->status == CART_IO_STATUS_OK &&
+        buffer.data && buffer.length >= RES_INDEX_ENVELOPE_SIZE) {
+      const uint8_t *bytes = (const uint8_t *)buffer.data;
+      parsed = cart_index_parse(bytes + RES_INDEX_ENVELOPE_SIZE,
+                                buffer.length - RES_INDEX_ENVELOPE_SIZE,
+                                read_le64(bytes), read_le32(bytes + 8u));
+      if (parsed) initialize_records();
+    }
+    CartTaskBuffer_Release(&buffer);
+    s_mount_complete = true;
+    s_mount_ready = parsed;
+    s_last_error = parsed ? NULL : (completion->status == CART_IO_STATUS_OK
+        ? cart_index_last_error() : io_error(completion->status));
+    return true;
+  }
+  if (completion->operation == CART_IO_OP_RESOURCE_BLOB_READ) {
+    cart_task_buffer_t buffer = completion->result.buffer;
+    for (uint16_t i = 0u; i < s_record_count; ++i) {
+      res_record_t *record = &s_records[i];
+      if (record->request_id != completion->request_id) continue;
+      record->request_id = 0u;
+      if (completion->owner_id != s_owner_id ||
+          record->state != RES_LOADING ||
+          completion->status != CART_IO_STATUS_OK) {
+        CartTaskBuffer_Release(&buffer);
+        record->state = RES_FAILED;
+        record->error = io_error(completion->status);
+      } else {
+        (void)finish_blob(record, &buffer);
+      }
+      return true;
+    }
+    CartTaskBuffer_Release(&buffer);
+    return true;
+  }
+  return completion->operation == CART_IO_OP_RESOURCE_SESSION_CLOSE;
+}
+
+void *res_alloc_image_view_buffer(size_t size, size_t align)
+{
+  void *pixels = app_arena_alloc(&s_scene_arena, size, align);
+  if (!pixels) s_last_error = "not enough app arena memory for image view";
+  else track_peak();
+  return pixels;
+}
+
+bool res_handle_valid(res_handle_t handle)
+{
+  if (handle.index >= s_record_count ||
+      s_records[handle.index].generation != handle.generation) return false;
+  return s_records[handle.index].state != RES_INDEXED;
+}
+
+res_state_t res_handle_state(res_handle_t handle)
+{
+  return res_handle_valid(handle) ? s_records[handle.index].state : RES_FAILED;
+}
+
+const char *res_handle_error(res_handle_t handle)
+{
+  return res_handle_valid(handle) ? s_records[handle.index].error
+                                  : "invalid resource handle";
+}
+
+const image_resource_t *res_get_image(res_handle_t handle)
+{
+  if (!res_handle_valid(handle) ||
+      (s_records[handle.index].state != RES_READY &&
+       s_records[handle.index].state != RES_READY_UNUSED) ||
+      s_records[handle.index].kind != RES_KIND_IMAGE) return NULL;
+  return &s_records[handle.index].image;
+}
+
+const data_resource_t *res_get_data(res_handle_t handle)
+{
+  if (!res_handle_valid(handle) ||
+      (s_records[handle.index].state != RES_READY &&
+       s_records[handle.index].state != RES_READY_UNUSED) ||
+      s_records[handle.index].kind != RES_KIND_DATA) return NULL;
+  return &s_records[handle.index].data;
+}
+
+bool res_get_image_dimensions(res_handle_t handle, uint16_t *width,
+                              uint16_t *height)
+{
+  if (!width || !height || !res_handle_valid(handle) ||
+      s_records[handle.index].kind != RES_KIND_IMAGE ||
+      !s_records[handle.index].meta) return false;
+  *width = s_records[handle.index].meta->width;
+  *height = s_records[handle.index].meta->height;
+  return *width != 0u && *height != 0u;
+}
+
+uint32_t res_get_storage_size(res_handle_t handle)
+{
+  return res_handle_valid(handle) && s_records[handle.index].meta
+      ? s_records[handle.index].meta->size : 0u;
+}
+
+void res_release(res_handle_t handle)
+{
+  if (!res_handle_valid(handle)) return;
+  res_record_t *record = &s_records[handle.index];
+  if (record->refcount > 0u) --record->refcount;
+  if (record->refcount == 0u && record->state == RES_READY)
+    record->state = RES_READY_UNUSED;
+}
+
+bool res_retain(res_handle_t handle)
+{
+  if (!res_handle_valid(handle)) return false;
+  res_record_t *record = &s_records[handle.index];
+  if (record->refcount == UINT16_MAX) return false;
+  ++record->refcount;
+  if (record->state == RES_READY_UNUSED) record->state = RES_READY;
+  return true;
+}
+
 void res_scene_reset(void)
 {
   if (!s_initialized) return;
-  app_arena_reset(&s_scene_arena);
-  for (uint16_t i = 0; i < s_record_count; ++i) {
-    res_record_t *rec = &s_records[i];
-    if (rec->lifetime != RES_LIFE_SCENE) continue;
-    memset(&rec->image, 0, sizeof(rec->image));
-    rec->refcount = 0u;
-    rec->lifetime = RES_LIFE_SCENE;
-    rec->state = rec->meta ? RES_INDEXED : RES_FAILED;
-    bump_generation(rec);
+  if (s_session_id != 0u) {
+    cart_io_request_t close = {0};
+    close.request_id = CartIoService_NextRequestId();
+    close.owner_id = 0u;
+    close.operation = CART_IO_OP_RESOURCE_SESSION_CLOSE;
+    close.params.resource_session.session_id = s_session_id;
+    close.params.resource_session.generation = s_session_generation;
+    (void)CartIoService_Submit(&close, CART_IO_TIMEOUT_CART_HEADER_MS);
   }
+  if (s_owner_id != 0u) (void)CartIoService_CancelOwner(s_owner_id);
+  app_arena_reset(&s_scene_arena);
+  for (uint16_t i = 0u; i < s_record_count; ++i) bump_generation(&s_records[i]);
   memset(&s_scene_arena, 0, sizeof(s_scene_arena));
   memset(s_records, 0, sizeof(s_records));
   s_record_count = 0u;
   s_initialized = false;
   s_last_error = NULL;
   s_scene_arena_peak_bytes = 0u;
+  s_owner_id = s_owner_generation = 0u;
+  s_session_id = s_session_generation = 0u;
+  s_mount_request_id = 0u;
+  s_mount_complete = true;
+  s_mount_ready = false;
   cart_index_reset();
   (void)resource_arena_release(RESOURCE_ARENA_OWNER_RESOURCE_MANAGER);
 }
 
-/**
- * @brief  获取资源管理器最后一次错误描述
- * @return 非NULL=错误描述字符串, NULL=当前无错误
- */
-const char *res_last_error(void)
-{
-  return s_last_error;
-}
-
-uint32_t res_manager_used_bytes(void)
-{
-  return arena_size_to_u32(app_arena_used(&s_scene_arena));
-}
-
-uint32_t res_manager_peak_bytes(void)
-{
-  return s_scene_arena_peak_bytes;
-}
-
-uint32_t res_manager_capacity_bytes(void)
-{
-  return (uint32_t)RESOURCE_ARENA_SIZE;
-}
+const char *res_last_error(void) { return s_last_error; }
+uint32_t res_manager_used_bytes(void) { return arena_size_to_u32(app_arena_used(&s_scene_arena)); }
+uint32_t res_manager_peak_bytes(void) { return s_scene_arena_peak_bytes; }
+uint32_t res_manager_capacity_bytes(void) { return (uint32_t)RESOURCE_ARENA_SIZE; }
+uint32_t res_manager_indexed_count(void) { return s_record_count; }
+uint32_t res_manager_refcount_anomaly_count(void) { return 0u; }
 
 uint32_t res_manager_alive_count(void)
 {
   uint32_t count = 0u;
-
-  for (uint16_t i = 0; i < s_record_count; ++i) {
-    if (s_records[i].state == RES_READY || s_records[i].state == RES_READY_UNUSED) {
-      ++count;
-    }
-  }
+  for (uint16_t i = 0u; i < s_record_count; ++i)
+    if (s_records[i].state == RES_READY ||
+        s_records[i].state == RES_READY_UNUSED) ++count;
   return count;
-}
-
-uint32_t res_manager_indexed_count(void)
-{
-  return (uint32_t)s_record_count;
-}
-
-uint32_t res_manager_refcount_anomaly_count(void)
-{
-  /* currently unavailable: resource manager does not classify refcount anomalies yet. */
-  return 0u;
 }

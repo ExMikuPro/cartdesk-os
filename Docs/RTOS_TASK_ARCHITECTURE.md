@@ -137,8 +137,9 @@ load；`lua_rt_start_runtime()` 不再立即调用 `init(self)`，而是等
 littlefs。`LauncherStore_Get()` 只复制 io 初始化时载入的 RAM 索引，允许 app 调用。
 
 尚存例外：`Core/Src/lua_vm.c` 的 Cart ENTRY 加载、`Core/Cart/cart_index.c` 和
-`Core/LuaPort/resource_manager.c` 的运行期资源读取仍在 app。它们需要先完成大资源
-异步接口，当前没有冒险把 Lua loader 或 resource manager 移到 worker。
+Cart resource INDEX 和 DATA blob 的 FatFs 读取已迁入 io task。app 只解析 completion
+中的 INDEX bytes，并在安全点执行 resource 状态切换、JPEG/DMA2D、Lua handle 和 LVGL
+descriptor 更新。Cart ENTRY bytecode loader 仍是 app-side blocking path。
 
 ## QFlash 访问规则
 
@@ -183,8 +184,8 @@ stale completion、最大队列深度、最近/最大耗时和栈高水位。app
 
 ## 后续扩展
 
-- 将 Cart ENTRY bytecode、INDEX/DATA、`assets.data()`、`assets.image()` 和正式
-  `resource_manager` 数据读取接入 io completion；LVGL descriptor 和 Lua userdata 仍回 app 创建。
+- 后续可单独将 Cart ENTRY bytecode loader 接入 io completion；本轮 INDEX/DATA、
+  `assets.data()`、`assets.image()` 已完成异步化，LVGL descriptor 和 Lua userdata 保持 app-owned。
 - 为 running request 增加后端可中断取消点；当前取消保证内存安全，但不能中断已进入的 FatFs 调用。
 - 用板级数据验证 QFlash 静默窗口、四任务高水位、FreeRTOS heap 低水位和队列峰值。
 - 将 USB CDC 作为 background logger 的可选第二 transport；不新增 USB 日志 task。

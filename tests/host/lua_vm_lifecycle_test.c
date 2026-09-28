@@ -185,6 +185,14 @@ bool res_manager_mount_cart(const char* path) {
   (void)path;
   return false;
 }
+bool res_manager_mount_cart_async(const char* path, uint32_t owner_id,
+                                  uint32_t owner_generation) {
+  (void)path;
+  (void)owner_id;
+  (void)owner_generation;
+  return true;
+}
+bool res_manager_mount_complete(void) { return true; }
 void res_scene_reset(void) {}
 const char* res_last_error(void) { return "not used by lifecycle test"; }
 

@@ -34,6 +34,10 @@ typedef enum {
     CART_IO_OP_STORAGE_LOAD,
     CART_IO_OP_STORAGE_COMMIT,
     CART_IO_OP_STORAGE_CLEAR,
+    CART_IO_OP_RESOURCE_SESSION_OPEN,
+    CART_IO_OP_RESOURCE_INDEX_READ,
+    CART_IO_OP_RESOURCE_BLOB_READ,
+    CART_IO_OP_RESOURCE_SESSION_CLOSE,
 } cart_io_operation_t;
 
 typedef struct {
@@ -62,6 +66,23 @@ typedef struct {
             uint16_t reserved;
             cart_task_buffer_t payload;
         } storage;
+        struct {
+            uint32_t session_id;
+            uint32_t generation;
+            char path[64];
+        } resource_open;
+        struct {
+            uint32_t session_id;
+            uint32_t generation;
+            uint32_t data_offset;
+            uint32_t data_size;
+            uint32_t expected_crc32;
+            cart_task_buffer_t output;
+        } resource_read;
+        struct {
+            uint32_t session_id;
+            uint32_t generation;
+        } resource_session;
     } params;
 } cart_io_request_t;
 

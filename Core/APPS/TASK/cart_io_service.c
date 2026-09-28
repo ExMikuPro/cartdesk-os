@@ -17,10 +17,14 @@
 #include "lfs.h"
 #include "lfs_port.h"
 #include "quadspi.h"
+#include "fatfs.h"
+#include "xhgc_cart.h"
 
 #define CART_IO_READY_FLAG 0x00000001u
 #define CART_IO_CANCELLED_OWNER_CAPACITY 32u
 #define CART_IO_QFLASH_SIZE (64u * 1024u * 1024u)
+#define CART_IO_RESOURCE_INDEX_MAX (64u * 1024u)
+#define CART_IO_RESOURCE_INDEX_ENVELOPE_SIZE 12u
 static osMessageQueueId_t s_request_queue;
 static osMessageQueueId_t s_completion_queue;
 static osEventFlagsId_t s_state_flags;
@@ -32,6 +36,12 @@ static cart_task_stats_t s_stats;
 static volatile uint32_t s_qflash_pending;
 static volatile uint32_t s_sd_pending;
 static volatile bool s_sd_exclusive;
+static XHGC_CartFatFs s_resource_cart;
+static XHGC_CartSlot s_resource_data_slot;
+static uint32_t s_resource_session_id;
+static uint32_t s_resource_generation;
+static uint32_t s_resource_owner_id;
+static bool s_resource_session_open;
 
 static bool operation_uses_qflash(cart_io_operation_t operation)
 {
@@ -47,7 +57,146 @@ static bool operation_uses_sd(cart_io_operation_t operation)
     return operation == CART_IO_OP_CRASH_LOG_APPEND ||
            operation == CART_IO_OP_CART_PROBE ||
            operation == CART_IO_OP_CART_READ_INFO ||
-           operation == CART_IO_OP_CART_READ_RESOURCE;
+           operation == CART_IO_OP_CART_READ_RESOURCE ||
+           operation == CART_IO_OP_RESOURCE_SESSION_OPEN ||
+           operation == CART_IO_OP_RESOURCE_INDEX_READ ||
+           operation == CART_IO_OP_RESOURCE_BLOB_READ ||
+           operation == CART_IO_OP_RESOURCE_SESSION_CLOSE;
+}
+
+static void write_le32(uint8_t *p, uint32_t value)
+{
+    p[0] = (uint8_t)value;
+    p[1] = (uint8_t)(value >> 8);
+    p[2] = (uint8_t)(value >> 16);
+    p[3] = (uint8_t)(value >> 24);
+}
+
+static void write_le64(uint8_t *p, uint64_t value)
+{
+    write_le32(p, (uint32_t)value);
+    write_le32(p + 4u, (uint32_t)(value >> 32));
+}
+
+static void resource_session_close(void)
+{
+    if (s_resource_session_open) xhgc_cart_close_fatfs(&s_resource_cart);
+    memset(&s_resource_cart, 0, sizeof(s_resource_cart));
+    memset(&s_resource_data_slot, 0, sizeof(s_resource_data_slot));
+    s_resource_session_id = 0u;
+    s_resource_generation = 0u;
+    s_resource_owner_id = 0u;
+    s_resource_session_open = false;
+}
+
+static bool resource_session_matches(uint32_t session_id, uint32_t generation)
+{
+    return s_resource_session_open && session_id != 0u &&
+           s_resource_session_id == session_id &&
+           s_resource_generation == generation;
+}
+
+static cart_io_status_t resource_session_open_request(
+    const cart_io_request_t *request)
+{
+    const char *path = request->params.resource_open.path;
+    XHGC_CartSlot data_slot;
+    if (path[0] == '\0' ||
+        request->params.resource_open.session_id == 0u ||
+        request->params.resource_open.generation == 0u) {
+        return CART_IO_STATUS_INVALID_ARGUMENT;
+    }
+    resource_session_close();
+    if (SD_FATFS_Mount() != FR_OK ||
+        xhgc_cart_open_fatfs(&s_resource_cart, path) != XHGC_CART_OK ||
+        xhgc_cart_get_slot(&s_resource_cart.cart, XHGC_CART_SLOT_DATA,
+                           &data_slot) != XHGC_CART_OK) {
+        resource_session_close();
+        return CART_IO_STATUS_IO_ERROR;
+    }
+    s_resource_data_slot = data_slot;
+    s_resource_session_id = request->params.resource_open.session_id;
+    s_resource_generation = request->params.resource_open.generation;
+    s_resource_owner_id = request->owner_id;
+    s_resource_session_open = true;
+    return CART_IO_STATUS_OK;
+}
+
+static cart_io_status_t resource_index_read_request(
+    const cart_io_request_t *request, cart_io_completion_t *completion)
+{
+    XHGC_CartSlot index_slot;
+    uint32_t allocation_size;
+    uint8_t *bytes;
+    if (!resource_session_matches(request->params.resource_session.session_id,
+                                  request->params.resource_session.generation)) {
+        return CART_IO_STATUS_CANCELLED;
+    }
+    if (xhgc_cart_get_slot(&s_resource_cart.cart, XHGC_CART_SLOT_INDEX,
+                           &index_slot) != XHGC_CART_OK ||
+        index_slot.size == 0u || index_slot.size > CART_IO_RESOURCE_INDEX_MAX ||
+        UINT32_MAX - CART_IO_RESOURCE_INDEX_ENVELOPE_SIZE < index_slot.size) {
+        return CART_IO_STATUS_CORRUPT;
+    }
+    allocation_size = CART_IO_RESOURCE_INDEX_ENVELOPE_SIZE + index_slot.size;
+    bytes = (uint8_t *)pvPortMalloc(allocation_size);
+    if (!bytes) return CART_IO_STATUS_NO_MEMORY;
+    write_le64(bytes, s_resource_data_slot.offset);
+    write_le32(bytes + 8u, s_resource_data_slot.size);
+    if (s_resource_cart.cart.read(s_resource_cart.cart.reader_ctx,
+                                  index_slot.offset,
+                                  bytes + CART_IO_RESOURCE_INDEX_ENVELOPE_SIZE,
+                                  index_slot.size) != 0) {
+        vPortFree(bytes);
+        return CART_IO_STATUS_IO_ERROR;
+    }
+    if (CRC32_IEEE_Calculate(bytes + CART_IO_RESOURCE_INDEX_ENVELOPE_SIZE,
+                             index_slot.size) != index_slot.crc32) {
+        vPortFree(bytes);
+        return CART_IO_STATUS_CORRUPT;
+    }
+    completion->result.buffer = (cart_task_buffer_t) {
+        .data = bytes,
+        .capacity = allocation_size,
+        .length = allocation_size,
+        .owner_id = request->owner_id,
+        .source = CART_BUFFER_SOURCE_RTOS_HEAP,
+    };
+    return CART_IO_STATUS_OK;
+}
+
+static cart_io_status_t resource_blob_read_request(
+    const cart_io_request_t *request, cart_io_completion_t *completion)
+{
+    const cart_task_buffer_t *output = &request->params.resource_read.output;
+    uint64_t end = (uint64_t)request->params.resource_read.data_offset +
+                   request->params.resource_read.data_size;
+    uint64_t absolute = s_resource_data_slot.offset +
+                        request->params.resource_read.data_offset;
+    completion->result.buffer = *output;
+    completion->result.buffer.length = 0u;
+    if (!resource_session_matches(request->params.resource_read.session_id,
+                                  request->params.resource_read.generation)) {
+        return CART_IO_STATUS_CANCELLED;
+    }
+    if (!output->data || output->capacity < request->params.resource_read.data_size ||
+        request->params.resource_read.data_size == 0u ||
+        end > s_resource_data_slot.size || absolute < s_resource_data_slot.offset) {
+        return CART_IO_STATUS_INVALID_ARGUMENT;
+    }
+    if (s_resource_cart.cart.read(s_resource_cart.cart.reader_ctx, absolute,
+                                  output->data,
+                                  request->params.resource_read.data_size) != 0) {
+        return CART_IO_STATUS_IO_ERROR;
+    }
+    if (request->params.resource_read.expected_crc32 != 0u &&
+        CRC32_IEEE_Calculate(output->data,
+                            request->params.resource_read.data_size) !=
+            request->params.resource_read.expected_crc32) {
+        return CART_IO_STATUS_CORRUPT;
+    }
+    completion->result.buffer.length = request->params.resource_read.data_size;
+    return CART_IO_STATUS_OK;
 }
 
 static void storage_paths(uint64_t cart_id, char *dir, char *path, char *temp)
@@ -261,6 +410,23 @@ static cart_io_status_t process_request(const cart_io_request_t *request,
             return result == 0 ? CART_IO_STATUS_OK : CART_IO_STATUS_IO_ERROR;
         }
 
+        case CART_IO_OP_RESOURCE_SESSION_OPEN:
+            return resource_session_open_request(request);
+
+        case CART_IO_OP_RESOURCE_INDEX_READ:
+            return resource_index_read_request(request, completion);
+
+        case CART_IO_OP_RESOURCE_BLOB_READ:
+            return resource_blob_read_request(request, completion);
+
+        case CART_IO_OP_RESOURCE_SESSION_CLOSE:
+            if (resource_session_matches(
+                    request->params.resource_session.session_id,
+                    request->params.resource_session.generation)) {
+                resource_session_close();
+            }
+            return CART_IO_STATUS_OK;
+
         case CART_IO_OP_INITIALIZE:
         case CART_IO_OP_LAUNCHER_STORE_LOAD:
         case CART_IO_OP_NONE:
@@ -277,6 +443,7 @@ bool CartIoService_Init(void)
     s_qflash_pending = 0u;
     s_sd_pending = 0u;
     s_sd_exclusive = false;
+    resource_session_close();
     s_request_queue = osMessageQueueNew(CART_IO_REQUEST_QUEUE_DEPTH,
                                         sizeof(cart_io_request_t), NULL);
     s_completion_queue = osMessageQueueNew(CART_IO_COMPLETION_QUEUE_DEPTH,
@@ -461,10 +628,13 @@ void CartIoService_WorkerRun(void)
             request.operation == CART_IO_OP_STORAGE_COMMIT ||
             request.operation == CART_IO_OP_STORAGE_CLEAR) {
             completion.result.storage.buffer = request.params.storage.payload;
+        } else if (request.operation == CART_IO_OP_RESOURCE_BLOB_READ) {
+            completion.result.buffer = request.params.resource_read.output;
         }
         uint32_t start_cycles = DWT->CYCCNT;
         uint32_t now = osKernelGetTickCount();
-        if (owner_is_cancelled(request.owner_id)) {
+        if (owner_is_cancelled(request.owner_id) &&
+            request.operation != CART_IO_OP_RESOURCE_SESSION_CLOSE) {
             completion.status = CART_IO_STATUS_CANCELLED;
         } else if (request.timeout_ms != 0u &&
                    (uint32_t)(now - request.submitted_tick) >= request.timeout_ms) {
@@ -492,6 +662,9 @@ void CartIoService_WorkerRun(void)
                 request.operation == CART_IO_OP_STORAGE_COMMIT ||
                 request.operation == CART_IO_OP_STORAGE_CLEAR) {
                 CartTaskBuffer_Release(&completion.result.storage.buffer);
+            } else if (request.operation == CART_IO_OP_RESOURCE_INDEX_READ ||
+                       request.operation == CART_IO_OP_RESOURCE_BLOB_READ) {
+                CartTaskBuffer_Release(&completion.result.buffer);
             }
         }
         if (operation_uses_qflash(request.operation)) {

@@ -49,6 +49,7 @@ struct lua_ui_handle {
 int luaopen_ui_label(lua_State* L);
 int luaopen_ui_button(lua_State* L);
 int luaopen_ui_image(lua_State* L);
+void lua_ui_image_process_pending(void);
 int luaopen_ui_container(lua_State* L);
 int lua_ui_root(lua_State* L);
 int lua_ui_delete(lua_State* L);

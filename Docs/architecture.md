@@ -8,7 +8,7 @@
 
 程序启动路径已确认如下：
 
-1. `main()` 初始化 GPIO、MDMA、LTDC、FMC/SDRAM、USART、SDMMC/FatFs、CRC、DMA2D、QSPI、I2C、RNG、TIM 等外设，见 `Core/Src/main.c`。
+1. `main()` 初始化 GPIO、MDMA、LTDC、FMC/SDRAM、USART、SDMMC/FatFs、CRC、DMA2D、JPEG、QSPI、I2C、RNG、TIM 等外设，见 `Core/Src/main.c`。
 2. `main()` 启动 TIM17 微秒计数器，然后进入 CubeMX 生成的 `osKernelInitialize()`、`MX_FREERTOS_Init()`、`osKernelStart()`，见 `Core/Src/main.c`。
 3. `MX_FREERTOS_Init()` 按 `.ioc` 创建 `audio`、`app`、`io`、`background` 四个线程；`StartAppTask()` 初始化 USB Device 后进入用户实现 `CartdeskAppTask_Run()`，其余三个线程在尚无功能时阻塞等待事件，见 `Core/Src/freertos.c` 和 `Core/APPS/TASK/`。
 4. `CartdeskAppTask_Run()` 初始化 LVGL、显示、输入和 Launcher，随后按 5 ms 绝对周期调用 `lvgl_task_handler()`、`LuaRuntimeTask_Process()` 和 `Launcher_Task()`，见 `Core/APPS/TASK/app_task.c`。
@@ -23,7 +23,7 @@ cart/bin 包加载分为 launcher 快速读取和 runtime 入口加载两条路�
 
 - launcher 通过 `Core/Cart/cart_bin.c` 从 SD 卡 `cart.bin` 读取 Header 标题、固定偏移 `0x1000` 的 200x200 预览图，以及地址表摘要，用于卡槽展示。
 - Lua runtime 通过 `Core/Src/lua_vm.c` 打开 cart，调用 `xhgc_cart_open_fatfs()` 解析 `XHGC_PAC` Header，再优先读取 `ENTRY` slot；如果没有 `ENTRY` slot，则使用 Header 中的 `entry` 字段，必要时退回 MANF field `0x06`，再通过 INDEX/DATA 找到入口文件。
-- 资源系统通过 `Core/LuaPort/resource_manager.c` 挂载 cart index，并按需从 DATA 段读取 BGRA8888 图片到 `RESOURCE_ARENA`。
+- 资源系统通过 IO task 异步读取 cart index 和 DATA blob，app 侧的 `Core/LuaPort/resource_manager.c` 解析 INDEX，并将 BGRA8888 或硬件解码后的 JPEG/JPEG+A8 图片放入 `RESOURCE_ARENA`。
 
 Lua VM 位于 runtime 核心。`lua_rt_init_state()` 创建 `lua_State`，打开一组 Lua 标准库，绑定宿主 API，并初始化资源管理器。每个加载脚本被创建为 `lua_script_instance_t`，拥有独立 `_ENV`、带五个默认节点的 registry-owned `self`、协程 thread、UI owner 和生命周期回调引用，见 `Core/Src/lua_vm.c`。
 
@@ -102,7 +102,7 @@ flowchart TD
 | Launcher BIN Reader | 快速读取标题、预览图和 Header 概要 | `Core/Cart/cart_bin.c`、`Core/Cart/cart_bin.h` | 已确认 | 预览图从固定 `0x1000` 读取，而非通过 slot0 查找。 |
 | Resource Index | 加载 XHGCIDX2，建立路径到 DATA 偏移的元数据表 | `Core/Cart/cart_index.c`、`Core/Cart/cart_index.h` | 已确认 | 线性查找 path_hash + path 字符串。 |
 | Memory Layout / DMA_POOL | SDRAM zone table、meminfo、临时 DMA buffer allocator、cache helper | `Core/Memory/xhgc_memory_layout.c`、`xhgc_meminfo.c`、`xhgc_dcache.c`、`Core/Driver/SDRAM/sdram.c` | 已确认 | DMA_POOL 为 reset 型线性 allocator；固定 DMA target 不从 DMA_POOL 分配。 |
-| Resource Manager | 图片资源按需加载、handle/refcount、scene arena 管理 | `Core/LuaPort/resource_manager.c`、`resource_manager.h` | 已确认 | 目前 `res_acquire_image()` 只支持 BGRA8888 图片。 |
+| Resource Manager | image/data 异步加载、handle/refcount、scene arena 管理 | `Core/LuaPort/resource_manager.c`、`resource_manager.h` | 已确认 | 支持 BGRA8888、JPEG、JPEG+A8；storage format 与 READY runtime BGRA8888 分离。 |
 | Display Renderer | LVGL display port、LTDC 双缓冲、VSync flush | `Core/APPS/LVGL/port/lv_port_disp.c`、`Core/Driver/LCD/lcd.c` | 已确认 | `lv_port_disp.c` 直接设置 LTDC Layer1 地址并 VBlank reload。 |
 | Input System | GT911 触摸接入 LVGL pointer indev | `Core/APPS/LVGL/port/lv_port_indev.c`、`Core/Driver/TOUCH/*` | 已确认 | Lua 层输入主要来自 Lua UI widget 的 LVGL 事件回调。 |
 | Audio System | cart 格式预留 SOUND 资源类型 | `Core/Cart/xhgc_cart.h` | 未确认 | 未找到 Lua 音频 API、音频驱动调度或 sound resource loader。 |
@@ -131,7 +131,7 @@ runtime 路径：
 1. `xhgc_cart_open_fatfs()` 使用 FatFs 打开文件，并将 `f_read/f_lseek` 封装为 reader。
 2. `xhgc_cart_open_reader()` 读取 4096 字节 Header，校验 `XHGC_PAC` magic、version、header size、Header CRC，并解析 15 个 16 字节 slot。
 3. MANF 解析由 `xhgc_cart_manf_get_string()`、`xhgc_cart_manf_get_u64()`、`xhgc_cart_read_manf()` 完成，字段通过 field id 查找。
-4. INDEX 解析由 `cart_index_load()` 或 `xhgc_cart_find_file()` 完成。INDEX Header magic 为 `XHGCIDX2`，version 为 1，entry size 为 32。
+4. 运行期 INDEX bytes 由 IO task 读取，app 通过 `cart_index_parse()` 解析；ENTRY fallback 仍可使用 `xhgc_cart_find_file()`。INDEX Header magic 为 `XHGCIDX2`，version 为 1，entry size 为 32。
 5. DATA 资源读取由 INDEX entry 的 `data_off + size` 定位到 DATA slot 内的字节范围。
 
 ### 加载 Lua 脚本
@@ -352,7 +352,7 @@ INDEX：
 DATA：
 
 - slot5，`XHGC_CART_SLOT_DATA`。
-- DATA 本身无 framing；文件边界由 INDEX entry 的 `data_off + size` 决定。
+- DATA 文件边界由 INDEX entry 的 `data_off + size` 决定；JPEG/JPEG_A8 图片 blob 内部强制使用 XIMG v2 framing，旧 BGRA8888 仍支持 raw 或 XIMG v1。
 
 ### Lua 脚本段
 
@@ -380,7 +380,8 @@ DATA：
 - `XHGC_IMG_A8 = 3`
 - `XHGC_IMG_LVGL_BIN = 4`
 
-当前 `resource_manager` 和 `ui.image` 已确认只支持 `XHGC_RES_IMAGE` + `XHGC_IMG_BGRA8888`。
+当前 `resource_manager` 和 `ui.image` 支持 `XHGC_IMG_BGRA8888`、`XHGC_IMG_JPEG` 和
+`XHGC_IMG_JPEG_A8`。JPEG READY runtime representation 统一为 BGRA8888。
 
 ### 入口脚本
 
@@ -404,7 +405,7 @@ DATA：
 
 未确认或未实现：
 
-- `XhgcIndexEntry.crc32` 和 slot `crc32` 被解析保存，但当前读取 `xhgc_cart_read_file()`、`cart_read_data()` 时未看到对资源 blob CRC 的校验。
+- Resource Pipeline V2 的 IO worker 在 INDEX read 后验证 INDEX slot CRC，并在 blob read 后验证 INDEX entry CRC32/IEEE；旧同步 helper 仍不应作为运行期 resource path 使用。
 - 当前 DATA 压缩机制未实现。格式文档说明 `compress = "lz4"` 为后续扩展，当前 INDEX 不包含压缩元数据。
 
 ### 加载到 runtime / Lua VM 的流程
@@ -435,7 +436,7 @@ flowchart TD
 | 差异点 | 文档描述 | 当前实现 | 影响 |
 |---|---|---|---|
 | INDEX 查找方式 | 文档提到条目按字典序，可支持二分查找 | `cart_index_find()`、`xhgc_cart_find_file()` 当前线性遍历 | 性能差异；功能不冲突。 |
-| 资源 CRC | 文档定义 slot CRC、entry CRC | Header CRC 已校验；资源/slot CRC 当前未见读取时校验 | 数据损坏检测能力弱于格式可表达能力。 |
+| 资源 CRC | 文档定义 slot CRC、entry CRC | V2 IO worker 校验 INDEX slot 与 resource entry CRC；ENTRY 旧路径保持原行为 | Resource V2 与协议一致。 |
 | 预览图读取 | 格式定义 ICON slot0 | launcher `cart_bin_read_preview_from_sd()` 固定从 `0x1000` 读取 | 若未来 ICON 不在固定位置，launcher 快速预览会失效。 |
 | PC 打包器 | 文档面向 PC 打包器 | 本仓库没有完整打包器源码，仅 README 指向外部仓库 | 打包器实际行为未确认。 |
 | 压缩 | 文档说明压缩为后续扩展 | 当前 runtime 无解压路径 | DATA 必须按未压缩 blob 读取。 |
@@ -448,7 +449,7 @@ flowchart TD
 ```mermaid
 flowchart TD
     Boot["main()"]
-    InitHW["Init HAL / Clock / GPIO / LTDC / FMC / SDRAM / SDMMC / FatFs / CRC / DMA2D / Timers"]
+    InitHW["Init HAL / Clock / GPIO / LTDC / FMC / SDRAM / SDMMC / FatFs / CRC / JPEG / DMA2D / Timers"]
     Kernel["osKernelInitialize()\nosKernelStart()"]
     Task["StartAppTask()"]
     LvInit["lv_init()\nlv_port_disp_init()\nlv_port_indev_init()\nLCD_DisplayON()"]
@@ -507,7 +508,8 @@ flowchart TD
 当前 runtime 已确认使用：
 
 - script：入口 bytecode 通过 `ENTRY` slot 或 INDEX/DATA 加载。
-- image：`ui.image()` 通过 `resource_manager` 加载 BGRA8888 图片。
+- image：`ui.image()` 非阻塞绑定 `resource_manager` handle；旧 BGRA 或 JPEG/JPEG+A8 解码后的 runtime BGRA 进入 LVGL。
+- data：`assets.data()` 返回异步 handle，只有 READY 后的 `bytes()` 才从 RAM 创建 Lua string。
 
 当前未确认使用：
 
@@ -579,7 +581,7 @@ local img, err = ui.image({
 
 - Lua 是否有通用 `res`、`fs`、`audio`、`font` API。
 - font/sound 是否有 runtime loader。
-- 资源 CRC 是否会在加载时校验。
+- JPEG 4:4:4/4:2:0、A8 半透明边缘和 loading 中退出仍需目标板验证。
 
 ## 9. 模块依赖关系
 
@@ -650,15 +652,14 @@ flowchart TD
 - `ui.image()` 同步读取 SD/FatFs 和分配资源，可能阻塞 LVGL task。
 - launcher preview 读取固定偏移 `0x1000`，与通用 slot parser 存在重复路径。
 - `resource_manager` 和 `lua_cart_resource_cache` 功能相近，当前职责边界需要确认。
-- 资源 CRC 字段存在但读取路径未校验，格式能力和运行时保护不一致。
+- Cart ENTRY loader 仍在 app task 同步读取 FatFs；Resource INDEX/DATA 已迁移到 IO task。
 
 ## 10. 待确认点
 
 | 问题 | 影响 | 建议确认方式 | 相关文件 |
 |---|---|---|---|
-| 完整 PC 打包器实现不在仓库 | 无法确认 pack.json 到 cart.bin 的实际生成细节 | 查看外部 `ExMikuPro/xhgc-pack` 或引入打包器源码/版本锁定 | `README.md`、`Docs/cart/xhgc-cartbin-format-spec-v2.2.md` |
+| PC 打包器位于配套仓库 | 本仓库不能单独证明 writer 行为 | 运行 xhgc-pack 的 firmware compatibility test 与本仓库 parser | `Docs/cart/xhgc-cartbin-format-spec-v2.2.md`、`tests/xhgc_cart_host_test.c` |
 | runtime 是否支持 Lua 源码入口 | 当前 `lua_load(..., "b")` 只接受二进制 bytecode | 用源码 cart 做板级/host 测试，或确认 packer 总是输出 luac | `Core/Src/lua_vm.c`、`tools/luavm/main.c` |
-| slot CRC / resource CRC 是否应该校验 | 当前资源读取可能不检测 blob 损坏 | 增加/运行损坏资源测试，明确 CRC 策略 | `Core/Cart/xhgc_cart.c`、`Core/Cart/cart_index.c` |
 | audio/sound runtime 是否存在 | 无法说明游戏逻辑如何驱动音频 | 搜索/实现 Lua audio API、音频驱动和调度路径 | `Core/Cart/xhgc_cart.h` |
 | Lua 存档/KV storage 是否存在 | 无法说明游戏如何持久化状态 | 查找或设计 save API 与文件格式 | `Core/Src/lua_vm.c`、`Docs/display/launcher_action_hints.md` |
 | `lua_cart_resource_cache` 当前是否仍在使用 | 可能存在重复资源缓存实现 | 查调用者或编译链接符号，决定保留/删除/整合 | `Core/LuaPort/lua_cart_resource_cache.c`、`Core/LuaPort/resource_manager.c` |

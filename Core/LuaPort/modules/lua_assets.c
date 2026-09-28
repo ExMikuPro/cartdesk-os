@@ -4,12 +4,11 @@
 
 #include "cart_index.h"
 #include "lauxlib.h"
-#include "lua_execution_budget.h"
 #include "lua_foundation.h"
 #include "xhgc_cart.h"
 
 #define LUA_ASSETS_MAX_OWNERS 4u
-#define LUA_ASSETS_DATA_MAX (256u * 1024u)
+#define LUA_ASSET_TYPE_DATA UINT32_C(0xFFFFFFFF)
 
 typedef struct lua_asset_handle {
   lua_State* vm;
@@ -33,6 +32,12 @@ typedef struct {
 } lua_asset_owner_t;
 
 static lua_asset_owner_t g_owners[LUA_ASSETS_MAX_OWNERS];
+
+static int handle_ready(lua_State* L);
+static int handle_status(lua_State* L);
+static int handle_error(lua_State* L);
+static int handle_size(lua_State* L);
+static int handle_bytes(lua_State* L);
 
 static int fail(lua_State* L, const char* message) {
   lua_pushnil(L); lua_pushstring(L, message); return 2;
@@ -78,8 +83,78 @@ static void ensure_metatable(lua_State* L) {
   if (luaL_newmetatable(L, LUA_ASSET_HANDLE_MT)) {
     lua_pushcfunction(L, handle_gc); lua_setfield(L, -2, "__gc");
     lua_pushliteral(L, "CartDesk asset handle"); lua_setfield(L, -2, "__name");
+    lua_newtable(L);
+    lua_pushcfunction(L, handle_ready); lua_setfield(L, -2, "ready");
+    lua_pushcfunction(L, handle_status); lua_setfield(L, -2, "status");
+    lua_pushcfunction(L, handle_error); lua_setfield(L, -2, "error");
+    lua_pushcfunction(L, handle_size); lua_setfield(L, -2, "size");
+    lua_pushcfunction(L, handle_bytes); lua_setfield(L, -2, "bytes");
+    lua_setfield(L, -2, "__index");
   }
   lua_pop(L, 1);
+}
+
+static lua_asset_handle_t* check_handle(lua_State* L) {
+  return (lua_asset_handle_t*)luaL_checkudata(L, 1, LUA_ASSET_HANDLE_MT);
+}
+
+static int handle_ready(lua_State* L) {
+  lua_asset_handle_t* handle = check_handle(L);
+  res_state_t state = handle && handle->alive
+      ? res_handle_state(handle->resource) : RES_FAILED;
+  lua_pushboolean(L, state == RES_READY || state == RES_READY_UNUSED);
+  return 1;
+}
+
+static int handle_status(lua_State* L) {
+  lua_asset_handle_t* handle = check_handle(L);
+  const char* status = "invalid";
+  if (handle && handle->alive && res_handle_valid(handle->resource)) {
+    switch (res_handle_state(handle->resource)) {
+      case RES_LOADING: status = "loading"; break;
+      case RES_READY:
+      case RES_READY_UNUSED: status = "ready"; break;
+      case RES_FAILED: status = "failed"; break;
+      default: status = "indexed"; break;
+    }
+  }
+  lua_pushstring(L, status);
+  return 1;
+}
+
+static int handle_error(lua_State* L) {
+  lua_asset_handle_t* handle = check_handle(L);
+  const char* error = handle && handle->alive
+      ? res_handle_error(handle->resource) : "invalid asset handle";
+  if (error) lua_pushstring(L, error); else lua_pushnil(L);
+  return 1;
+}
+
+static int handle_size(lua_State* L) {
+  lua_asset_handle_t* handle = check_handle(L);
+  if (!handle || !handle->alive || !res_handle_valid(handle->resource))
+    return fail(L, "invalid asset handle");
+  const data_resource_t* data = res_get_data(handle->resource);
+  lua_pushinteger(L, data ? (lua_Integer)data->size
+                          : (lua_Integer)res_get_storage_size(handle->resource));
+  return 1;
+}
+
+static int handle_bytes(lua_State* L) {
+  lua_asset_handle_t* handle = check_handle(L);
+  if (!handle || !handle->alive || !res_handle_valid(handle->resource))
+    return fail(L, "invalid asset handle");
+  if (handle->resource_type != LUA_ASSET_TYPE_DATA)
+    return fail(L, "bytes is only available for data assets");
+  res_state_t state = res_handle_state(handle->resource);
+  if (state == RES_LOADING) return fail(L, "not ready");
+  if (state == RES_FAILED)
+    return fail(L, res_handle_error(handle->resource) ?
+                   res_handle_error(handle->resource) : "resource load failed");
+  const data_resource_t* data = res_get_data(handle->resource);
+  if (!data) return fail(L, "not ready");
+  lua_pushlstring(L, (const char*)data->bytes, data->size);
+  return 1;
 }
 
 bool lua_assets_owner_create(lua_State* L, uint32_t id, uint32_t gen) {
@@ -133,9 +208,7 @@ static int l_image(lua_State* L) {
     return fail(L, "assets.image requires an active application owner");
   lua_asset_owner_t* owner = find_owner(L, current.owner_id, current.generation);
   if (!owner) return fail(L, "asset owner is unavailable");
-  LuaExecutionBudget_PauseForBlockingCall();
   res_handle_t resource = res_acquire_image(path, RES_LIFE_SCENE);
-  LuaExecutionBudget_ResumeAfterBlockingCall();
   if (!res_handle_valid(resource))
     return fail(L, res_last_error() ? res_last_error() : "image load failed");
   ensure_metatable(L);
@@ -155,23 +228,25 @@ static int l_image(lua_State* L) {
 static int l_data(lua_State* L) {
   const char* path = NULL; const char* error = NULL;
   if (lua_gettop(L) != 1 || !read_path(L, 1, &path, &error)) return fail(L, error);
-  if (!lua_foundation_current(L, NULL))
+  lua_foundation_owner_view_t current;
+  if (!lua_foundation_current(L, &current))
     return fail(L, "assets.data requires an active application owner");
-  if (!cart_index_is_loaded()) return fail(L, "cart resource index is unavailable");
-  const cart_res_meta_t* meta = cart_index_find(path);
-  if (!meta) return fail(L, "resource not found");
-  if (meta->size > LUA_ASSETS_DATA_MAX) return fail(L, "resource exceeds 256 KiB limit");
-  int base = lua_gettop(L);
-  luaL_Buffer buffer;
-  LuaExecutionBudget_PauseForBlockingCall();
-  char* bytes = luaL_buffinitsize(L, &buffer, meta->size);
-  bool read_ok = cart_read_data(meta->data_off, bytes, meta->size);
-  if (!read_ok) {
-    LuaExecutionBudget_ResumeAfterBlockingCall();
-    lua_settop(L, base); return fail(L, "resource read failed");
-  }
-  luaL_pushresultsize(&buffer, meta->size);
-  LuaExecutionBudget_ResumeAfterBlockingCall();
+  lua_asset_owner_t* owner = find_owner(L, current.owner_id, current.generation);
+  if (!owner) return fail(L, "asset owner is unavailable");
+  res_handle_t resource = res_acquire_data(path, RES_LIFE_SCENE);
+  if (!res_handle_valid(resource))
+    return fail(L, res_last_error() ? res_last_error() : "data load failed");
+  ensure_metatable(L);
+  lua_asset_handle_t* handle =
+      (lua_asset_handle_t*)lua_newuserdatauv(L, sizeof(*handle), 0);
+  memset(handle, 0, sizeof(*handle));
+  handle->vm = current.vm; handle->owner_id = current.owner_id;
+  handle->owner_generation = current.generation; handle->generation = 1u;
+  handle->resource_type = LUA_ASSET_TYPE_DATA; handle->resource = resource;
+  handle->alive = true; handle->registered = true; handle->self_ref = LUA_NOREF;
+  luaL_getmetatable(L, LUA_ASSET_HANDLE_MT); lua_setmetatable(L, -2);
+  lua_pushvalue(L, -1); handle->self_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+  handle->next = owner->handles; owner->handles = handle;
   return 1;
 }
 
@@ -194,9 +269,9 @@ bool lua_asset_image_acquire(lua_State* L, int index, res_handle_t* out_handle,
   if (handle->resource_type != XHGC_RES_IMAGE || !res_retain(handle->resource)) {
     *out_error = "asset is not an available image"; return false;
   }
-  const image_resource_t* image = res_get_image(handle->resource);
-  if (!image) { res_release(handle->resource); *out_error = "image asset is unavailable"; return false; }
-  *out_handle = handle->resource; *out_image = image; return true;
+  *out_handle = handle->resource;
+  *out_image = res_get_image(handle->resource);
+  return true;
 }
 
 int luaopen_assets(lua_State* L) {

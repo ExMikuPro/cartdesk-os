@@ -653,6 +653,13 @@ static int lua_rt_create_instance_from_loaded(lua_script_source_t source,
     if (source_path) {
         snprintf(instance->source_path, sizeof(instance->source_path), "%s", source_path);
     }
+    if (source == LUA_SCRIPT_SOURCE_CART &&
+        !res_manager_mount_cart_async(source_path, instance->owner_id,
+                                      instance->generation)) {
+        lua_rt_log("cart resource session start failed: ");
+        lua_rt_log(res_last_error() ? res_last_error() : "unknown");
+        lua_rt_log("\n");
+    }
     lua_rt_cache_callbacks(instance);
 
     ++g_instance_count;
@@ -1119,7 +1126,7 @@ static int lua_rt_load_cart_entry(lua_State *L, const char *cart_path)
  * @param  cart_path: cart 文件路径
  * @retval 0=加载并创建实例成功
  * @retval 非0=Lua state未初始化、已有生命周期协程运行、cart打开/读取/加载或实例创建失败
- * @note   成功加载脚本前会尝试挂载 cart 资源索引；资源索引失败只记录日志，不阻止脚本实例创建
+ * @note   创建 owner 后异步读取资源索引；索引失败不阻止脚本实例创建
  */
 int lua_run_cart_entry(const char *cart_path)
 {
@@ -1128,12 +1135,6 @@ int lua_run_cart_entry(const char *cart_path)
 
     int rc = lua_rt_load_cart_entry(g_L, cart_path);
     if (rc != 0) return rc;
-
-    if (!res_manager_mount_cart(cart_path)) {
-        lua_rt_log("cart resource index mount failed: ");
-        lua_rt_log(res_last_error() ? res_last_error() : "unknown");
-        lua_rt_log("\n");
-    }
 
     int create_rc =
         lua_rt_create_instance_from_loaded(LUA_SCRIPT_SOURCE_CART, cart_path);
@@ -1986,6 +1987,7 @@ void lua_update_task(void)
     lua_foundation_process(g_L, lua_foundation_platform_uptime_ms());
     if (!g_runtime_started) return;
     if (!lua_foundation_storage_ready()) return;
+    if (!res_manager_mount_complete()) return;
     if (g_entry_thread) {
         if (lua_rt_poll_entry(now) == 1) {
             return;

@@ -5,7 +5,7 @@
 
 ## 本次核对范围
 
-已核对主时钟和外设时钟、GPIO/复用、NVIC、MDMA、DMA2D、FMC SDRAM、LTDC、
+已核对主时钟和外设时钟、GPIO/复用、NVIC、MDMA、DMA2D、JPEG、FMC SDRAM、LTDC、
 QSPI、SDMMC1、RTC、I2C1/2、USART1、TIM2/3/17、CRC、RNG、USB Device、FatFs、
 FreeRTOS，以及 `Core`、`FATFS`、`USB_DEVICE` 下会二次配置 HAL 外设的项目代码。
 
@@ -31,6 +31,10 @@ FreeRTOS，以及 `Core`、`FATFS`、`USB_DEVICE` 下会二次配置 HAL 外设�
 - TIM2/TIM3 为 Prescaler 239、Period 999；TIM17 为 Prescaler 119、Period 65535。
 - QSPI ClockPrescaler 1、FlashSize 25。
 - LTDC、FMC SDRAM、MDMA、DMA2D、CRC、RNG 的实例、引脚、时钟和初始化参数与 IOC 生成结果一致。
+- Resource Pipeline V2 在 IOC 中启用 STM32H743 JPEG peripheral。CubeMX 管理
+  `Core/Src/jpeg.c`、`Core/Inc/jpeg.h`、HAL module define 和 JPEG peripheral clock；
+  XIMG 解析、decode buffer、DMA2D conversion 与 cache policy 留在独立的
+  `Core/LuaPort/cart_jpeg_decoder.c`。
 
 ## 无法安全同步到 IOC 的内容
 
@@ -65,6 +69,9 @@ FreeRTOS，以及 `Core`、`FATFS`、`USB_DEVICE` 下会二次配置 HAL 外设�
 
 ## 验证结果
 
+下述成功记录是本轮启用 JPEG 以前对既有生成保护策略的验证结果，不代表 Resource
+Pipeline V2 的 JPEG IOC 已完成重生成验证。
+
 使用 STM32CubeMX 6.18.1、工程锁定数据库 DB 6.0.170，在 `/tmp` 的完整工程副本中执行
 Generate Code，随后完成以下构建：
 
@@ -78,6 +85,17 @@ cmake --build --preset Debug-USB-SD-MSC -j 6
 两种配置均成功链接。CubeMX 日志仍会报告 USB CDC `DEVICE_SERIALx_CDC_HS` 的旧数据库
 RefParameter 警告，以及未使用外设的派生频率/第三方包警告；这些警告没有阻止代码生成，
 也未改变已启用外设的生成结果。
+
+### Resource Pipeline V2 JPEG 回归状态
+
+本轮已在两个隔离的完整工程副本中调用 STM32CubeMX 6.18.1 headless Generate Code。
+两次都在切换到锁定数据库 `DB.6.0.170` 后停在 `Begin LoadConfig()`，超过两分钟没有新的
+日志或生成输出，随后人工中止。因此，JPEG IOC 的本轮 Generate Code 回归为**未验证**；
+没有把该结果冒充成功，也没有把临时目录中的任何文件复制回源码树。
+
+当前源码树本身的 Debug、Release、SizeDebug 和 Debug-USB-SD-MSC 均已成功链接，说明手头
+配置与 CMake 接线可构建；但仍需在 CubeMX 能正常完成 LoadConfig 的环境中重新执行
+Generate Code，并再次构建 Debug 与 Debug-USB-SD-MSC，才能关闭生成防覆盖检查。
 
 ## 后续修改约束
 

@@ -348,6 +348,43 @@ Entry[1]:
 
 **文件读取流程：**
 
+**Resource Pipeline V2 图片格式枚举（兼容扩展）：**
+
+```c
+#define XHGC_IMG_NONE        0
+#define XHGC_IMG_BGRA8888    1
+#define XHGC_IMG_RGB565      2
+#define XHGC_IMG_A8          3
+#define XHGC_IMG_LVGL_BIN    4
+#define XHGC_IMG_JPEG        5
+#define XHGC_IMG_JPEG_A8     6
+```
+
+INDEX magic/version/entry size 仍分别为 `XHGCIDX2`、`1`、`32`。JPEG 元数据不占用 entry reserved 字段，而是放入 DATA 内的 XIMG v2 blob。entry 的 `size` 与 `crc32` 覆盖完整 XIMG v2 blob，`width/height` 是解码后尺寸。
+
+**XIMG v2 Header（固定 48 bytes，little-endian）：**
+
+| Offset | Size | 字段 | 本版约束 |
+|---:|---:|---|---|
+| 0 | 4 | magic | `XIMG` |
+| 4 | 2 | version | `2` |
+| 6 | 2 | header_size | `48` |
+| 8 | 2 | width | 非 0，等于 INDEX |
+| 10 | 2 | height | 非 0，等于 INDEX |
+| 12 | 1 | image_format | `5` 或 `6`，等于 INDEX |
+| 13 | 1 | flags | `0` |
+| 14 | 2 | reserved0 | `0` |
+| 16 | 4 | jpeg_offset | 固定 `48` |
+| 20 | 4 | jpeg_size | 非 0 |
+| 24 | 4 | a8_offset | JPEG 为 0；JPEG_A8 为 `align4(48+jpeg_size)` |
+| 28 | 4 | a8_size | JPEG 为 0；JPEG_A8 为 `width*height` |
+| 32 | 4 | a8_stride | JPEG 为 0；JPEG_A8 为 `width` |
+| 36 | 12 | reserved1 | 全 0 |
+
+blob 为 `[48B header][JPEG][0..3B zero padding][raw A8]`。JPEG 不允许尾随字节；JPEG_A8 的 A8 plane 必须结束于 blob 末尾。所有 offset/size 都必须做溢出安全的范围校验，JPEG 与 A8 不得重叠。A8 为 row-major、1 byte/pixel、straight alpha；JPEG 保存未 premultiply 的 straight RGB。CRC32/IEEE 对完整存储 blob 计算，不对解码像素计算。解析端不得把文件内容直接 cast 为 packed C struct。
+
+
+
 ```
 1. 读 slot4(INDEX) → 得到 INDEX 段偏移
 2. 遍历/二分查找 Entry，用 path_hash 和 string table 匹配目标路径

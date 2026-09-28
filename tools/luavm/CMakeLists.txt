@@ -65,8 +65,12 @@ add_executable(lua_ui_owner_test
         ${CMAKE_CURRENT_LIST_DIR}/../../Core/LuaPort/modules/lua_ui_label.c
         ${CMAKE_CURRENT_LIST_DIR}/../../Core/LuaPort/modules/lua_ui_button.c
         ${CMAKE_CURRENT_LIST_DIR}/../../Core/LuaPort/modules/lua_ui_container.c
+        ${CMAKE_CURRENT_LIST_DIR}/../../Core/LuaPort/modules/lua_ui_image.c
         ${LUAVM_LUA_SOURCES}
 )
+target_compile_definitions(lua_ui_owner_test PRIVATE
+        XHGC_CART_NO_FATFS=1
+        XHGC_CART_NO_FLASH=1)
 
 add_executable(lua_crc_test
         ${CMAKE_CURRENT_LIST_DIR}/../../tests/host/lua_crc_test.c
@@ -119,6 +123,9 @@ add_executable(lua_runtime_task_test
 target_include_directories(lua_runtime_task_test PRIVATE
         ${CMAKE_CURRENT_LIST_DIR}/../../Core/APPS/TASK
         ${CMAKE_CURRENT_LIST_DIR}/../../Core/LuaPort
+        ${CMAKE_CURRENT_LIST_DIR}/../../Core/LuaPort/modules
+        ${CMAKE_CURRENT_LIST_DIR}/../../Core/APPS/TASK
+        ${CMAKE_CURRENT_LIST_DIR}/../../Core/Cart
         ${CMAKE_CURRENT_LIST_DIR}/../../Core/Inc
 )
 target_include_directories(lua_crc_test PRIVATE
@@ -185,6 +192,9 @@ target_include_directories(luavm PRIVATE
 target_include_directories(lua_ui_owner_test PRIVATE
         ${CMAKE_CURRENT_LIST_DIR}/../../tests/host/include
         ${CMAKE_CURRENT_LIST_DIR}/../../Core/LuaPort
+        ${CMAKE_CURRENT_LIST_DIR}/../../Core/LuaPort/modules
+        ${CMAKE_CURRENT_LIST_DIR}/../../Core/APPS/TASK
+        ${CMAKE_CURRENT_LIST_DIR}/../../Core/Cart
         ${CMAKE_CURRENT_LIST_DIR}/../../Core/Inc
         ${LUA_SRC_DIR}
 )

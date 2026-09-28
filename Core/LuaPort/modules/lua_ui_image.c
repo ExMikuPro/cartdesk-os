@@ -11,7 +11,7 @@
 
 #define UI_IMAGE_VIEW_ALIGN 32u
 
-typedef struct {
+typedef struct lua_ui_image {
   lua_ui_handle_t handle;
   lv_image_dsc_t descriptor;
   uint8_t* source_data;
@@ -31,6 +31,8 @@ typedef struct {
   bool flip_x;
   bool flip_y;
   bool has_resource;
+  bool pending_linked;
+  struct lua_ui_image* pending_next;
 } lua_ui_image_t;
 
 typedef struct {
@@ -53,6 +55,29 @@ static const char* const k_patch_properties[] = {
 static const char* const k_style_properties[] = {
     "alpha", "tint", "flip_x", "flip_y",
 };
+
+static lua_ui_image_t* s_pending_images;
+
+static void pending_remove(lua_ui_image_t* image) {
+  if (!image || !image->pending_linked) return;
+  lua_ui_image_t** cursor = &s_pending_images;
+  while (*cursor) {
+    if (*cursor == image) {
+      *cursor = image->pending_next;
+      break;
+    }
+    cursor = &(*cursor)->pending_next;
+  }
+  image->pending_linked = false;
+  image->pending_next = NULL;
+}
+
+static void pending_add(lua_ui_image_t* image) {
+  if (!image || image->pending_linked) return;
+  image->pending_next = s_pending_images;
+  s_pending_images = image;
+  image->pending_linked = true;
+}
 
 static void clean_dcache_range(const void* pointer, uint32_t size) {
 #if defined(__DCACHE_PRESENT) && (__DCACHE_PRESENT == 1U)
@@ -172,30 +197,32 @@ static bool load_image(const char* src,
   }
 
   loaded->resource = res_acquire_image(src, RES_LIFE_SCENE);
-  const image_resource_t* resource = res_get_image(loaded->resource);
-  if (!resource) {
+  if (!res_handle_valid(loaded->resource) ||
+      !res_get_image_dimensions(loaded->resource, &loaded->width,
+                                &loaded->height)) {
     const char* detail = res_last_error();
     (void)snprintf(error, error_size, "%s",
                    detail ? detail : "failed to load image");
     return false;
   }
+  const image_resource_t* resource = res_get_image(loaded->resource);
   lv_color_format_t ignored;
-  if (!image_format_info(resource->format, &ignored, &loaded->bpp)) {
+  loaded->format = XHGC_IMG_BGRA8888;
+  if (!image_format_info(loaded->format, &ignored, &loaded->bpp)) {
     res_release(loaded->resource);
     (void)snprintf(error, error_size, "unsupported image format");
     return false;
   }
-  if (resource->width == 0u || resource->height == 0u ||
-      (uint64_t)resource->width * resource->height * loaded->bpp > resource->size) {
+  if (resource && (resource->width == 0u || resource->height == 0u ||
+      (uint64_t)resource->width * resource->height * loaded->bpp > resource->size)) {
     res_release(loaded->resource);
     (void)snprintf(error, error_size, "invalid image resource");
     return false;
   }
-  loaded->pixels = (uint8_t*)resource->pixels;
-  loaded->size = resource->size;
-  loaded->width = resource->width;
-  loaded->height = resource->height;
-  loaded->format = resource->format;
+  if (resource) {
+    loaded->pixels = (uint8_t*)resource->pixels;
+    loaded->size = resource->size;
+  }
   return true;
 }
 
@@ -208,24 +235,30 @@ static bool load_image_handle(lua_State* L, int index, loaded_image_t* loaded,
     (void)snprintf(error, error_size, "%s", detail ? detail : "image asset failed");
     return false;
   }
+  if (!res_get_image_dimensions(loaded->resource, &loaded->width,
+                                &loaded->height)) {
+    res_release(loaded->resource);
+    (void)snprintf(error, error_size, "invalid image metadata");
+    return false;
+  }
   lv_color_format_t ignored;
-  if (!image_format_info(resource->format, &ignored, &loaded->bpp)) {
+  loaded->format = XHGC_IMG_BGRA8888;
+  if (!image_format_info(loaded->format, &ignored, &loaded->bpp)) {
     res_release(loaded->resource);
     (void)snprintf(error, error_size, "unsupported image format");
     return false;
   }
-  if (resource->width == 0u || resource->height == 0u ||
+  if (resource && (resource->width == 0u || resource->height == 0u ||
       (uint64_t)resource->width * resource->height * loaded->bpp >
-          resource->size) {
+          resource->size)) {
     res_release(loaded->resource);
     (void)snprintf(error, error_size, "invalid image asset");
     return false;
   }
-  loaded->pixels = (uint8_t*)resource->pixels;
-  loaded->size = resource->size;
-  loaded->width = resource->width;
-  loaded->height = resource->height;
-  loaded->format = resource->format;
+  if (resource) {
+    loaded->pixels = (uint8_t*)resource->pixels;
+    loaded->size = resource->size;
+  }
   return true;
 }
 
@@ -408,6 +441,7 @@ static bool apply_style(lua_State* L,
 
 static void image_cleanup(lua_ui_handle_t* handle) {
   lua_ui_image_t* image = (lua_ui_image_t*)handle;
+  pending_remove(image);
   if (image->has_resource) {
     res_release(image->resource);
     image->has_resource = false;
@@ -507,7 +541,8 @@ static bool image_apply(lua_State* L,
   }
   bool rebuild = source_changed || region_present;
   if (!apply_style(L, properties_idx, image, &rebuild, error, error_size) ||
-      (rebuild && !rebuild_view(image, error, error_size)) ||
+      (rebuild && image->source_data &&
+       !rebuild_view(image, error, error_size)) ||
       !lua_ui_apply_rect(L, properties_idx, image->handle.object,
                          0, 0,
                          creating ? image->sw : 0,
@@ -545,6 +580,13 @@ static bool image_apply(lua_State* L,
     if (image->has_resource) res_release(image->resource);
     image->resource = loaded.resource;
     image->has_resource = true;
+    if (res_handle_state(image->resource) == RES_LOADING) {
+      lv_image_set_src(image->handle.object, NULL);
+      pending_add(image);
+    } else {
+      pending_remove(image);
+      if (!image->source_data) lv_image_set_src(image->handle.object, NULL);
+    }
   }
   int32_t width = lv_obj_get_width(image->handle.object);
   int32_t height = lv_obj_get_height(image->handle.object);
@@ -553,6 +595,42 @@ static bool image_apply(lua_State* L,
                                ? LV_IMAGE_ALIGN_DEFAULT
                                : LV_IMAGE_ALIGN_STRETCH);
   return true;
+}
+
+void lua_ui_image_process_pending(void) {
+  lua_ui_image_t** cursor = &s_pending_images;
+  while (*cursor) {
+    lua_ui_image_t* image = *cursor;
+    res_state_t state = image->has_resource
+        ? res_handle_state(image->resource) : RES_FAILED;
+    if (!image->handle.alive || !image->handle.object ||
+        state == RES_FAILED) {
+      if (image->handle.object) lv_image_set_src(image->handle.object, NULL);
+      *cursor = image->pending_next;
+      image->pending_linked = false;
+      image->pending_next = NULL;
+      continue;
+    }
+    if (state == RES_READY || state == RES_READY_UNUSED) {
+      const image_resource_t* resource = res_get_image(image->resource);
+      char error[LUA_UI_ERROR_MAX];
+      if (resource) {
+        image->source_data = (uint8_t*)resource->pixels;
+        image->source_size = resource->size;
+        image->source_w = resource->width;
+        image->source_h = resource->height;
+        image->format = resource->format;
+        (void)rebuild_view(image, error, sizeof(error));
+      } else {
+        lv_image_set_src(image->handle.object, NULL);
+      }
+      *cursor = image->pending_next;
+      image->pending_linked = false;
+      image->pending_next = NULL;
+      continue;
+    }
+    cursor = &image->pending_next;
+  }
 }
 
 static int image_create(lua_State* L) {

@@ -124,6 +124,38 @@ typedef struct {
 #define XHGC_IMG_RGB565               2u
 #define XHGC_IMG_A8                   3u
 #define XHGC_IMG_LVGL_BIN             4u
+#define XHGC_IMG_JPEG                 5u
+#define XHGC_IMG_JPEG_A8              6u
+
+#define XHGC_XIMG_MAGIC               "XIMG"
+#define XHGC_XIMG_V2_VERSION          2u
+#define XHGC_XIMG_V2_HEADER_SIZE      48u
+
+/* XIMG v2 is decoded field-by-field from little-endian bytes. Never cast the
+ * on-disk header to this host structure. Frozen byte layout:
+ * 00 magic[4], 04 version:u16, 06 header_size:u16,
+ * 08 width:u16, 10 height:u16, 12 format:u8, 13 flags:u8,
+ * 14 reserved0:u16, 16 jpeg_off:u32, 20 jpeg_size:u32,
+ * 24 a8_off:u32, 28 a8_size:u32, 32 a8_stride:u32,
+ * 36 reserved1[12].
+ */
+typedef struct {
+    uint16_t width;
+    uint16_t height;
+    uint8_t format;
+    uint32_t jpeg_offset;
+    uint32_t jpeg_size;
+    uint32_t a8_offset;
+    uint32_t a8_size;
+    uint32_t a8_stride;
+} XHGC_XimgV2;
+
+int xhgc_ximg_v2_parse(const void *blob,
+                       uint32_t blob_size,
+                       uint8_t expected_format,
+                       uint16_t expected_width,
+                       uint16_t expected_height,
+                       XHGC_XimgV2 *out_image);
 
 typedef struct {
     uint32_t path_hash;

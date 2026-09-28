@@ -25,6 +25,7 @@
 #include "fatfs.h"
 #include "i2c.h"
 #include "iwdg.h"
+#include "jpeg.h"
 #include "ltdc.h"
 #include "mdma.h"
 #include "quadspi.h"
@@ -192,6 +193,7 @@ int main(void)
   MX_FATFS_Init();
   MX_CRC_Init();
   MX_DMA2D_Init();
+  MX_JPEG_Init();
   MX_QUADSPI_Init();
   MX_I2C1_Init();
   MX_RNG_Init();

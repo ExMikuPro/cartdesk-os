@@ -11,6 +11,21 @@ typedef void (*lv_event_cb_t)(lv_event_t* event);
 typedef int32_t lv_event_code_t;
 typedef uint8_t lv_opa_t;
 typedef uint32_t lv_color_t;
+typedef uint32_t lv_color_format_t;
+
+typedef struct {
+  uint32_t magic;
+  lv_color_format_t cf;
+  uint32_t w;
+  uint32_t h;
+  uint32_t stride;
+} lv_image_header_t;
+
+typedef struct {
+  lv_image_header_t header;
+  uint32_t data_size;
+  const uint8_t* data;
+} lv_image_dsc_t;
 
 #define LV_EVENT_DELETE 1
 #define LV_EVENT_CLICKED 2
@@ -25,6 +40,11 @@ typedef uint32_t lv_color_t;
 #define LV_STATE_DEFAULT 0
 #define LV_STATE_DISABLED (1u << 0)
 #define LV_STATE_CHECKED (1u << 1)
+#define LV_COLOR_FORMAT_ARGB8888 1u
+#define LV_IMAGE_HEADER_MAGIC 0x19u
+#define LV_IMAGE_ALIGN_DEFAULT 0u
+#define LV_IMAGE_ALIGN_STRETCH 1u
+#define LV_OPA_COVER 255u
 
 struct lv_event_dsc_t {
   lv_event_cb_t callback;
@@ -44,6 +64,8 @@ struct lv_obj_t {
   int32_t width;
   int32_t height;
   char text[128];
+  const void* image_src;
+  bool invalidated;
 };
 
 struct lv_event_t {
@@ -56,6 +78,7 @@ lv_obj_t* lv_screen_active(void);
 lv_obj_t* lv_obj_create(lv_obj_t* parent);
 lv_obj_t* lv_label_create(lv_obj_t* parent);
 lv_obj_t* lv_button_create(lv_obj_t* parent);
+lv_obj_t* lv_image_create(lv_obj_t* parent);
 void lv_obj_delete(lv_obj_t* object);
 void lv_obj_remove_style_all(lv_obj_t* object);
 void lv_obj_set_pos(lv_obj_t* object, int32_t x, int32_t y);
@@ -74,6 +97,18 @@ void lv_obj_set_style_opa(lv_obj_t* object, lv_opa_t opacity, int32_t selector);
 void lv_obj_add_state(lv_obj_t* object, uint32_t state);
 void lv_obj_remove_state(lv_obj_t* object, uint32_t state);
 lv_color_t lv_color_hex(uint32_t color);
+uint32_t lv_draw_buf_width_to_stride(uint32_t width, lv_color_format_t format);
+void lv_image_set_src(lv_obj_t* object, const void* source);
+void lv_image_set_inner_align(lv_obj_t* object, uint32_t align);
+int32_t lv_obj_get_width(const lv_obj_t* object);
+int32_t lv_obj_get_height(const lv_obj_t* object);
+void lv_obj_invalidate(lv_obj_t* object);
+void lv_obj_set_style_image_opa(lv_obj_t* object, lv_opa_t opacity,
+                                int32_t selector);
+void lv_obj_set_style_image_recolor(lv_obj_t* object, lv_color_t color,
+                                    int32_t selector);
+void lv_obj_set_style_image_recolor_opa(lv_obj_t* object, lv_opa_t opacity,
+                                        int32_t selector);
 lv_event_dsc_t* lv_obj_add_event_cb(lv_obj_t* object,
                                     lv_event_cb_t callback,
                                     lv_event_code_t filter,
