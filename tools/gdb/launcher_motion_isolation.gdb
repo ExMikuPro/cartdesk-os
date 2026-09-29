@@ -18,13 +18,18 @@ set print elements 8192
 set breakpoint pending on
 init-if-undefined $motion_mode = 0
 init-if-undefined $x_step = -2
-init-if-undefined $press_samples = 5
+init-if-undefined $press_samples = 400
+# $do_load = 1 : flash the ELF first (needed after a rebuild)
+# $do_load = 0 : attach to the already-flashed identical image (repeat runs)
+init-if-undefined $do_load = 1
 
 file build/Debug-LTDC-Full-Render-Audit/cartdesk-os.elf
 target extended-remote localhost:3333
 monitor reset init
 monitor halt
-load
+if $do_load == 1
+  load
+end
 monitor reset halt
 tbreak LauncherScrollCapture_IconsReady
 continue
