@@ -942,3 +942,260 @@ python3 tools/debug/compare_launcher_framebuffers.py --help
 | Release symbol audit | 见 P12 |
 | 人工手势验收 | **待人工执行**（见 P10） |
 
+---
+
+# Motion Isolation Test
+
+本轮目标不是性能，而是定位：Launcher 拖动时的视觉抖动来自
+**A. 运动算法**（速度估算 / 惯性 / 吸附 / 补间）还是 **B. 呈现节奏**（render cadence）。
+
+结论前置：**逐项可测的证据全部指向 B**。人眼 A/B 结论仍需操作者给出（见 M6）。
+
+## M1. 运动调用链（改动前的影响面分析）
+
+CodeGraph CLI 不可用，按 `AGENTS.md` 回退到符号级检索。Launcher 的**全部**运动来源：
+
+| # | 环节 | 文件 : 函数 | caller | 状态变量 |
+|---|---|---|---|---|
+| 1 | 指针读取 | `ui_screen_launcher.c` : `prv_touch_read()` | `prv_scroll_tick()` | `s_touch_indev` |
+| 2 | 每帧驱动 | `ui_screen_launcher.c` : `prv_scroll_tick()` | `Launcher_Task()` | — |
+| 3 | 位置落地 | `ui_screen_launcher.c` : `prv_apply_scroll_position_cb()` | 控制器回调 | `s_logical_scroll_x`、`s_slot_base_x[]` |
+| 4 | 手势状态机 | `launcher_scroll.c` : `launcher_scroll_tick()` | `prv_scroll_tick()` | `state`、`prev_point_x`、`drag_scroll_sum` |
+| 5 | 拖动位移 | `launcher_scroll.c` : `prv_move()` | `launcher_scroll_tick()` | `prev_point_x` |
+| 6 | 速度采样 | `launcher_scroll.c` : `prv_vel_sample()` | `prv_move()` | `vel_hist[]`、`vel_hist_index` |
+| 7 | 速度估算 | `launcher_scroll.c` : `prv_vel_total()` | `prv_release()`、`launcher_scroll_estimate_throw()` | — |
+| 8 | 衰减核 | `launcher_scroll.c` : `prv_throw_decay()` + `s_throw_decay_table[256]` | `prv_vel_total()`、`prv_inertia_step()` | `s_throw_decay_table_ready` |
+| 9 | throw 计算 + 上限 | `launcher_scroll.c` : `prv_vel_total()` | `prv_release()` | `throw_vect` |
+| 10 | 松手 | `launcher_scroll.c` : `prv_release()` | `launcher_scroll_tick()` | `state`、`throw_vect` |
+| 11 | 惯性积分 | `launcher_scroll.c` : `prv_inertia_step()` | `launcher_scroll_tick()` | `throw_vect`、`drag_last_ms` |
+| 12 | 吸附动画 | `launcher_scroll.c` : `prv_snap_begin()` / `prv_snap_step()` | `prv_inertia_step()` | `snap_from/snap_to/snap_start_ms` |
+| 13 | 弹性边界 | `launcher_scroll.c` : `prv_bound_delta()` | `prv_move()`、`prv_inertia_step()`、`prv_release()` | — |
+
+关键事实：**Launcher 中不存在任何 `lv_anim_*`、`lv_timer_create()` 或
+`lv_obj_scroll_to_x()` 驱动的位移动画**（Phase 6 已移除最后一个 `lv_anim` 块；
+剩下 3 处 `lv_obj_scroll_to_x()` 全部在 `CARTDESK_LTDC_SYNC_TRACE_ENABLE` 的
+基线分支里）。因此「自动运动」= 上表 6–13 项，全部位于 `launcher_scroll.c`。
+
+## M2. Debug-only 运动模式
+
+```c
+/* launcher_scroll.h */
+typedef enum {
+    LAUNCHER_MOTION_MODE_CURRENT = 0,           /* 生产：速度 + 惯性 + 吸附 */
+    LAUNCHER_MOTION_MODE_DIRECT_DRAG_ONLY = 1,  /* 只保留 pointer 1:1 */
+} launcher_motion_mode_t;
+void launcher_scroll_set_motion_mode(uint32_t mode);
+```
+
+`ui_screen_launcher.c` 的 mailbox（仅 trace/audit 构建编译）：
+
+```c
+volatile uint32_t g_launcher_motion_mode = LAUNCHER_MOTION_MODE_CURRENT;
+volatile uint32_t g_launcher_motion_mode_applied;
+```
+
+`launcher_scroll_tick()` 在 MODE 1 下**整体绕过**上表 6–13 项：
+
+```c
+if(prv_direct_drag_active()) {
+    prv_direct_drag_tick(scroll, pressed, point_x);   /* 只做 1:1 映射 */
+    ...
+    return;
+}
+```
+
+并在 `prv_apply()` 加了纵深防御：MODE 1 且状态非 DRAGGING 时**拒绝任何位置写入**，
+因此不可能出现自发运动：
+
+```c
+if(prv_direct_drag_active() && scroll->state != LAUNCHER_SCROLL_DRAGGING) {
+    return;   /* 自动路径在 MODE 1 下永远无法改位置 */
+}
+```
+
+`prv_direct_drag_move()` 刻意不调用 `prv_vel_sample()` / `prv_vel_total()` /
+`prv_bound_delta()`；唯一的例外是沿用与 native 相同的 10 px 阈值判定（否则 tap
+会被误判为拖动），但越过阈值后**每一个 pointer 采样立即全额生效**：不丢弃阈值
+采样、不做弹性缩放、不插值、不做 fixed step。
+
+## M3. 测试方法（合成指针）
+
+目标板无法从外部伪造触摸：GT911 的 `Touch_Scan()` 在没有真实触摸时失败，而
+`lv_port_indev.c` 以 `has_touch` 为门控（`Touch_IsIRQPending()` → `Touch_Scan()`
+→ `has_touch`），所以向 `g_touch_data` 注入数据会被直接丢弃——实测确认了这一
+点（注入后 `logical_scroll_x` 保持 0）。
+
+因此改用 Debug-only 合成指针源（`g_launcher_synth_touch_*`），在 Launcher 自己
+这一层注入一条确定性轨迹 `x = start + step·i`，使 MODE 0 与 MODE 1 能在**同一条
+指针轨迹**上重复运行：
+
+```bash
+openocd -f CartDeck.cfg &
+arm-none-eabi-gdb -q -batch -ex 'set $motion_mode = 1' \
+  -x tools/gdb/launcher_motion_isolation.gdb | tee /tmp/motion_m1.log
+python3 tools/debug/analyze_launcher_motion.py --current /tmp/motion_m0.log \
+  --direct /tmp/motion_m1.log --output build/motion-isolation
+```
+
+慢拖配置：`start_x=700, step=-2 px/sample, press_samples=400`。
+
+## M4. 实测结果（慢速均匀拖动，512 样本 ring 中保留 256）
+
+| Metric | CURRENT_MOTION | DIRECT_DRAG_ONLY |
+|---|---:|---:|
+| position error min | −2 px | −2 px |
+| position error avg | −0.019 px | −0.019 px |
+| **position error p95** | **0 px** | **0 px** |
+| **position error p99** | **0 px** | **0 px** |
+| position error max | 0 px | 0 px |
+| 严格 1:1 采样占比 | **99.0%** | **99.0%** |
+| dragging 采样数 | 103 | 104 |
+| logical 更新次数 | 102 | 103 |
+| render 帧数（窗口内） | 102 | 103 |
+| **samples / render frame** | **2.51** | **2.49** |
+| render 间隔 中位数 | **51 ms** | **51 ms** |
+| render 间隔 p95 | 51 ms | 51 ms |
+| render 间隔 min / max | 50 / 835 ms | 48 / 832 ms |
+| **panel-frame 直方图** | **{3: 100, 49: 1}** | **{3: 101, 49: 1}** |
+| 呈现频率 | ≈19.6 FPS | ≈19.4 FPS |
+| CFSR / HFSR / MMFAR / BFAR | 0 / 0 / 0 / 0 | 0 / 0 / 0 / 0 |
+| reload timeout / ownership / LTDC error | 0 / 0 / 0 | 0 / 0 / 0 |
+
+关键读数：
+
+1. **两模式的 position error 完全相同**（avg −0.019 px、p95/p99/max = 0）。
+   唯一的 2 px 偏差出现在越过阈值的第一个采样（后续 0 偏差），与 native 的
+   `lv_indev_find_scroll_obj()` 行为一致。也就是说 **CURRENT_MOTION 在拖动阶段
+   的位移本身就是严格 1:1 的**，速度估算/deceleration 并不参与拖动中的位置更新。
+2. **render cadence 两模式相同**：101 个间隔中 100–101 个恰好 = 3 panel frames
+   （50.95 ms）。唯一的 49-frame 离群值是 GDB `resume` 之后的第一个间隔
+   （跟踪尚未稳定），不是稳态节奏。
+3. **coalescing 相同**：每个 rendered frame 聚合约 2.5 个 pointer 采样。
+
+关于「51 ms 被标成 49 panel frames」：那是 `round()` 对 GDB 停机窗口造成的
+~835 ms 首次间隔的假象——`avg` 被它拉高；稳态中位数/p95 都是 51 ms。
+
+## M5. 快速甩动（补充测量，结论有限）
+
+| Metric | CURRENT_MOTION | DIRECT_DRAG_ONLY |
+|---|---:|---:|
+| logical 更新次数 | 20 | 10 |
+| render 帧数 | 21 | 11 |
+| logical 位移 | 440 px | 400 px |
+| position error | 0（同慢拖） | 0（同慢拖） |
+
+**方法学限制（必须如实记录）**：合成指针的采样率约 22 Hz（受 `resume`/`sleep`
+往返限制），而 trace ring 只有 256 项。5 秒窗口下 ring 里只剩松手后的空闲样本，
+因此**没有取到干净的「松手前 → 松手后」配对**，`post-release moves = 0` 只是
+「ring 里没有按下样本」。上表的位移差异无法区分「惯性额外推进」与「测量窗口
+起点不同」，**不足以判定惯性是否可被感知**。
+
+真正能判定惯性观感的只有 M6 的人眼 A/B。
+
+## M6. 需要操作者回答的两个问题（本轮最重要的结论）
+
+本轮唯一无法自动化的部分。请分别用两个构建（或同一构建切换 `g_launcher_motion_mode`）
+各做一次**匀速慢拖**：
+
+| 问题 | 回答 |
+|---|---|
+| CURRENT_MOTION 视觉抖动 = YES / NO | 待回答 |
+| DIRECT_DRAG_ONLY 视觉抖动 = YES / NO | 待回答 |
+
+只有在拿到这两个答案之后，才能在第 32 节的四个结论中选择。基于 M4 的客观数据，
+**预测**是「两者都抖、但 DIRECT 无明显改善」，因为：
+
+- 两模式的拖动位移逐位相同（position error p95/p99 = 0）；
+- 两模式的呈现节奏逐项相同（3 panel frames，100/101）。
+
+也就是说，在拖动阶段运动算法并未进入位置通路，`DIRECT` 与 `CURRENT` 的屏幕行为
+应当一致。若操作者仍观察到 CURRENT 明显更抖，则抖动来源在**松手之后**的
+惯性/吸附段，需要用更长的 press 窗口重做 trace 才能定量。
+
+## M6.1 操作者结论（2026-09-29）
+
+> **CURRENT_MOTION 视觉抖动 = YES**
+> **DIRECT_DRAG_ONLY 视觉抖动 = YES**
+>
+> **「还是会抖动」——两种模式都抖，关闭全部运动算法后抖动依然存在。**
+
+这个结果是本轮的决定性输入：把惯性/速度估算/吸附全部关掉（并且已由 M4 的
+position error p95/p99/max = 0 证明 MODE 1 确实没有惯性参与），**视觉抖动并未
+消失**。因此：
+
+* `MOTION ALGORITHM CONFIRMED AS JITTER CONTRIBUTOR` —— **排除**。
+* 抖动的主因在**呈现侧**。
+
+## M7. 对「修 motion 还是继续提 FPS」的回答
+
+**继续提 FPS / 改 render cadence。** 定量依据：
+
+| 量 | 值 |
+|---|---:|
+| panel frame | 16.984 ms（58.878 Hz） |
+| 2-frame 预算 | **33.968 ms** |
+| 3-frame 预算 | 50.952 ms |
+| 实测 render | **40.398 ms/frame** |
+| 实测 presentation 间隔 | 50.952 ms = **恰 3 frames** |
+| 距 2-frame 的缺口 | **−6.430 ms** |
+
+render 40.398 ms 已经越过 33.968 ms 的 2-frame 边界，于是 buffer swap 只能等到
+下一个 VBlank（+16.984 ms）= 50.95 ms，**稳定落在 3-frame 槽位**。这解释了为什么
+呈现间隔是「恰好 3 frames」而不是 2/3 混合：它是硬量化，不是抖动。
+
+手指以 22 Hz 连续采样并 1:1 跟随，但屏幕每 **50.95 ms** 才更新一次。视觉上看到的是
+**每 51 ms 一次的位置跳变**，与运动算法无关 —— 这正是「两种模式都抖」的原因。
+
+### render 成本构成（本轮实测，12 帧稳态）
+
+| 项 | ms/frame | 占比 |
+|---|---:|---:|
+| `dma2d_wait` | 23.360 | 57.8% |
+| `sw_execute` | 6.157 | 15.2% |
+| `drawbuf_clear`（pre-clear） | 6.156 | 15.2% |
+| `cache` | 1.289 | 3.2% |
+| `traversal` | 1.233 | 3.1% |
+| `style` | 1.143 | 2.8% |
+| 其它 | 1.059 | 2.6% |
+
+要进入 2-frame 槽位必须消掉 **6.43 ms**（并留出抖动余量，实际目标建议 ≤32 ms）。
+唯一量级足够的杠杆是占 57.8% 的 `dma2d_wait`，而它在 Phase 4 被判定
+「NOT WORTH COMPLEXITY」并在本轮被明确列为禁止修改项。
+
+因此**下一步只能通过开启一个新变量（DMA2D 同步等待 / async pipeline）来实现**，
+不能在当前「绝对单变量」约束内完成。
+
+## M8. 本轮没有做的事（边界）
+
+- 没有修改 velocity estimator 公式、smoothing、inertia 参数、snap 时长。
+- 没有修改 LTDC / DMA2D / pre-clear / framebuffer / dirty 逻辑 / slot-local 算法 /
+  XRGB / A8 / UI 结构 / SDRAM / LVGL renderer 与 core。
+- MODE 0 保持完整生产行为，默认模式即 MODE 0，Release 不暴露该 mailbox。
+- 没有做 production 迁移。
+
+## M9. 目标板状态
+
+为支持本轮测试，使用过 OpenOCD 的 flash 擦写与写保护操作。收尾时已把板子恢复到
+原始状态并验证：
+
+| 项 | 状态 |
+|---|---|
+| RDP | `0xAA`（Level 0，与实验前一致） |
+| nWRP0…nWRP7 | `0x0`（sector 0–7 写保护有效，与实验前一致） |
+| `Touch_Scan` flash 字节 @0x08016CA8 | `b08db530`（未被修改） |
+| 当前固件 | `Debug-LTDC-Full-Render-Audit`（本次测试固件） |
+| 故障计数器 | CFSR / HFSR / MMFAR / BFAR = 0 |
+
+## M10. Check Results
+
+| Check | Result |
+|---|---|
+| HostTest | **16/16 passed** |
+| Debug / Release / SizeDebug | Build passed |
+| Debug-USB-SD-MSC / Debug-LTDC-Sync-Trace | Build passed |
+| SizeDebug-DMA2D-SelfTest / Debug-LTDC-Full-Render-Audit | Build passed |
+| `git diff --check` | Passed |
+| Release symbol audit | 无 `g_launcher_motion_*`、`g_launcher_synth_touch_*`、`g_launcher_direct_drag_*`；`launcher_scroll_*` 生产逻辑保留 |
+| 稳态基准回归（12 帧） | cycles 232,693,438；pre-clear 1,972,050 px；`inv_p` peak 11 / overflow 0；layout 7,022,067 cycles —— 与 Phase 6 一致 |
+| Cortex faults（目标板） | CFSR / HFSR / MMFAR / BFAR 全零 |
+| reload 握手 | req/evt/done 12/12/12；timeout 0；ownership 0；LTDC error 0 |

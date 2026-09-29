@@ -78,6 +78,35 @@ typedef enum {
     LAUNCHER_SCROLL_PRESSED = 4,   /* 已按下但尚未越过滚动阈值 */
 } launcher_scroll_state_t;
 
+/*
+ * 运动模式（Debug A/B）。用于判断视觉抖动来自「运动算法」还是「呈现节奏」：
+ *
+ *   CURRENT_MOTION   —— 生产行为：速度估算 + 惯性 + 吸附。
+ *   DIRECT_DRAG_ONLY —— 只保留 pointer 1:1 直接拖动；按下清速度、松手即停，
+ *                       速度估算 / throw / 惯性 / 吸附 / 补间全部不执行。
+ *
+ * 这是 Debug-only 开关，默认 CURRENT_MOTION；Release 不暴露该 mailbox。
+ */
+typedef enum {
+    LAUNCHER_MOTION_MODE_CURRENT = 0,
+    LAUNCHER_MOTION_MODE_DIRECT_DRAG_ONLY = 1,
+} launcher_motion_mode_t;
+
+/** @brief 设置运动模式。传入非法值回落为 CURRENT。 */
+void launcher_scroll_set_motion_mode(uint32_t mode);
+
+/** @brief 当前生效的运动模式。 */
+uint32_t launcher_scroll_get_motion_mode(void);
+
+/**
+ * @brief 运动 trace 计数（Debug 观测）。
+ * @param samples 收到的 pointer 采样数
+ * @param updates 真正改动了 logical_scroll_x 的采样数
+ *
+ * render / presentation 帧数由 display_trace 的全局计数器读取，不在这里重复。
+ */
+void launcher_scroll_get_motion_counts(uint32_t *samples, uint32_t *updates);
+
 typedef struct {
     int32_t position;      /* logical_scroll_x，唯一权威滚动位置 */
     int32_t max_position;  /* content_width - viewport_width */

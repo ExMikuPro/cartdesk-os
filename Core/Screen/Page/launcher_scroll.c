@@ -8,6 +8,41 @@
 
 #include <string.h>
 
+/*
+ * Debug-only 运动模式与 trace 计数。默认 CURRENT_MOTION，因此不改变生产行为。
+ * 只有 Debug-LTDC-Sync-Trace / Debug-LTDC-Full-Render-Audit 会去写这些 mailbox。
+ */
+static uint32_t s_motion_mode = LAUNCHER_MOTION_MODE_CURRENT;
+static volatile uint32_t s_motion_samples;
+static volatile uint32_t s_motion_updates;
+
+void launcher_scroll_set_motion_mode(uint32_t mode)
+{
+    s_motion_mode = (mode == LAUNCHER_MOTION_MODE_DIRECT_DRAG_ONLY)
+                        ? LAUNCHER_MOTION_MODE_DIRECT_DRAG_ONLY
+                        : LAUNCHER_MOTION_MODE_CURRENT;
+}
+
+uint32_t launcher_scroll_get_motion_mode(void)
+{
+    return s_motion_mode;
+}
+
+void launcher_scroll_get_motion_counts(uint32_t *samples, uint32_t *updates)
+{
+    if(samples != NULL) {
+        *samples = s_motion_samples;
+    }
+    if(updates != NULL) {
+        *updates = s_motion_updates;
+    }
+}
+
+static bool prv_direct_drag_active(void)
+{
+    return s_motion_mode == LAUNCHER_MOTION_MODE_DIRECT_DRAG_ONLY;
+}
+
 
 /* 吸附时每次 tick 的最大过渡步长不限制；动画在保持整数位置的前提下按
  * ease-out 曲线推进。 */
@@ -31,7 +66,17 @@ static void prv_apply(launcher_scroll_t *scroll, int32_t position)
         return;
     }
 
+    /*
+     * 纵深防御：DIRECT_DRAG_ONLY 下唯一允许的位移来源是手指拖动。若仍有任何
+     * 自动路径试图写位置，这里直接拒绝，MODE 1 绝不可能出现自发运动。
+     */
+    if(prv_direct_drag_active() &&
+       scroll->state != LAUNCHER_SCROLL_DRAGGING) {
+        return;
+    }
+
     scroll->position = clamped;
+    ++s_motion_updates;
     if(scroll->apply_cb != NULL) {
         scroll->apply_cb(clamped, scroll->user_data);
     }
@@ -217,6 +262,67 @@ static int32_t prv_vel_total(const launcher_scroll_t *scroll, uint32_t now_ms)
         result = -LAUNCHER_SCROLL_MAX_THROW;
     }
     return (int32_t)result;
+}
+
+/*
+ * DIRECT_DRAG_ONLY 的指针处理：只做「pointer 位移 → logical 位移」的 1:1 映射。
+ *
+ * 刻意不调用 prv_vel_sample() / prv_vel_total() / prv_bound_delta()：
+ * 阈值判定沿用与 native 相同的 10 px（否则 tap 会被误判为拖动），但越过阈值后
+ * 每一个 pointer 采样都立即全额生效，没有阈值丢弃、没有弹性缩放、没有速度估计。
+ */
+static void prv_direct_drag_move(launcher_scroll_t *scroll, int32_t point_x)
+{
+    const int32_t delta = point_x - scroll->prev_point_x;
+
+    scroll->prev_point_x = point_x;
+    scroll->drag_scroll_sum += delta;
+
+    if(scroll->state != LAUNCHER_SCROLL_DRAGGING) {
+        if(scroll->drag_scroll_sum > LAUNCHER_SCROLL_DIRECTION_LIMIT ||
+           scroll->drag_scroll_sum < -LAUNCHER_SCROLL_DIRECTION_LIMIT) {
+            scroll->state = LAUNCHER_SCROLL_DRAGGING;
+        }
+        return;
+    }
+
+    if(delta == 0) {
+        return;
+    }
+
+    /* 手指左移（delta < 0）→ logical_scroll_x 增大，方向与 native 一致。
+     * 全额生效：不做弹性缩放、不丢弃阈值采样。计数由 prv_apply() 统一完成。 */
+    prv_apply(scroll, scroll->position - delta);
+}
+
+static void prv_direct_drag_tick(launcher_scroll_t *scroll, bool pressed,
+                                 int32_t point_x)
+{
+    if(pressed) {
+        if(scroll->prev_pressed) {
+            prv_direct_drag_move(scroll, point_x);
+        }
+        else {
+            /* 按下：记录起点、清速度、取消一切 pending 运动。 */
+            scroll->state = LAUNCHER_SCROLL_PRESSED;
+            scroll->snap_active = false;
+            scroll->drag_scroll_sum = 0;
+            scroll->prev_point_x = point_x;
+            scroll->press_was_scrolling = false;
+            scroll->throw_vect = 0;
+            prv_vel_reset(scroll);
+        }
+    }
+    else {
+        /* 松手：立即停止。不估算速度、不进入惯性、不吸附、不补间。 */
+        if(scroll->prev_pressed) {
+            scroll->press_was_scrolling = (scroll->state == LAUNCHER_SCROLL_DRAGGING);
+            scroll->drag_scroll_sum = 0;
+            scroll->throw_vect = 0;
+            prv_vel_reset(scroll);
+        }
+        scroll->state = LAUNCHER_SCROLL_IDLE;
+    }
 }
 
 void launcher_scroll_init(launcher_scroll_t *scroll,
@@ -493,6 +599,19 @@ bool launcher_scroll_tick(launcher_scroll_t *scroll, bool pressed,
     /* 先记录本帧时间戳，prv_move() 才能用「上一帧 → 本帧」的真实间隔做速度归一化。 */
     const int32_t frame_dt_ms = (int32_t)(now_ms - scroll->last_tick);
     scroll->last_tick = now_ms;
+
+    ++s_motion_samples;
+
+    if(prv_direct_drag_active()) {
+        /*
+         * MODE 1：整条自动运动链路（速度估算 → throw → 惯性 → 吸附 → 补间）
+         * 在下面这个分支里被整体绕过，不执行任何一行。
+         */
+        prv_direct_drag_tick(scroll, pressed, point_x);
+        scroll->prev_pressed = pressed;
+        scroll->drag_last_ms = now_ms;
+        return scroll->position != before;
+    }
 
     if(pressed) {
         if(scroll->state == LAUNCHER_SCROLL_DRAGGING) {

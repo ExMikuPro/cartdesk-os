@@ -239,6 +239,172 @@ volatile uint32_t g_launcher_slot_moves;
 volatile uint32_t g_launcher_slot_visible_mask;
 volatile int32_t g_launcher_slot_bbox_before[DESIGN_APP_COUNT][4];
 volatile int32_t g_launcher_slot_bbox_after[DESIGN_APP_COUNT][4];
+
+/* ------------------------------------------------------------------ */
+/*  Motion isolation A/B (Debug-only)                                   */
+/*                                                                      */
+/*  Motion Isolation Test：判断视觉抖动来自「运动算法」还是「呈现节奏」。*/
+/*  MODE 0 = CURRENT_MOTION（生产：速度估算 + 惯性 + 吸附）             */
+/*  MODE 1 = DIRECT_DRAG_ONLY（只保留 pointer 1:1 拖动，松手即停）      */
+/*                                                                      */
+/*  该 mailbox 只由 trace/audit 构建编译，Release 不含。                */
+/* ------------------------------------------------------------------ */
+
+/* 16 KB DTCM 很紧：每个样本压到 16 B，512 样本 = 8 KB 仍会挤爆
+ * Debug-LTDC-Full-Render-Audit 的 DTCMRAM，因此用 256 样本 / 4 KB。 */
+enum {
+    LAUNCHER_MOTION_TRACE_SAMPLES = 256
+};
+
+volatile uint32_t g_launcher_motion_mode = LAUNCHER_MOTION_MODE_CURRENT;
+volatile uint32_t g_launcher_motion_mode_applied;
+volatile uint32_t g_launcher_direct_drag_samples;
+volatile uint32_t g_launcher_direct_drag_updates;
+volatile uint32_t g_launcher_motion_trace_count;
+volatile uint32_t g_launcher_motion_trace_index;
+
+/* 16 B/样本。logical_x 用 int16：logical_scroll_x 上界 1860，取值必然落在
+ * [-32768, 32767]。render_seq 同理用 uint16（测量窗口只有几十帧）。 */
+typedef struct {
+    uint16_t time_ms;    /* 回绕安全的低 16 位；host 端按 16 位差分重建 */
+    uint16_t render_seq;
+    int16_t pointer_x;
+    int16_t pointer_dx;
+    uint16_t logical_x;
+    int16_t logical_dx;
+    uint8_t dt_ms;       /* 采样间隔远小于 255 ms */
+    uint8_t pressed;
+    uint8_t state;
+    uint8_t reserved;
+} launcher_motion_sample_t;
+
+volatile launcher_motion_sample_t g_launcher_motion_trace[LAUNCHER_MOTION_TRACE_SAMPLES];
+
+/* ------------------------------------------------------------------ */
+/*  Synthetic pointer source (Debug-only)                               */
+/*                                                                      */
+/*  目标板没有自动化触摸注入：GT911 的 Touch_Scan() 在没有真实触摸时会     */
+/*  失败，而 mesh 层以 has_touch 为门控，因此无法从外部伪造触摸。          */
+/*  这里在 Launcher 自己这一层注入一条确定性的指针轨迹，使 A/B 可以在同一 */
+/*  条轨迹上重复运行。只在 trace/audit 构建编译。                          */
+/* ------------------------------------------------------------------ */
+
+volatile uint32_t g_launcher_synth_touch_enable;
+volatile int32_t g_launcher_synth_touch_start_x = 700;
+volatile int32_t g_launcher_synth_touch_step_x = -2;
+volatile uint32_t g_launcher_synth_touch_press_samples = 400;
+volatile uint32_t g_launcher_synth_touch_completed;
+
+static uint32_t s_synth_index;
+static int32_t s_synth_x;
+static bool s_synth_pressed;
+
+/*
+ * 推进合成指针。轨迹：x = start + step*i，持续 press_samples 次采样后松手，
+ * 松手后保持 RELEASED 让惯性/吸附自然收敛。返回 true 表示覆盖真实触摸。
+ */
+static bool prv_synth_touch_step(lv_point_t *point, bool *pressed)
+{
+    if(g_launcher_synth_touch_enable == 0u) {
+        return false;
+    }
+
+    if(s_synth_index == 0u) {
+        s_synth_x = g_launcher_synth_touch_start_x;
+        s_synth_pressed = true;
+        g_launcher_synth_touch_completed = 0u;
+    }
+
+    if(s_synth_pressed) {
+        if(s_synth_index >= g_launcher_synth_touch_press_samples) {
+            s_synth_pressed = false;
+            g_launcher_synth_touch_completed = 1u;
+        }
+    }
+
+    point->x = (lv_coord_t)s_synth_x;
+    point->y = (lv_coord_t)200;
+    *pressed = s_synth_pressed;
+
+    ++s_synth_index;
+    s_synth_x += g_launcher_synth_touch_step_x;
+    return true;
+}
+
+static void prv_synth_touch_reset(void)
+{
+    s_synth_index = 0u;
+    s_synth_x = g_launcher_synth_touch_start_x;
+    s_synth_pressed = false;
+    g_launcher_synth_touch_completed = 0u;
+}
+
+static uint32_t s_motion_mode_applied = UINT32_MAX;
+static int32_t s_trace_last_pointer_x;
+static int32_t s_trace_last_logical_x;
+static uint32_t s_trace_last_ms;
+static bool s_trace_has_prev;
+
+/* 记一个 pointer 采样。固定 ring，不 printf。*/
+static void prv_motion_trace_sample(uint32_t now_ms, int32_t pointer_x,
+                                    bool pressed, uint32_t state)
+{
+    const uint32_t index = g_launcher_motion_trace_index;
+    volatile launcher_motion_sample_t *slot = &g_launcher_motion_trace[index];
+    const int32_t logical_x = s_logical_scroll_x;
+
+    slot->time_ms = (uint16_t)now_ms;
+    slot->render_seq = (uint16_t)g_display_frame_seq;
+    slot->pointer_x = (int16_t)pointer_x;
+    slot->pointer_dx = s_trace_has_prev ? (int16_t)(pointer_x - s_trace_last_pointer_x) : 0;
+    slot->logical_x = (uint16_t)logical_x;
+    slot->logical_dx = s_trace_has_prev ? (int16_t)(logical_x - s_trace_last_logical_x) : 0;
+    slot->dt_ms = s_trace_has_prev ? (uint8_t)(now_ms - s_trace_last_ms) : 0u;
+    slot->pressed = pressed ? 1u : 0u;
+    slot->state = (uint8_t)state;
+    slot->reserved = 0u;
+
+    s_trace_last_pointer_x = pointer_x;
+    s_trace_last_logical_x = logical_x;
+    s_trace_last_ms = now_ms;
+    s_trace_has_prev = true;
+
+    g_launcher_motion_trace_index = (index + 1u) % LAUNCHER_MOTION_TRACE_SAMPLES;
+    ++g_launcher_motion_trace_count;
+}
+
+static void prv_motion_apply_mode(void)
+{
+    uint32_t mode = g_launcher_motion_mode;
+
+    if(mode != LAUNCHER_MOTION_MODE_CURRENT &&
+       mode != LAUNCHER_MOTION_MODE_DIRECT_DRAG_ONLY) {
+        mode = LAUNCHER_MOTION_MODE_CURRENT;
+        g_launcher_motion_mode = mode;
+    }
+    if(mode == s_motion_mode_applied) {
+        return;
+    }
+
+    launcher_scroll_set_motion_mode(mode);
+    s_motion_mode_applied = mode;
+    g_launcher_motion_mode_applied = mode;
+    s_trace_has_prev = false;
+    /* 切换模式时取消上一次合成轨迹，避免跨模式串扰。 */
+    g_launcher_synth_touch_enable = 0u;
+    prv_synth_touch_reset();
+}
+
+/* trace ring 复位（重建 Launcher 时）。*/
+static void prv_motion_trace_reset(void)
+{
+    g_launcher_motion_trace_index = 0u;
+    g_launcher_motion_trace_count = 0u;
+    g_launcher_direct_drag_samples = 0u;
+    g_launcher_direct_drag_updates = 0u;
+    s_trace_has_prev = false;
+    s_motion_mode_applied = UINT32_MAX;
+}
 #endif /* CARTDESK_LTDC_SYNC_TRACE_ENABLE */
 
 /* --- 生产滚动状态 ------------------------------------------------- */
@@ -471,6 +637,11 @@ static void prv_scroll_tick(uint32_t now_ms)
         return;
     }
 
+#if CARTDESK_LTDC_SYNC_TRACE_ENABLE
+    prv_motion_apply_mode();
+    (void)prv_synth_touch_step(&point, &pressed);
+#endif
+
     if(pressed && !prv_point_in_scroll_viewport(&point)) {
         /* 视口外（固定系统按钮区）的按下不参与滚动，避免与圆形按钮竞争。 */
         if(s_scroll.state == LAUNCHER_SCROLL_DRAGGING) {
@@ -483,6 +654,18 @@ static void prv_scroll_tick(uint32_t now_ms)
     else {
         (void)launcher_scroll_tick(&s_scroll, pressed, point.x, now_ms);
     }
+
+#if CARTDESK_LTDC_SYNC_TRACE_ENABLE
+    /* 只记录真实发生的 pointer 采样；ring 满后覆盖最旧样本。 */
+    prv_motion_trace_sample(now_ms, point.x, pressed, (uint32_t)s_scroll.state);
+    {
+        uint32_t samples = 0u;
+        uint32_t updates = 0u;
+        launcher_scroll_get_motion_counts(&samples, &updates);
+        g_launcher_direct_drag_samples = samples;
+        g_launcher_direct_drag_updates = updates;
+    }
+#endif
 }
 
 
@@ -2203,6 +2386,7 @@ void DesignLauncher_Create(lv_display_t *disp)
 #if CARTDESK_LTDC_SYNC_TRACE_ENABLE
     g_launcher_slot_moves = 0u;
     g_launcher_slot_visible_mask = 0u;
+    prv_motion_trace_reset();
     memset(s_slot_trace_rects, 0, sizeof(s_slot_trace_rects));
     g_launcher_slot_trace_visual_mode = LAUNCHER_SLOT_TRACE_VISUAL_IMAGE;
     s_launcher_slot_trace_visual_mode = LAUNCHER_SLOT_TRACE_VISUAL_IMAGE;
