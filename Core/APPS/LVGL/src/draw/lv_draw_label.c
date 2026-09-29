@@ -8,6 +8,7 @@
  *********************/
 
 #include "lv_draw_label_private.h"
+#include "render_audit.h"
 #include "lv_draw_private.h"
 #include "../misc/lv_area_private.h"
 #include "lv_draw_vector_private.h"
@@ -72,6 +73,7 @@ void lv_draw_letter_dsc_init(lv_draw_letter_dsc_t * dsc)
 void lv_draw_label_dsc_init(lv_draw_label_dsc_t * dsc)
 {
     LV_CHECK_ARG(dsc != NULL, return);
+    RenderAudit_Begin(RENDER_AUDIT_CAT_DSC_INIT);
 
     lv_memzero(dsc, sizeof(lv_draw_label_dsc_t));
     dsc->opa = LV_OPA_COVER;
@@ -84,6 +86,7 @@ void lv_draw_label_dsc_init(lv_draw_label_dsc_t * dsc)
     dsc->sel_bg_color = lv_palette_main(LV_PALETTE_BLUE);
     dsc->bidi_dir = LV_BASE_DIR_LTR;
     dsc->base.dsc_size = sizeof(lv_draw_label_dsc_t);
+    RenderAudit_End(RENDER_AUDIT_CAT_DSC_INIT);
 }
 
 lv_draw_label_dsc_t * lv_draw_task_get_label_dsc(lv_draw_task_t * task)

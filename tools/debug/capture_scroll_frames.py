@@ -42,18 +42,22 @@ EVENT_BUFFER_SYNC_BEGIN = 21
 EVENT_BUFFER_SYNC_END = 22
 
 
-def gdb_common(mode: int) -> list[str]:
-    return [
+def gdb_common(mode: int, elf: Path, preclear_mode: int | None) -> list[str]:
+    lines = [
         "set pagination off",
         "set confirm off",
         "set breakpoint pending on",
-        f"file {ELF}",
+        f"file {elf}",
         "target extended-remote localhost:3333",
         "monitor reset halt",
         "load",
         "monitor reset halt",
         "tbreak LauncherScrollCapture_IconsReady",
         "continue",
+    ]
+    if preclear_mode is not None:
+        lines.append(f"set variable g_render_audit_preclear_mode = {preclear_mode}")
+    lines += [
         f"set variable g_launcher_slot_trace_visual_mode = {mode}",
         "tbreak DisplayTrace_RenderEnd",
         "continue",
@@ -61,6 +65,7 @@ def gdb_common(mode: int) -> list[str]:
         "shell sleep 1",
         "monitor halt",
     ]
+    return lines
 
 
 def scroll_setup(capture_step: int) -> list[str]:
@@ -342,8 +347,9 @@ def analyze_timing_trace(output: str, folder: Path) -> None:
         plt.close(figure)
 
 
-def timing_run(mode_name: str, mode: int, folder: Path, gdb: str) -> None:
-    lines = gdb_common(mode)
+def timing_run(mode_name: str, mode: int, folder: Path, gdb: str,
+               elf: Path, preclear_mode: int | None) -> None:
+    lines = gdb_common(mode, elf, preclear_mode)
     lines += scroll_setup(0xFFFFFFFF)
     lines += [
         "set variable g_display_trace_command = 1",
@@ -408,10 +414,11 @@ def parse_captures(output: str) -> dict[str, dict[str, object]]:
     return captures
 
 
-def capture_run(mode_name: str, mode: int, folder: Path, gdb: str) -> None:
+def capture_run(mode_name: str, mode: int, folder: Path, gdb: str,
+                elf: Path, preclear_mode: int | None) -> None:
     for label, _ in CAPTURES:
         (folder / label).mkdir(parents=True, exist_ok=True)
-    lines = gdb_common(mode)
+    lines = gdb_common(mode, elf, preclear_mode)
     lines += scroll_setup(CAPTURES[0][1])
     lines += [
         "set variable g_display_trace_command = 1",
@@ -458,11 +465,14 @@ def main() -> None:
     parser.add_argument("--skip-capture", action="store_true")
     parser.add_argument("--gdb", default=shutil.which("arm-none-eabi-gdb"))
     parser.add_argument("--session", type=Path)
+    parser.add_argument("--elf", type=Path, default=ELF)
+    parser.add_argument("--preclear-mode", type=int, choices=(0, 1, 2, 3))
     args = parser.parse_args()
     if not args.gdb:
         raise SystemExit("arm-none-eabi-gdb not found; pass --gdb")
-    if not ELF.exists():
-        raise SystemExit(f"missing {ELF}; build Debug-LTDC-Sync-Trace first")
+    elf = args.elf.resolve()
+    if not elf.exists():
+        raise SystemExit(f"missing {elf}; build the requested firmware first")
 
     stamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
     session = (args.session or (BUILD / "captures" / stamp)).resolve()
@@ -472,9 +482,9 @@ def main() -> None:
         folder.mkdir(exist_ok=True)
         mode = MODE_IDS[mode_name]
         if not args.skip_timing:
-            timing_run(mode_name, mode, folder, args.gdb)
+            timing_run(mode_name, mode, folder, args.gdb, elf, args.preclear_mode)
         if not args.skip_capture:
-            capture_run(mode_name, mode, folder, args.gdb)
+            capture_run(mode_name, mode, folder, args.gdb, elf, args.preclear_mode)
     print(session)
 
 

@@ -19,6 +19,7 @@
 #include "../lvgl_public.h"
 #include "lv_obj_style_internal.h"
 #include "display_trace.h"
+#include "render_audit.h"
 
 /*********************
  *      DEFINES
@@ -109,6 +110,7 @@ void lv_obj_redraw(lv_layer_t * layer, lv_obj_t * obj)
     LV_CHECK_ARG(obj != NULL, return);
 
     LV_PROFILER_REFR_BEGIN;
+    RenderAudit_TraversalCall();
     lv_area_t clip_area_ori = layer->_clip_area;
     lv_area_t clip_coords_for_obj;
 
@@ -123,9 +125,11 @@ void lv_obj_redraw(lv_layer_t * layer, lv_obj_t * obj)
     lv_area_increase(&obj_coords_ext, ext_draw_size, ext_draw_size);
 
     if(!lv_area_intersect(&clip_coords_for_obj, &clip_area_ori, &obj_coords_ext)) {
+        RenderAudit_ObjectClipRejected();
         LV_PROFILER_REFR_END;
         return;
     }
+    RenderAudit_ObjectDrawn();
     /*If the object is visible on the current clip area*/
     layer->_clip_area = clip_coords_for_obj;
 
@@ -484,7 +488,10 @@ lv_obj_t * lv_refr_get_top_obj(const lv_area_t * area_p, lv_obj_t * obj)
     lv_cover_check_info_t info;
     info.res = LV_COVER_RES_COVER;
     info.area = area_p;
+    RenderAudit_Begin(RENDER_AUDIT_CAT_COVER);
     lv_obj_send_event(obj, LV_EVENT_COVER_CHECK, &info);
+    RenderAudit_CoverResult(info.res == LV_COVER_RES_COVER);
+    RenderAudit_End(RENDER_AUDIT_CAT_COVER);
     if(info.res == LV_COVER_RES_MASKED) return NULL;
 
     int32_t i;
@@ -513,14 +520,32 @@ void lv_obj_refr(lv_layer_t * layer, lv_obj_t * obj)
     LV_CHECK_ARG(layer != NULL, return);
     LV_CHECK_ARG(obj != NULL, return);
 
-    if(lv_obj_is_hidden(obj)) return;
+    RenderAudit_Begin(RENDER_AUDIT_CAT_TRAVERSAL);
+    RenderAudit_ObjectConsidered();
+    if(lv_obj_is_hidden(obj)) {
+        RenderAudit_ObjectHidden();
+        RenderAudit_End(RENDER_AUDIT_CAT_TRAVERSAL);
+        return;
+    }
 
     /*If `opa_layered != LV_OPA_COVER` draw the widget on a new layer and blend that layer with the given opacity.*/
     const lv_opa_t opa_layered = lv_obj_get_style_opa_layered_internal(obj, LV_PART_MAIN);
-    if(opa_layered <= LV_OPA_MIN) return;
+    if(opa_layered <= LV_OPA_MIN) {
+        RenderAudit_ObjectHidden();
+        RenderAudit_End(RENDER_AUDIT_CAT_TRAVERSAL);
+        return;
+    }
 
-    if(lv_obj_get_style_transform_scale_x(obj, LV_PART_MAIN) <= 0) return;
-    if(lv_obj_get_style_transform_scale_y(obj, LV_PART_MAIN) <= 0) return;
+    if(lv_obj_get_style_transform_scale_x(obj, LV_PART_MAIN) <= 0) {
+        RenderAudit_ObjectHidden();
+        RenderAudit_End(RENDER_AUDIT_CAT_TRAVERSAL);
+        return;
+    }
+    if(lv_obj_get_style_transform_scale_y(obj, LV_PART_MAIN) <= 0) {
+        RenderAudit_ObjectHidden();
+        RenderAudit_End(RENDER_AUDIT_CAT_TRAVERSAL);
+        return;
+    }
 
     const lv_opa_t layer_opa_ori = layer->opa;
     const lv_color32_t layer_recolor = layer->recolor;
@@ -550,6 +575,7 @@ void lv_obj_refr(lv_layer_t * layer, lv_obj_t * obj)
         if(res != LV_RESULT_OK) {
             layer->opa = layer_opa_ori;
             layer->recolor = layer_recolor;
+            RenderAudit_End(RENDER_AUDIT_CAT_TRAVERSAL);
             return;
         }
 
@@ -627,6 +653,7 @@ void lv_obj_refr(lv_layer_t * layer, lv_obj_t * obj)
     /* Restore the original layer opa and recolor */
     layer->opa = layer_opa_ori;
     layer->recolor = layer_recolor;
+    RenderAudit_End(RENDER_AUDIT_CAT_TRAVERSAL);
 }
 
 /**********************
@@ -639,6 +666,9 @@ void lv_obj_refr(lv_layer_t * layer, lv_obj_t * obj)
 static void lv_refr_join_area(void)
 {
     LV_PROFILER_REFR_BEGIN;
+    uint32_t audit_start = RenderAudit_MeasureBegin();
+    uint32_t audit_comparisons = 0u;
+    uint32_t audit_before = disp_refr->inv_p;
     uint32_t join_from;
     uint32_t join_in;
     lv_area_t joined_area;
@@ -647,6 +677,7 @@ static void lv_refr_join_area(void)
 
         /*Check all areas to join them in 'join_in'*/
         for(join_from = 0; join_from < disp_refr->inv_p; join_from++) {
+            ++audit_comparisons;
             /*Handle only unjoined areas and ignore itself*/
             if(disp_refr->inv_area_joined[join_from] != 0 || join_in == join_from) {
                 continue;
@@ -669,6 +700,12 @@ static void lv_refr_join_area(void)
             }
         }
     }
+    uint32_t audit_after = 0u;
+    for(join_in = 0; join_in < disp_refr->inv_p; ++join_in) {
+        if(disp_refr->inv_area_joined[join_in] == 0u) ++audit_after;
+    }
+    RenderAudit_InvalidAreaCounts(audit_before, audit_after);
+    RenderAudit_MergeEnd(audit_start, audit_comparisons);
     LV_PROFILER_REFR_END;
 }
 
@@ -1066,13 +1103,6 @@ static void refr_configured_layer(lv_layer_t * layer)
     if(!lv_display_is_double_buffered(disp_refr)) {
         wait_for_flushing(disp_refr);
     }
-    /*If the screen is transparent initialize it when the flushing is ready*/
-    if(lv_color_format_has_alpha(disp_refr->color_format)) {
-        lv_area_t clear_area = layer->_clip_area;
-        lv_area_move(&clear_area, -layer->buf_area.x1, -layer->buf_area.y1);
-        lv_draw_buf_clear_ex(layer->draw_buf, &clear_area, layer);
-    }
-
     lv_obj_t * top_act_scr = NULL;
     lv_obj_t * top_prev_scr = NULL;
 
@@ -1080,6 +1110,34 @@ static void refr_configured_layer(lv_layer_t * layer)
     top_act_scr = lv_refr_get_top_obj(&layer->_clip_area, lv_display_get_screen_active(disp_refr));
     if(disp_refr->prev_scr) {
         top_prev_scr = lv_refr_get_top_obj(&layer->_clip_area, disp_refr->prev_scr);
+    }
+
+    /* The first screen rendered into the layer is the only safe cover source:
+     * it initializes every destination pixel before any later blending. */
+    /*If the screen is transparent initialize it when the flushing is ready*/
+    if(lv_color_format_has_alpha(disp_refr->color_format)) {
+        bool skip_clear = false;
+#if CARTDESK_RENDER_AUDIT_ENABLE
+        lv_obj_t * first_top_scr = disp_refr->draw_prev_over_act || disp_refr->prev_scr == NULL ?
+                                   top_act_scr : top_prev_scr;
+        if(g_render_audit_preclear_mode == RENDER_AUDIT_PRECLEAR_SKIP) {
+            skip_clear = true;
+        }
+        else if(g_render_audit_preclear_mode == RENDER_AUDIT_PRECLEAR_SELECTIVE && first_top_scr != NULL) {
+            skip_clear = true;
+        }
+        RenderAudit_PreclearArea(layer->_clip_area.x1, layer->_clip_area.y1,
+                                 layer->_clip_area.x2, layer->_clip_area.y2,
+                                 lv_color_format_get_bpp(layer->draw_buf->header.cf) / 8u,
+                                 !skip_clear, first_top_scr != NULL);
+#endif
+        if(!skip_clear) {
+            lv_area_t clear_area = layer->_clip_area;
+            lv_area_move(&clear_area, -layer->buf_area.x1, -layer->buf_area.y1);
+            RenderAudit_Begin(RENDER_AUDIT_CAT_DRAWBUF_CLEAR);
+            lv_draw_buf_clear_ex(layer->draw_buf, &clear_area, layer);
+            RenderAudit_End(RENDER_AUDIT_CAT_DRAWBUF_CLEAR);
+        }
     }
 
     /*Draw a bottom layer background if there is no top object*/

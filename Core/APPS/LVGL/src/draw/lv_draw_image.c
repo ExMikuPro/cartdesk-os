@@ -8,6 +8,7 @@
  *********************/
 
 #include "lv_draw_image_private.h"
+#include "render_audit.h"
 #include "../misc/lv_area_private.h"
 #include "../image/lv_image_decoder_private.h"
 #include "lv_draw_private.h"
@@ -45,6 +46,7 @@ static void img_decode_and_draw(lv_draw_task_t * t, const lv_draw_image_dsc_t * 
 void lv_draw_image_dsc_init(lv_draw_image_dsc_t * dsc)
 {
     LV_CHECK_ARG(dsc != NULL, return);
+    RenderAudit_Begin(RENDER_AUDIT_CAT_DSC_INIT);
 
     lv_memzero(dsc, sizeof(lv_draw_image_dsc_t));
     dsc->recolor = lv_color_black();
@@ -54,6 +56,7 @@ void lv_draw_image_dsc_init(lv_draw_image_dsc_t * dsc)
     dsc->antialias = LV_COLOR_DEPTH > 8 ? 1 : 0;
     dsc->image_area.x2 = LV_COORD_MIN;   /*Indicate invalid area by default by setting a negative size*/
     dsc->base.dsc_size = sizeof(lv_draw_image_dsc_t);
+    RenderAudit_End(RENDER_AUDIT_CAT_DSC_INIT);
 }
 
 lv_draw_image_dsc_t * lv_draw_task_get_image_dsc(lv_draw_task_t * task)
@@ -144,6 +147,22 @@ void lv_draw_image(lv_layer_t * layer, const lv_draw_image_dsc_t * dsc, const lv
     if(!(new_image_dsc.header.flags & LV_IMAGE_FLAGS_CUSTOM_DRAW)) {
         lv_draw_task_t * t = lv_draw_add_task(layer, coords, LV_DRAW_TASK_TYPE_IMAGE);
         lv_memcpy(t->draw_dsc, &new_image_dsc, sizeof(lv_draw_image_dsc_t));
+
+        lv_area_t audit_area;
+        if(lv_area_intersect(&audit_area, coords, &layer->_clip_area)) {
+            bool opaque_format = new_image_dsc.header.cf == LV_COLOR_FORMAT_XRGB8888 ||
+                                 new_image_dsc.header.cf == LV_COLOR_FORMAT_RGB888 ||
+                                 new_image_dsc.header.cf == LV_COLOR_FORMAT_RGB565;
+            RenderAuditCoverage coverage =
+                opaque_format && new_image_dsc.opa >= LV_OPA_MAX && t->opa >= LV_OPA_MAX &&
+                new_image_dsc.blend_mode == LV_BLEND_MODE_NORMAL && new_image_dsc.clip_radius == 0 &&
+                new_image_dsc.rotation == 0 && new_image_dsc.scale_x == LV_SCALE_NONE &&
+                new_image_dsc.scale_y == LV_SCALE_NONE && new_image_dsc.bitmap_mask_src == NULL &&
+                new_image_dsc.colorkey == NULL ?
+                RENDER_AUDIT_COVERAGE_OPAQUE : RENDER_AUDIT_COVERAGE_BLEND;
+            RenderAudit_TaskCoverage((uint32_t)t->type, audit_area.x1, audit_area.y1,
+                                     audit_area.x2, audit_area.y2, coverage);
+        }
 
         lv_image_buf_get_transformed_area(&t->_real_area, lv_area_get_width(coords), lv_area_get_height(coords),
                                           dsc->rotation, dsc->scale_x, dsc->scale_y, &dsc->pivot);

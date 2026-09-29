@@ -147,6 +147,12 @@ standard names. */
 /* USER CODE BEGIN Defines */
 /* Section where parameter definitions can be added (for instance, to override default ones in FreeRTOS.h) */
 #define configAPPLICATION_ALLOCATED_HEAP         1
+#if defined(CARTDESK_RENDER_AUDIT_ENABLE) && (CARTDESK_RENDER_AUDIT_ENABLE != 0)
+void RenderAudit_TaskSwitchedIn(void);
+void RenderAudit_TaskSwitchedOut(void);
+#define traceTASK_SWITCHED_IN()  RenderAudit_TaskSwitchedIn()
+#define traceTASK_SWITCHED_OUT() RenderAudit_TaskSwitchedOut()
+#endif
 /* USER CODE END Defines */
 
 #endif /* FREERTOS_CONFIG_H */

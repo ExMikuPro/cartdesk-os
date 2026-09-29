@@ -4,6 +4,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <string.h>
 
 #include "dma2d.h"
 #include "main.h"
@@ -35,6 +36,10 @@
 #define DMA2D_SELFTEST_PFC_BPP 2u
 #define DMA2D_SELFTEST_PFC_TIGHT_BYTES (DMA2D_SELFTEST_TIGHT_PIXELS * DMA2D_SELFTEST_PFC_BPP)
 #define DMA2D_SELFTEST_PFC_STRIDED_BYTES (DMA2D_SELFTEST_STRIDED_PIXELS * DMA2D_SELFTEST_PFC_BPP)
+#define DMA2D_PRECLEAR_X 0u
+#define DMA2D_PRECLEAR_Y 26u
+#define DMA2D_PRECLEAR_WIDTH 800u
+#define DMA2D_PRECLEAR_HEIGHT 350u
 
 volatile uint32_t g_dma2d_test_command;
 volatile uint32_t g_dma2d_test_state;
@@ -307,6 +312,102 @@ static bool compare_framebuffer(void)
     return true;
 }
 
+static bool compare_preclear(void)
+{
+    g_dma2d_test_stage = DMA2D_SELFTEST_STAGE_GUARD;
+    if (!check_guards()) return false;
+    g_dma2d_test_stage = DMA2D_SELFTEST_STAGE_COMPARE;
+    for (uint32_t y = 0u; y < DMA2D_SELFTEST_FB_HEIGHT; ++y) {
+        for (uint32_t x = 0u; x < DMA2D_SELFTEST_FB_WIDTH; ++x) {
+            bool inside = x >= DMA2D_PRECLEAR_X && x < DMA2D_PRECLEAR_X + DMA2D_PRECLEAR_WIDTH &&
+                          y >= DMA2D_PRECLEAR_Y && y < DMA2D_PRECLEAR_Y + DMA2D_PRECLEAR_HEIGHT;
+            uint32_t expected = inside ? 0u : DMA2D_SELFTEST_BACKGROUND;
+            uint32_t actual = s_framebuffer[y * DMA2D_SELFTEST_FB_WIDTH + x];
+            if (actual != expected) {
+                fail(x, y, expected, actual);
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+static bool run_preclear_current(void)
+{
+    if (!prepare_buffer()) return false;
+    g_dma2d_test_stage = DMA2D_SELFTEST_STAGE_DMA2D;
+    uint32_t start = DWT->CYCCNT;
+    for (uint32_t y = 0u; y < DMA2D_PRECLEAR_HEIGHT; ++y) {
+        uint32_t *row = &s_framebuffer[(DMA2D_PRECLEAR_Y + y) * DMA2D_SELFTEST_FB_WIDTH + DMA2D_PRECLEAR_X];
+        memset(row, 0, DMA2D_PRECLEAR_WIDTH * sizeof(uint32_t));
+    }
+    __DSB();
+    g_dma2d_test_cycles = DWT->CYCCNT - start;
+    g_dma2d_test_time_us = g_dma2d_test_cycles / (SystemCoreClock / 1000000u);
+    return compare_preclear();
+}
+
+static bool run_preclear_words(void)
+{
+    if (!prepare_buffer()) return false;
+    g_dma2d_test_stage = DMA2D_SELFTEST_STAGE_DMA2D;
+    uint32_t start = DWT->CYCCNT;
+    for (uint32_t y = 0u; y < DMA2D_PRECLEAR_HEIGHT; ++y) {
+        volatile uint32_t *row = &s_framebuffer[(DMA2D_PRECLEAR_Y + y) * DMA2D_SELFTEST_FB_WIDTH + DMA2D_PRECLEAR_X];
+        for (uint32_t x = 0u; x < DMA2D_PRECLEAR_WIDTH; x += 8u) {
+            row[x + 0u] = 0u; row[x + 1u] = 0u; row[x + 2u] = 0u; row[x + 3u] = 0u;
+            row[x + 4u] = 0u; row[x + 5u] = 0u; row[x + 6u] = 0u; row[x + 7u] = 0u;
+        }
+    }
+    __DSB();
+    g_dma2d_test_cycles = DWT->CYCCNT - start;
+    g_dma2d_test_time_us = g_dma2d_test_cycles / (SystemCoreClock / 1000000u);
+    return compare_preclear();
+}
+
+static bool run_preclear_dma2d(void)
+{
+    if (!prepare_buffer()) return false;
+    g_dma2d_test_stage = DMA2D_SELFTEST_STAGE_DMA2D;
+    while ((DMA2D->CR & DMA2D_CR_START) != 0u) {}
+    DMA2D->IFCR = DMA2D_IFCR_CTEIF | DMA2D_IFCR_CTCIF | DMA2D_IFCR_CTWIF |
+                  DMA2D_IFCR_CAECIF | DMA2D_IFCR_CCTCIF | DMA2D_IFCR_CCEIF;
+    DMA2D->FGMAR = 0u;
+    DMA2D->FGOR = 0u;
+    DMA2D->BGMAR = 0u;
+    DMA2D->BGOR = 0u;
+    DMA2D->FGPFCCR = 0u;
+    DMA2D->BGPFCCR = 0u;
+    DMA2D->OMAR = (uint32_t)(uintptr_t)&s_framebuffer[DMA2D_PRECLEAR_Y * DMA2D_SELFTEST_FB_WIDTH + DMA2D_PRECLEAR_X];
+    DMA2D->OOR = DMA2D_SELFTEST_FB_WIDTH - DMA2D_PRECLEAR_WIDTH;
+    DMA2D->OPFCCR = DMA2D_OUTPUT_ARGB8888;
+    DMA2D->OCOLR = 0u;
+    DMA2D->NLR = (DMA2D_PRECLEAR_WIDTH << DMA2D_NLR_PL_Pos) |
+                 (DMA2D_PRECLEAR_HEIGHT << DMA2D_NLR_NL_Pos);
+    DMA2D->CR = DMA2D_R2M;
+    g_dma2d_test_lom = (DMA2D->CR & DMA2D_CR_LOM) != 0u ? 1u : 0u;
+    g_dma2d_test_destination_address = DMA2D->OMAR;
+    __DSB();
+    uint32_t start = DWT->CYCCNT;
+    DMA2D->CR |= DMA2D_CR_START;
+    while ((DMA2D->CR & DMA2D_CR_START) != 0u) {
+        if ((DWT->CYCCNT - start) > DMA2D_SELFTEST_TIMEOUT_CYCLES) {
+            fail(UINT32_MAX, UINT32_MAX, 0u, DMA2D->CR);
+            return false;
+        }
+    }
+    g_dma2d_test_cycles = DWT->CYCCNT - start;
+    g_dma2d_test_time_us = g_dma2d_test_cycles / (SystemCoreClock / 1000000u);
+    snapshot_registers();
+    if ((g_dma2d_test_registers.isr & (DMA2D_ISR_TEIF | DMA2D_ISR_CEIF)) != 0u) {
+        fail(UINT32_MAX, UINT32_MAX, 0u, g_dma2d_test_registers.isr);
+        return false;
+    }
+    DMA2D->IFCR = DMA2D_IFCR_CTEIF | DMA2D_IFCR_CTCIF | DMA2D_IFCR_CTWIF |
+                  DMA2D_IFCR_CAECIF | DMA2D_IFCR_CCTCIF | DMA2D_IFCR_CCEIF;
+    return compare_preclear();
+}
+
 static bool run_m2m_tight_at(uint32_t origin_x, uint32_t origin_y)
 {
     uint32_t wait_start = DWT->CYCCNT;
@@ -559,7 +660,10 @@ void DMA2D_Selftest_Poll(void)
     if ((command != DMA2D_SELFTEST_COMMAND_R2M_FILL &&
          command != DMA2D_SELFTEST_COMMAND_M2M_TIGHT &&
          command != DMA2D_SELFTEST_COMMAND_M2M_STRIDED &&
-         command != DMA2D_SELFTEST_COMMAND_M2M_PFC) ||
+         command != DMA2D_SELFTEST_COMMAND_M2M_PFC &&
+         command != DMA2D_SELFTEST_COMMAND_PRECLEAR_CURRENT &&
+         command != DMA2D_SELFTEST_COMMAND_PRECLEAR_WORDS &&
+         command != DMA2D_SELFTEST_COMMAND_PRECLEAR_DMA2D) ||
         g_dma2d_test_state == DMA2D_SELFTEST_STATE_RUNNING) return;
     g_dma2d_test_command = DMA2D_SELFTEST_COMMAND_NONE;
     g_dma2d_test_case = command;
@@ -573,8 +677,9 @@ void DMA2D_Selftest_Poll(void)
     g_dma2d_test_cycles = 0u;
     g_dma2d_test_time_us = 0u;
     g_dma2d_test_lom = 0u;
-    g_dma2d_test_width = DMA2D_SELFTEST_RECT_WIDTH;
-    g_dma2d_test_height = DMA2D_SELFTEST_RECT_HEIGHT;
+    bool preclear = command >= DMA2D_SELFTEST_COMMAND_PRECLEAR_CURRENT;
+    g_dma2d_test_width = preclear ? DMA2D_PRECLEAR_WIDTH : DMA2D_SELFTEST_RECT_WIDTH;
+    g_dma2d_test_height = preclear ? DMA2D_PRECLEAR_HEIGHT : DMA2D_SELFTEST_RECT_HEIGHT;
     g_dma2d_test_source_address = 0u;
     g_dma2d_test_destination_address = 0u;
     g_dma2d_test_source_stride = 0u;
@@ -611,13 +716,22 @@ void DMA2D_Selftest_Poll(void)
         }
         g_dma2d_test_case = 29u;
         if (!run_m2m_strided_at(56u, 56u, 0u, 0u)) return;
-    } else {
+    } else if (command == DMA2D_SELFTEST_COMMAND_M2M_PFC) {
         g_dma2d_test_stage = DMA2D_SELFTEST_STAGE_ALLOCATE;
         if (!prepare_pfc_sources()) return;
         g_dma2d_test_case = 1u;
         if (!run_pfc_at(s_pfc_tight_source, DMA2D_SELFTEST_RECT_WIDTH, 0u, 0u, 137u, 83u)) return;
         g_dma2d_test_case = 2u;
         if (!run_pfc_at(s_pfc_strided_source, DMA2D_SELFTEST_STRIDED_WIDTH, 17u, 23u, 137u, 83u)) return;
+    } else {
+        g_dma2d_test_stage = DMA2D_SELFTEST_STAGE_ALLOCATE;
+        if (command == DMA2D_SELFTEST_COMMAND_PRECLEAR_CURRENT) {
+            if (!run_preclear_current()) return;
+        } else if (command == DMA2D_SELFTEST_COMMAND_PRECLEAR_WORDS) {
+            if (!run_preclear_words()) return;
+        } else {
+            if (!run_preclear_dma2d()) return;
+        }
     }
     g_dma2d_test_stage = DMA2D_SELFTEST_STAGE_COMPLETE;
     ++g_dma2d_test_pass;

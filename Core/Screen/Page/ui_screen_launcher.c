@@ -24,6 +24,7 @@
 #include "perf_monitor.h"
 #include "ui_font_provider.h"
 #include "ui_launcher_cache.h"
+#include "lvgl_render_benchmark.h"
 
 /* ------------------------------------------------------------------ */
 /*  SDRAM 地址布局                                                      */
@@ -120,6 +121,11 @@ enum {
 /* GDB mailbox.  The app task owns all LVGL changes after reading this value. */
 volatile uint32_t g_launcher_slot_trace_visual_mode;
 volatile uint32_t g_launcher_slot_trace_alpha_fixed_pixels;
+#if CARTDESK_RENDER_AUDIT_ENABLE
+volatile uint32_t g_launcher_preview_alpha_seen_mask;
+volatile uint32_t g_launcher_preview_nonopaque_pixels[DESIGN_APP_COUNT];
+volatile uint8_t g_launcher_preview_min_alpha[DESIGN_APP_COUNT];
+#endif
 static uint32_t s_launcher_slot_trace_visual_mode;
 
 enum {
@@ -660,12 +666,26 @@ static void prv_configure_slot_image(int slot)
     /* Both A/B descriptors intentionally share these exact pixels.  Normalize
      * alpha in the trace-only build so descriptor format is the sole variable. */
     uint32_t *pixels = launcher_get_big_icon((uint8_t)slot);
+#if CARTDESK_RENDER_AUDIT_ENABLE
+    uint32_t nonopaque = 0u;
+    uint8_t min_alpha = UINT8_MAX;
+#endif
     for(uint32_t pixel = 0u; pixel < (CART_BIN_PREVIEW_W * CART_BIN_PREVIEW_H); pixel++) {
+#if CARTDESK_RENDER_AUDIT_ENABLE
+        uint8_t alpha = (uint8_t)(pixels[pixel] >> 24);
+        if(alpha < min_alpha) min_alpha = alpha;
+        if(alpha != UINT8_MAX) ++nonopaque;
+#endif
         if((pixels[pixel] & UINT32_C(0xFF000000)) != UINT32_C(0xFF000000)) {
             pixels[pixel] |= UINT32_C(0xFF000000);
             ++g_launcher_slot_trace_alpha_fixed_pixels;
         }
     }
+#if CARTDESK_RENDER_AUDIT_ENABLE
+    g_launcher_preview_nonopaque_pixels[slot] = nonopaque;
+    g_launcher_preview_min_alpha[slot] = min_alpha;
+    g_launcher_preview_alpha_seen_mask |= UINT32_C(1) << (uint32_t)slot;
+#endif
     s_slot_trace_xrgb_dsc[slot] = s_image_dsc[slot];
     s_slot_trace_xrgb_dsc[slot].header.cf = LV_COLOR_FORMAT_XRGB8888;
 #endif
@@ -1454,6 +1474,9 @@ bool Launcher_HandleIoCompletion(const cart_io_completion_t *completion)
 
 void Launcher_Task(void)
 {
+    if(LvglRenderBenchmark_Poll()) {
+        return;
+    }
 #if XHGC_DMA2D_SELFTEST_ENABLE
     /* GDB writes the mailbox only; this executes in the app task. */
     DMA2D_Selftest_Poll();

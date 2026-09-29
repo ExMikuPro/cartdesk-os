@@ -24,6 +24,7 @@
 #include "task.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "render_audit.h"
 #include "lv_port_disp.h"
 #include "lvgl.h"
 #include "draw/dma2d/lv_draw_dma2d.h"
@@ -115,6 +116,7 @@ void DebugMon_Handler(void)
 void SysTick_Handler(void)
 {
   /* USER CODE BEGIN SysTick_IRQn 0 */
+  RenderAudit_IrqBegin(RENDER_AUDIT_IRQ_SYSTICK);
   uint32_t perf_start = PerfMonitor_Begin();
   /* USER CODE END SysTick_IRQn 0 */
   /* Explicitly clear COUNTFLAG to avoid timing jitter in CMSIS-RTOS V2 */
@@ -133,6 +135,7 @@ HAL_IncTick();
   /* USER CODE BEGIN SysTick_IRQn 1 */
   lv_tick_inc(1);
   PerfMonitor_End(PERF_MONITOR_IRQ_SYSTICK, perf_start);
+  RenderAudit_IrqEnd(RENDER_AUDIT_IRQ_SYSTICK);
 
   /* USER CODE END SysTick_IRQn 1 */
 }
@@ -150,11 +153,13 @@ HAL_IncTick();
 void EXTI3_IRQHandler(void)
 {
   /* USER CODE BEGIN EXTI3_IRQn 0 */
+  RenderAudit_IrqBegin(RENDER_AUDIT_IRQ_EXTI3);
   uint32_t perf_start = PerfMonitor_Begin();
   /* USER CODE END EXTI3_IRQn 0 */
   HAL_GPIO_EXTI_IRQHandler(TOUCH_INT_Pin);
   /* USER CODE BEGIN EXTI3_IRQn 1 */
   PerfMonitor_End(PERF_MONITOR_IRQ_EXTI3, perf_start);
+  RenderAudit_IrqEnd(RENDER_AUDIT_IRQ_EXTI3);
   /* USER CODE END EXTI3_IRQn 1 */
 }
 
@@ -164,11 +169,13 @@ void EXTI3_IRQHandler(void)
 void SDMMC1_IRQHandler(void)
 {
   /* USER CODE BEGIN SDMMC1_IRQn 0 */
+  RenderAudit_IrqBegin(RENDER_AUDIT_IRQ_SDMMC1);
   uint32_t perf_start = PerfMonitor_Begin();
   /* USER CODE END SDMMC1_IRQn 0 */
   HAL_SD_IRQHandler(&hsd1);
   /* USER CODE BEGIN SDMMC1_IRQn 1 */
   PerfMonitor_End(PERF_MONITOR_IRQ_SDMMC1, perf_start);
+  RenderAudit_IrqEnd(RENDER_AUDIT_IRQ_SDMMC1);
   /* USER CODE END SDMMC1_IRQn 1 */
 }
 
@@ -178,11 +185,13 @@ void SDMMC1_IRQHandler(void)
 void OTG_HS_IRQHandler(void)
 {
   /* USER CODE BEGIN OTG_HS_IRQn 0 */
+  RenderAudit_IrqBegin(RENDER_AUDIT_IRQ_USB);
   uint32_t perf_start = PerfMonitor_Begin();
   /* USER CODE END OTG_HS_IRQn 0 */
   HAL_PCD_IRQHandler(&hpcd_USB_OTG_HS);
   /* USER CODE BEGIN OTG_HS_IRQn 1 */
   PerfMonitor_End(PERF_MONITOR_IRQ_USB_OTG_HS, perf_start);
+  RenderAudit_IrqEnd(RENDER_AUDIT_IRQ_USB);
   /* USER CODE END OTG_HS_IRQn 1 */
 }
 
@@ -192,12 +201,14 @@ void OTG_HS_IRQHandler(void)
 void LTDC_IRQHandler(void)
 {
   /* USER CODE BEGIN LTDC_IRQn 0 */
+  RenderAudit_IrqBegin(RENDER_AUDIT_IRQ_LTDC);
   uint32_t perf_start = PerfMonitor_Begin();
   /* USER CODE END LTDC_IRQn 0 */
   HAL_LTDC_IRQHandler(&hltdc);
   /* USER CODE BEGIN LTDC_IRQn 1 */
   LTDC_IRQHandler_Callback();
   PerfMonitor_End(PERF_MONITOR_IRQ_LTDC, perf_start);
+  RenderAudit_IrqEnd(RENDER_AUDIT_IRQ_LTDC);
   /* USER CODE END LTDC_IRQn 1 */
 }
 
@@ -207,6 +218,7 @@ void LTDC_IRQHandler(void)
 void DMA2D_IRQHandler(void)
 {
   /* USER CODE BEGIN DMA2D_IRQn 0 */
+  RenderAudit_IrqBegin(RENDER_AUDIT_IRQ_DMA2D);
   uint32_t perf_start = PerfMonitor_Begin();
   /* Capture ISR flags before HAL clears them */
   uint32_t isr = DMA2D->ISR;
@@ -222,6 +234,7 @@ void DMA2D_IRQHandler(void)
   (void)isr;
 #endif
   PerfMonitor_End(PERF_MONITOR_IRQ_DMA2D, perf_start);
+  RenderAudit_IrqEnd(RENDER_AUDIT_IRQ_DMA2D);
   /* USER CODE END DMA2D_IRQn 1 */
 }
 
@@ -231,11 +244,13 @@ void DMA2D_IRQHandler(void)
 void MDMA_IRQHandler(void)
 {
   /* USER CODE BEGIN MDMA_IRQn 0 */
+  RenderAudit_IrqBegin(RENDER_AUDIT_IRQ_MDMA);
   uint32_t perf_start = PerfMonitor_Begin();
   /* USER CODE END MDMA_IRQn 0 */
   HAL_MDMA_IRQHandler(&hmdma_mdma_channel0_sw_0);
   /* USER CODE BEGIN MDMA_IRQn 1 */
   PerfMonitor_End(PERF_MONITOR_IRQ_MDMA, perf_start);
+  RenderAudit_IrqEnd(RENDER_AUDIT_IRQ_MDMA);
   /* USER CODE END MDMA_IRQn 1 */
 }
 

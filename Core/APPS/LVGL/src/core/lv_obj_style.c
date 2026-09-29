@@ -12,6 +12,7 @@
 #include "../misc/lv_bidi_private.h"
 #include "../misc/lv_style_private.h"
 #include "lv_obj_style_private.h"
+#include "render_audit.h"
 #include "lv_obj_class_private.h"
 #include "../display/lv_display_private.h"
 #include "../core/lv_global.h"
@@ -389,15 +390,22 @@ lv_style_value_t lv_obj_get_style_prop(const lv_obj_t * obj, lv_part_t part, lv_
 
 lv_style_value_t lv_obj_get_style_prop_internal(const lv_obj_t * obj, lv_part_t part, lv_style_prop_t prop)
 {
+    RenderAudit_Begin(RENDER_AUDIT_CAT_STYLE);
+    RenderAudit_StyleGet();
     LV_ASSERT(obj != NULL);
     lv_style_selector_t selector = part | obj->state;
     lv_style_value_t value_act = { .ptr = NULL };
     lv_style_res_t found;
 
     found = get_selector_style_prop(obj, selector, prop, &value_act);
-    if(found == LV_STYLE_RES_FOUND) return value_act;
+    if(found == LV_STYLE_RES_FOUND) {
+        RenderAudit_End(RENDER_AUDIT_CAT_STYLE);
+        return value_act;
+    }
 
-    return lv_style_prop_get_default(prop);
+    value_act = lv_style_prop_get_default(prop);
+    RenderAudit_End(RENDER_AUDIT_CAT_STYLE);
+    return value_act;
 }
 lv_style_value_t lv_obj_style_apply_color_filter_internal(const lv_obj_t * obj, lv_part_t part, lv_style_value_t v)
 {

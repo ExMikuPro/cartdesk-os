@@ -24,6 +24,7 @@ option(XHGC_MEMINFO_SELFTEST_ENABLE "Run APP_ARENA_REST meminfo selftest in Debu
 option(XHGC_DMA_POOL_SELFTEST_ENABLE "Run DMA_POOL allocator meminfo selftest in Debug builds" OFF)
 option(XHGC_DMA2D_SELFTEST_ENABLE "Enable the DMA2D standalone GDB mailbox self-test" OFF)
 option(CARTDESK_LTDC_SYNC_TRACE_ENABLE "Enable the debug-only LTDC/LVGL presentation timing trace" OFF)
+option(CARTDESK_RENDER_AUDIT_ENABLE "Enable the debug-only exclusive LVGL render audit" OFF)
 option(XHGC_MEM_OVERLAY_ENABLE "Enable LCD memory debug overlay" OFF)
 option(XHGC_MEM_OVERLAY_BOOT_VISIBLE "Show LCD memory debug overlay at startup" OFF)
 option(XHGC_ENABLE_EXPERIMENTAL_CART_RESOURCE_CACHE "Enable legacy experimental cart resource cache owner for RESOURCE_ARENA" OFF)
@@ -251,6 +252,11 @@ if(CARTDESK_LTDC_SYNC_TRACE_ENABLE AND
     list(APPEND COMMON_DEFINES CARTDESK_LTDC_SYNC_TRACE_ENABLE=1)
 endif()
 
+if(CARTDESK_RENDER_AUDIT_ENABLE AND
+   (CMAKE_BUILD_TYPE STREQUAL "Debug" OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo"))
+    list(APPEND COMMON_DEFINES CARTDESK_RENDER_AUDIT_ENABLE=1)
+endif()
+
 if(XHGC_MEM_OVERLAY_ENABLE)
     list(APPEND COMMON_DEFINES XHGC_MEM_OVERLAY_ENABLE=1)
     if(XHGC_MEM_OVERLAY_BOOT_VISIBLE)
@@ -373,6 +379,8 @@ target_link_libraries(lvgl PUBLIC cartdesk_common)
 add_library(drv_display STATIC
         ${DEBUG_DIR}/display_trace.c
         ${DEBUG_DIR}/display_trace.h
+        ${DEBUG_DIR}/render_audit.c
+        ${DEBUG_DIR}/render_audit.h
         ${DRIVER_DIR}/LCD/lcd.c
         ${DRIVER_DIR}/LCD/lcd.h
         ${DRIVER_DIR}/SDRAM/sdram.c
@@ -637,6 +645,8 @@ add_library(app_screen STATIC
         ${SCREEN_PAGE_DIR}/jbm_el_20px.h
         ${SCREEN_PAGE_DIR}/ui_launcher_cache.c
         ${SCREEN_PAGE_DIR}/ui_launcher_cache.h
+        ${DEBUG_DIR}/lvgl_render_benchmark.c
+        ${DEBUG_DIR}/lvgl_render_benchmark.h
         ${SCREEN_UTILS_DIR}/preview_argb_current.c
         ${SCREEN_UTILS_DIR}/preview_argb_current.h
 )
@@ -647,6 +657,7 @@ target_include_directories(app_screen PUBLIC
         ${SCREEN_UTILS_DIR}
         ${TASK_DIR}
         ${DRIVER_DIR}/LCD
+        ${DEBUG_DIR}
 )
 target_link_libraries(app_screen
         PUBLIC cartdesk_common lvgl drv_storage cart_core
@@ -741,6 +752,14 @@ target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
 
 # 添加 STM32CubeMX 生成的源（main.c / 外设初始化 / 启动文件等）
 add_subdirectory(cmake/stm32cubemx)
+
+# FreeRTOS is generated as a separate object target and does not inherit
+# cartdesk_common definitions. Enable the scheduler switch hooks only in the
+# dedicated full-render audit build.
+if(CARTDESK_RENDER_AUDIT_ENABLE AND
+   (CMAKE_BUILD_TYPE STREQUAL "Debug" OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo"))
+    target_compile_definitions(FreeRTOS PRIVATE CARTDESK_RENDER_AUDIT_ENABLE=1)
+endif()
 
 # CubeMX owns the canonical middleware source paths below.  The project keeps
 # its SD DMA safety and runtime CDC/MSC switching in stable custom translation

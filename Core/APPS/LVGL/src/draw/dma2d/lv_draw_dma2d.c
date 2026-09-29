@@ -8,6 +8,7 @@
  *********************/
 
 #include "lv_draw_dma2d_private.h"
+#include "render_audit.h"
 #if LV_USE_DRAW_DMA2D
 
 #include "../sw/lv_draw_sw.h"
@@ -273,6 +274,11 @@ void lv_draw_dma2d_configure_and_start_transfer(const lv_draw_dma2d_configuratio
                 | DMA2D_CR_TCIE
 #endif
                 ;
+    uint32_t audit_mode = conf->mode == LV_DRAW_DMA2D_MODE_REGISTER_TO_MEMORY ? 0u :
+                          (conf->mode == LV_DRAW_DMA2D_MODE_MEMORY_TO_MEMORY_WITH_BLENDING ||
+                           conf->mode == LV_DRAW_DMA2D_MODE_MEMORY_TO_MEMORY_WITH_BLENDING_AND_FIXED_COLOR_FG ||
+                           conf->mode == LV_DRAW_DMA2D_MODE_MEMORY_TO_MEMORY_WITH_BLENDING_AND_FIXED_COLOR_BG) ? 2u : 1u;
+    RenderAudit_DmaTransferBegin(audit_mode, conf->w * conf->h);
 }
 
 
@@ -351,49 +357,47 @@ static void zephyr_dma2d_irq_handler(void *)
 
 static int32_t evaluate_cb(lv_draw_unit_t * draw_unit, lv_draw_task_t * task)
 {
+    uint32_t audit_reject = 0u;
     switch(task->type) {
         case LV_DRAW_TASK_TYPE_FILL: {
                 lv_draw_fill_dsc_t * dsc = task->draw_dsc;
-                if(!(dsc->radius == 0
-                     && dsc->grad.dir == LV_GRAD_DIR_NONE
-                     && (dsc->base.layer->color_format == LV_COLOR_FORMAT_ARGB8888
-                         || dsc->base.layer->color_format == LV_COLOR_FORMAT_XRGB8888
-                         || dsc->base.layer->color_format == LV_COLOR_FORMAT_RGB888
-                         || dsc->base.layer->color_format == LV_COLOR_FORMAT_RGB565))) {
-                    return 0;
-                }
+                if(dsc->radius != 0) audit_reject |= 0x002u;
+                if(dsc->grad.dir != LV_GRAD_DIR_NONE) audit_reject |= 0x004u;
+                if(!(dsc->base.layer->color_format == LV_COLOR_FORMAT_ARGB8888
+                     || dsc->base.layer->color_format == LV_COLOR_FORMAT_XRGB8888
+                     || dsc->base.layer->color_format == LV_COLOR_FORMAT_RGB888
+                     || dsc->base.layer->color_format == LV_COLOR_FORMAT_RGB565)) audit_reject |= 0x008u;
             }
             break;
         case LV_DRAW_TASK_TYPE_IMAGE: {
                 lv_draw_image_dsc_t * dsc = task->draw_dsc;
-                if(!(dsc->header.cf < LV_COLOR_FORMAT_PROPRIETARY_START
-                     && dsc->clip_radius == 0
-                     && dsc->bitmap_mask_src == NULL
-                     && dsc->sup == NULL
-                     && dsc->tile == 0
-                     && dsc->blend_mode == LV_BLEND_MODE_NORMAL
-                     && dsc->recolor_opa <= LV_OPA_MIN
-                     && dsc->skew_y == 0
-                     && dsc->skew_x == 0
-                     && dsc->scale_x == LV_SCALE_NONE
-                     && dsc->scale_y == LV_SCALE_NONE
-                     && dsc->rotation == 0
-                     && lv_image_src_get_type(dsc->src) == LV_IMAGE_SRC_VARIABLE
-                     && (dsc->header.cf == LV_COLOR_FORMAT_ARGB8888
-                         || dsc->header.cf == LV_COLOR_FORMAT_XRGB8888
-                         || dsc->header.cf == LV_COLOR_FORMAT_RGB888
-                         || dsc->header.cf == LV_COLOR_FORMAT_RGB565
-                         || dsc->header.cf == LV_COLOR_FORMAT_ARGB1555)
-                     && (dsc->base.layer->color_format == LV_COLOR_FORMAT_ARGB8888
-                         || dsc->base.layer->color_format == LV_COLOR_FORMAT_XRGB8888
-                         || dsc->base.layer->color_format == LV_COLOR_FORMAT_RGB888
-                         || dsc->base.layer->color_format == LV_COLOR_FORMAT_RGB565))) {
-                    return 0;
-                }
+                if(dsc->header.cf >= LV_COLOR_FORMAT_PROPRIETARY_START) audit_reject |= 0x200u;
+                if(dsc->clip_radius != 0) audit_reject |= 0x002u;
+                if(dsc->bitmap_mask_src != NULL || dsc->sup != NULL || dsc->tile != 0) audit_reject |= 0x010u;
+                if(dsc->blend_mode != LV_BLEND_MODE_NORMAL) audit_reject |= 0x040u;
+                if(dsc->recolor_opa > LV_OPA_MIN) audit_reject |= 0x020u;
+                if(dsc->skew_y != 0 || dsc->skew_x != 0 || dsc->scale_x != LV_SCALE_NONE ||
+                   dsc->scale_y != LV_SCALE_NONE || dsc->rotation != 0) audit_reject |= 0x080u;
+                if(lv_image_src_get_type(dsc->src) != LV_IMAGE_SRC_VARIABLE) audit_reject |= 0x100u;
+                if(!(dsc->header.cf == LV_COLOR_FORMAT_ARGB8888
+                     || dsc->header.cf == LV_COLOR_FORMAT_XRGB8888
+                     || dsc->header.cf == LV_COLOR_FORMAT_RGB888
+                     || dsc->header.cf == LV_COLOR_FORMAT_RGB565
+                     || dsc->header.cf == LV_COLOR_FORMAT_ARGB1555)) audit_reject |= 0x200u;
+                if(!(dsc->base.layer->color_format == LV_COLOR_FORMAT_ARGB8888
+                     || dsc->base.layer->color_format == LV_COLOR_FORMAT_XRGB8888
+                     || dsc->base.layer->color_format == LV_COLOR_FORMAT_RGB888
+                     || dsc->base.layer->color_format == LV_COLOR_FORMAT_RGB565)) audit_reject |= 0x008u;
             }
             break;
         default:
-            return 0;
+            audit_reject |= 0x001u;
+            break;
+    }
+
+    if(audit_reject != 0u) {
+        RenderAudit_DmaReject(audit_reject, (uint32_t)lv_area_get_size(&task->area));
+        return 0;
     }
 
     task->preferred_draw_unit_id = DRAW_UNIT_ID_DMA2D;
@@ -425,7 +429,6 @@ static int32_t dispatch_cb(lv_draw_unit_t * draw_unit, lv_layer_t * layer)
     t->state = LV_DRAW_TASK_STATE_IN_PROGRESS;
     t->draw_unit = draw_unit;
     draw_dma2d_unit->task_act = t;
-
     /* Abort rapidly if nothing to do */
     lv_area_t clipped_coords;
     if(!lv_area_intersect(&clipped_coords, &t->area, &t->clip_area)) {
@@ -435,6 +438,18 @@ static int32_t dispatch_cb(lv_draw_unit_t * draw_unit, lv_layer_t * layer)
         lv_draw_dispatch_request();
         return 1;
     }
+    if(t->type == LV_DRAW_TASK_TYPE_FILL) {
+        const lv_draw_fill_dsc_t * dsc = t->draw_dsc;
+        RenderAuditCoverage coverage =
+            dsc->opa >= LV_OPA_MAX && t->opa >= LV_OPA_MAX && dsc->radius == 0 &&
+            dsc->grad.dir == LV_GRAD_DIR_NONE ?
+            RENDER_AUDIT_COVERAGE_OPAQUE : RENDER_AUDIT_COVERAGE_BLEND;
+        RenderAudit_TaskCoverage((uint32_t)t->type, clipped_coords.x1, clipped_coords.y1,
+                                 clipped_coords.x2, clipped_coords.y2, coverage);
+    }
+    RenderAudit_DrawExecBegin((uint32_t)t->type, RENDER_AUDIT_UNIT_DMA2D,
+                              clipped_coords.x1, clipped_coords.y1,
+                              clipped_coords.x2, clipped_coords.y2);
 
     int32_t x = 0 - t->target_layer->buf_area.x1;
     int32_t y = 0 - t->target_layer->buf_area.y1;
@@ -443,7 +458,13 @@ static int32_t dispatch_cb(lv_draw_unit_t * draw_unit, lv_layer_t * layer)
     lv_area_move(&draw_dma2d_unit->last_clipped_area, x, y);
 
     /* Flush cache before drawing. This is a no-op when DMA2D_CACHE is disabled */
+    uint32_t audit_cache_bytes = (uint32_t)lv_area_get_width(&draw_dma2d_unit->last_clipped_area) *
+                                 (uint32_t)lv_area_get_height(&draw_dma2d_unit->last_clipped_area) *
+                                 (uint32_t)lv_color_format_get_bpp(layer->draw_buf->header.cf) / 8u;
+    RenderAudit_Begin(RENDER_AUDIT_CAT_CACHE);
     lv_draw_buf_flush_cache(layer->draw_buf, &draw_dma2d_unit->last_clipped_area);
+    RenderAudit_Cache(audit_cache_bytes);
+    RenderAudit_End(RENDER_AUDIT_CAT_CACHE);
 
     if(t->type == LV_DRAW_TASK_TYPE_FILL) {
         lv_draw_fill_dsc_t * dsc = t->draw_dsc;
@@ -464,9 +485,16 @@ static int32_t dispatch_cb(lv_draw_unit_t * draw_unit, lv_layer_t * layer)
 #if LV_DRAW_DMA2D_ASYNC
     return LV_DRAW_UNIT_IDLE;
 #else
+    RenderAudit_Begin(RENDER_AUDIT_CAT_DMA2D_WAIT);
     while(DMA2D->CR & DMA2D_CR_START);
+    RenderAudit_End(RENDER_AUDIT_CAT_DMA2D_WAIT);
+    RenderAudit_DmaTransferEnd(0u);
 
+    RenderAudit_Begin(RENDER_AUDIT_CAT_CACHE);
     post_transfer_tasks(draw_dma2d_unit);
+    RenderAudit_Cache(audit_cache_bytes);
+    RenderAudit_End(RENDER_AUDIT_CAT_CACHE);
+    RenderAudit_DrawExecEnd((uint32_t)t->type, RENDER_AUDIT_UNIT_DMA2D);
 
     lv_draw_dispatch_request();
 

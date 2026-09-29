@@ -7,6 +7,7 @@
  *      INCLUDES
  *********************/
 #include "lv_draw_sw_private.h"
+#include "render_audit.h"
 #include "../lv_draw_private.h"
 #if LV_USE_DRAW_SW
 
@@ -411,6 +412,19 @@ static int32_t wait_for_finish(lv_draw_unit_t * draw_unit)
 static void execute_drawing(lv_draw_task_t * t)
 {
     LV_PROFILER_DRAW_BEGIN;
+    lv_area_t audit_area;
+    if(!lv_area_intersect(&audit_area, &t->area, &t->clip_area)) audit_area = t->area;
+    if(t->type == LV_DRAW_TASK_TYPE_FILL) {
+        const lv_draw_fill_dsc_t * dsc = t->draw_dsc;
+        RenderAuditCoverage coverage =
+            dsc->opa >= LV_OPA_MAX && t->opa >= LV_OPA_MAX && dsc->radius == 0 &&
+            dsc->grad.dir == LV_GRAD_DIR_NONE ?
+            RENDER_AUDIT_COVERAGE_OPAQUE : RENDER_AUDIT_COVERAGE_BLEND;
+        RenderAudit_TaskCoverage((uint32_t)t->type, audit_area.x1, audit_area.y1,
+                                 audit_area.x2, audit_area.y2, coverage);
+    }
+    RenderAudit_DrawExecBegin((uint32_t)t->type, RENDER_AUDIT_UNIT_SW,
+                              audit_area.x1, audit_area.y1, audit_area.x2, audit_area.y2);
     /*Render the draw task*/
     switch(t->type) {
         case LV_DRAW_TASK_TYPE_FILL:
@@ -459,6 +473,7 @@ static void execute_drawing(lv_draw_task_t * t)
     }
 
 
+    RenderAudit_DrawExecEnd((uint32_t)t->type, RENDER_AUDIT_UNIT_SW);
     LV_PROFILER_DRAW_END;
 }
 

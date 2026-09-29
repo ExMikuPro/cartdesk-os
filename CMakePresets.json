@@ -80,6 +80,22 @@
             }
         },
         {
+            "name": "Debug-LTDC-Full-Render-Audit",
+            "displayName": "Debug Launcher 全链路渲染审计",
+            "description": "在 LTDC trace 上增加互斥 LVGL、任务、ISR、DMA2D 与 coverage 审计；仅用于目标板根因分析。",
+            "inherits": "default",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "CARTDESK_LTDC_SYNC_TRACE_ENABLE": "ON",
+                "CARTDESK_RENDER_AUDIT_ENABLE": "ON",
+                "XHGC_MEMINFO_SELFTEST_ENABLE": "OFF",
+                "XHGC_DMA_POOL_SELFTEST_ENABLE": "OFF",
+                "XHGC_MEM_OVERLAY_ENABLE": "OFF",
+                "XHGC_MEM_OVERLAY_BOOT_VISIBLE": "OFF",
+                "XHGC_ENABLE_EXPERIMENTAL_CART_RESOURCE_CACHE": "OFF"
+            }
+        },
+        {
             "name": "Debug-MemInfo-SelfTest",
             "displayName": "Debug 内存统计自测",
             "description": "启用 meminfo/app_arena 自测，用于验证 APP_ARENA_REST used/peak/reset/fail 统计是否正确。默认固件不应使用此配置。",
@@ -223,6 +239,13 @@
         {
             "name": "Debug-LTDC-Sync-Trace",
             "configurePreset": "Debug-LTDC-Sync-Trace",
+            "targets": [
+                "cartdesk-os"
+            ]
+        },
+        {
+            "name": "Debug-LTDC-Full-Render-Audit",
+            "configurePreset": "Debug-LTDC-Full-Render-Audit",
             "targets": [
                 "cartdesk-os"
             ]

@@ -8,6 +8,8 @@
  *********************/
 
 #include "lv_draw_private.h"
+#include "render_audit.h"
+#include "../misc/lv_area_private.h"
 #include "../misc/lv_text_private.h"
 
 /*********************
@@ -59,10 +61,12 @@ void LV_ATTRIBUTE_FAST_MEM lv_draw_rect_dsc_init(lv_draw_rect_dsc_t * dsc)
 void lv_draw_fill_dsc_init(lv_draw_fill_dsc_t * dsc)
 {
     LV_CHECK_ARG(dsc != NULL, return);
+    RenderAudit_Begin(RENDER_AUDIT_CAT_DSC_INIT);
 
     lv_memzero(dsc, sizeof(*dsc));
     dsc->opa = LV_OPA_COVER;
     dsc->base.dsc_size = sizeof(lv_draw_fill_dsc_t);
+    RenderAudit_End(RENDER_AUDIT_CAT_DSC_INIT);
 }
 
 lv_draw_fill_dsc_t * lv_draw_task_get_fill_dsc(lv_draw_task_t * task)
@@ -95,6 +99,16 @@ void lv_draw_fill(lv_layer_t * layer, const lv_draw_fill_dsc_t * dsc, const lv_a
 
     lv_memcpy(t->draw_dsc, dsc, sizeof(*dsc));
 
+    lv_area_t audit_area;
+    if(lv_area_intersect(&audit_area, coords, &layer->_clip_area)) {
+        RenderAuditCoverage coverage =
+            dsc->opa >= LV_OPA_MAX && t->opa >= LV_OPA_MAX && dsc->radius == 0 &&
+            dsc->grad.dir == LV_GRAD_DIR_NONE ?
+            RENDER_AUDIT_COVERAGE_OPAQUE : RENDER_AUDIT_COVERAGE_BLEND;
+        RenderAudit_TaskCoverage((uint32_t)t->type, audit_area.x1, audit_area.y1,
+                                 audit_area.x2, audit_area.y2, coverage);
+    }
+
     lv_draw_finalize_task_creation(layer, t);
     LV_PROFILER_DRAW_END;
 }
@@ -102,11 +116,13 @@ void lv_draw_fill(lv_layer_t * layer, const lv_draw_fill_dsc_t * dsc, const lv_a
 void lv_draw_border_dsc_init(lv_draw_border_dsc_t * dsc)
 {
     LV_CHECK_ARG(dsc != NULL, return);
+    RenderAudit_Begin(RENDER_AUDIT_CAT_DSC_INIT);
 
     lv_memzero(dsc, sizeof(*dsc));
     dsc->opa = LV_OPA_COVER;
     dsc->side = LV_BORDER_SIDE_FULL;
     dsc->base.dsc_size = sizeof(lv_draw_border_dsc_t);
+    RenderAudit_End(RENDER_AUDIT_CAT_DSC_INIT);
 }
 
 lv_draw_border_dsc_t * lv_draw_task_get_border_dsc(lv_draw_task_t * task)

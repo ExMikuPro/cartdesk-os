@@ -10,6 +10,7 @@
 #include "../misc/lv_area_private.h"
 #include "../misc/lv_event_private.h"
 #include "lv_draw_private.h"
+#include "render_audit.h"
 #include "lv_draw_vector_private.h"
 #include "../display/lv_display_private.h"
 #include "../core/lv_global.h"
@@ -93,9 +94,13 @@ lv_draw_task_t * lv_draw_add_task(lv_layer_t * layer, const lv_area_t * coords, 
     LV_CHECK_ARG(coords != NULL, return NULL);
 
     LV_PROFILER_DRAW_BEGIN;
+    RenderAudit_Begin(RENDER_AUDIT_CAT_TASK_CREATE);
     size_t dsc_size = get_draw_dsc_size(type);
     LV_ASSERT_FORMAT_MSG(dsc_size > 0, "Draw task size is 0 for type %d", type);
+    RenderAudit_Begin(RENDER_AUDIT_CAT_ALLOC);
     lv_draw_task_t * new_task = lv_malloc_zeroed(LV_ALIGN_UP(sizeof(lv_draw_task_t), 8) + dsc_size);
+    RenderAudit_Alloc(LV_ALIGN_UP(sizeof(lv_draw_task_t), 8) + dsc_size);
+    RenderAudit_End(RENDER_AUDIT_CAT_ALLOC);
     LV_ASSERT_MALLOC(new_task);
     new_task->area = *coords;
     new_task->_real_area = *coords;
@@ -108,6 +113,11 @@ lv_draw_task_t * lv_draw_add_task(lv_layer_t * layer, const lv_area_t * coords, 
     new_task->type = type;
     new_task->draw_dsc = (uint8_t *)new_task + LV_ALIGN_UP(sizeof(lv_draw_task_t), 8);
     new_task->state = LV_DRAW_TASK_STATE_WAITING;
+    lv_area_t audit_area;
+    if(lv_area_intersect(&audit_area, coords, &layer->_clip_area)) {
+        RenderAudit_TaskCreated((uint32_t)type, audit_area.x1, audit_area.y1,
+                                audit_area.x2, audit_area.y2);
+    }
 
     /*Find the tail*/
     if(layer->draw_task_head == NULL) {
@@ -122,6 +132,7 @@ lv_draw_task_t * lv_draw_add_task(lv_layer_t * layer, const lv_area_t * coords, 
     LV_LOG_TRACE("Added task %p (type %d), layer (%p) layer head (%p)", (void *)new_task, new_task->type,
                  (void *) layer, (void *)layer->draw_task_head);
 
+    RenderAudit_End(RENDER_AUDIT_CAT_TASK_CREATE);
     LV_PROFILER_DRAW_END;
     return new_task;
 }
@@ -154,16 +165,22 @@ void lv_draw_finalize_task_creation(lv_layer_t * layer, lv_draw_task_t * t)
         t->preference_score = 100;
         t->preferred_draw_unit_id = 0;
         lv_draw_unit_t * u = info->unit_head;
+        RenderAudit_Begin(RENDER_AUDIT_CAT_EVALUATE);
         while(u) {
             if(u->evaluate_cb) {
                 LV_PROFILER_DRAW_BEGIN_TAG("evaluate_cb");
                 LV_PROFILER_DRAW_BEGIN_TAG(u->name);
                 u->evaluate_cb(u, t);
+                uint32_t audit_unit = (u->name && u->name[0] == 'D') ?
+                                      RENDER_AUDIT_UNIT_DMA2D : RENDER_AUDIT_UNIT_SW;
+                uint32_t audit_id = audit_unit == RENDER_AUDIT_UNIT_DMA2D ? 5u : 1u;
+                RenderAudit_Evaluate(audit_unit, t->preferred_draw_unit_id == audit_id);
                 LV_PROFILER_DRAW_END_TAG(u->name);
                 LV_PROFILER_DRAW_END_TAG("evaluate_cb");
             }
             u = u->next;
         }
+        RenderAudit_End(RENDER_AUDIT_CAT_EVALUATE);
         if(t->preferred_draw_unit_id == LV_DRAW_UNIT_NONE) {
             LV_LOG_WARN("Draw task failed (%p, type %d): not taken by any unit", (void *)t, t->type);
             /* mark a non-taken layer task as BLOCKED so we don't try to release it
@@ -183,16 +200,22 @@ void lv_draw_finalize_task_creation(lv_layer_t * layer, lv_draw_task_t * t)
         t->preference_score = 100;
         t->preferred_draw_unit_id = 0;
         lv_draw_unit_t * u = info->unit_head;
+        RenderAudit_Begin(RENDER_AUDIT_CAT_EVALUATE);
         while(u) {
             if(u->evaluate_cb) {
                 LV_PROFILER_DRAW_BEGIN_TAG("evaluate_cb");
                 LV_PROFILER_DRAW_BEGIN_TAG(u->name);
                 u->evaluate_cb(u, t);
+                uint32_t audit_unit = (u->name && u->name[0] == 'D') ?
+                                      RENDER_AUDIT_UNIT_DMA2D : RENDER_AUDIT_UNIT_SW;
+                uint32_t audit_id = audit_unit == RENDER_AUDIT_UNIT_DMA2D ? 5u : 1u;
+                RenderAudit_Evaluate(audit_unit, t->preferred_draw_unit_id == audit_id);
                 LV_PROFILER_DRAW_END_TAG(u->name);
                 LV_PROFILER_DRAW_END_TAG("evaluate_cb");
             }
             u = u->next;
         }
+        RenderAudit_End(RENDER_AUDIT_CAT_EVALUATE);
     }
     LV_PROFILER_DRAW_END;
 }
@@ -219,6 +242,7 @@ void lv_draw_wait_for_finish(void)
 void lv_draw_dispatch(void)
 {
     LV_PROFILER_DRAW_BEGIN;
+    RenderAudit_Begin(RENDER_AUDIT_CAT_DISPATCH);
     bool task_dispatched = false;
     lv_display_t * disp = lv_refr_get_disp_refreshing();
     if(disp != NULL) {
@@ -233,6 +257,7 @@ void lv_draw_dispatch(void)
         lv_draw_wait_for_finish();
         lv_draw_dispatch_request();
     }
+    RenderAudit_End(RENDER_AUDIT_CAT_DISPATCH);
     LV_PROFILER_DRAW_END;
 }
 
@@ -242,12 +267,18 @@ bool lv_draw_dispatch_layer(lv_display_t * disp, lv_layer_t * layer)
     LV_CHECK_ARG(layer != NULL, return false);
 
     LV_PROFILER_DRAW_BEGIN;
+    uint32_t audit_queue_depth = 0u;
+    for(lv_draw_task_t * audit_t = layer->draw_task_head; audit_t; audit_t = audit_t->next) {
+        ++audit_queue_depth;
+    }
+    RenderAudit_Dispatch(audit_queue_depth);
     /*Remove the finished tasks first*/
     lv_draw_task_t * t_prev = NULL;
     lv_draw_task_t * t = layer->draw_task_head;
     lv_draw_task_t * t_next;
     bool remove_task = false;
     while(t) {
+        RenderAudit_QueueScan(t->state == LV_DRAW_TASK_STATE_BLOCKED);
         t_next = t->next;
         if(t->state == LV_DRAW_TASK_STATE_FINISHED || t->state == LV_DRAW_TASK_STATE_FAILED) {
             if(t->state == LV_DRAW_TASK_STATE_FAILED) {
@@ -782,6 +813,7 @@ static inline size_t get_draw_dsc_size(lv_draw_task_type_t type)
 void lv_draw_cleanup_task(lv_draw_task_t * t)
 {
     LV_PROFILER_DRAW_BEGIN;
+    RenderAudit_Begin(RENDER_AUDIT_CAT_CLEANUP);
     LV_LOG_TRACE("Cleanup task %p (type %d)", (void *)t, t->type);
 
     LV_ASSERT_FORMAT_MSG(t->state != LV_DRAW_TASK_STATE_IN_PROGRESS, "task %p (type %d) is still used by a draw unit",
@@ -805,7 +837,11 @@ void lv_draw_cleanup_task(lv_draw_task_t * t)
         draw_label_dsc->text = NULL;
     }
 
+    RenderAudit_Begin(RENDER_AUDIT_CAT_ALLOC);
     lv_free(t);
+    RenderAudit_Free();
+    RenderAudit_End(RENDER_AUDIT_CAT_ALLOC);
+    RenderAudit_End(RENDER_AUDIT_CAT_CLEANUP);
     LV_PROFILER_DRAW_END;
 }
 
@@ -822,6 +858,7 @@ static lv_draw_task_t * get_first_available_task(lv_layer_t * layer)
      * so it can be blended normally.*/
     lv_draw_task_t * t = layer->draw_task_head;
     while(t) {
+        RenderAudit_QueueScan(t->state == LV_DRAW_TASK_STATE_BLOCKED);
         /*Not waiting to be rendered, leave this layer while the first task is ready (i.e. not blocked)*/
         if(t->state != LV_DRAW_TASK_STATE_WAITING) {
             t = NULL;

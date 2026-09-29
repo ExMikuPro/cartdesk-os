@@ -1,4 +1,5 @@
 #include "display_trace.h"
+#include "render_audit.h"
 
 #if CARTDESK_LTDC_SYNC_TRACE_ENABLE
 
@@ -115,6 +116,7 @@ static uint32_t DisplayTrace_ClassifyFramebuffer(uint32_t address)
 
 static void DisplayTrace_Reset(void)
 {
+    RenderAudit_Reset();
     memset((void *)g_display_trace_ring, 0, sizeof(g_display_trace_ring));
     g_display_trace_write_index = 0u;
     g_display_trace_count = 0u;
@@ -231,11 +233,13 @@ void DisplayTrace_Poll(void)
         g_display_trace_command = DISPLAY_TRACE_COMMAND_NONE;
         DisplayTrace_Reset();
         g_display_trace_state |= DISPLAY_TRACE_STATE_ENABLED;
+        RenderAudit_SetEnabled(1u);
         (void)DisplayTrace_NowCycles();
     }
     else if (command == DISPLAY_TRACE_COMMAND_DISABLE) {
         g_display_trace_command = DISPLAY_TRACE_COMMAND_NONE;
         g_display_trace_state &= ~DISPLAY_TRACE_STATE_ENABLED;
+        RenderAudit_SetEnabled(0u);
     }
 }
 
@@ -270,12 +274,14 @@ void DisplayTrace_RenderBegin(uint32_t render_fb_address)
     uint32_t render_fb = DisplayTrace_ClassifyFramebuffer(render_fb_address);
     g_display_render_fb = render_fb;
     s_render_start_cycle = DisplayTrace_NowCycles();
+    RenderAudit_FrameBegin(g_display_frame_seq);
     DisplayTrace_Record(DISPLAY_TRACE_RENDER_BEGIN, render_fb,
                         g_display_reload_pending != 0u ? DISPLAY_TRACE_FLAG_PRESENTATION_PENDING : 0u);
 }
 
 void DisplayTrace_RenderEnd(uint32_t render_fb_address)
 {
+    RenderAudit_FrameEnd();
     if (s_render_start_cycle != 0u) {
         uint32_t elapsed = DisplayTrace_NowCycles() - s_render_start_cycle;
         g_display_render_last_cycles = elapsed;
