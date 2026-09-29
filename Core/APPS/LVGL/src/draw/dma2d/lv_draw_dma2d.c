@@ -41,6 +41,7 @@
 static int32_t evaluate_cb(lv_draw_unit_t * draw_unit, lv_draw_task_t * task);
 static int32_t dispatch_cb(lv_draw_unit_t * draw_unit, lv_layer_t * layer);
 static int32_t delete_cb(lv_draw_unit_t * draw_unit);
+static void dma2d_buf_clear_cb(lv_draw_buf_t * draw_buf, const lv_area_t * area, lv_layer_t * layer);
 #if LV_DRAW_DMA2D_ASYNC
     static int32_t wait_finish_cb(lv_draw_unit_t * u);
 #endif
@@ -70,8 +71,9 @@ static void post_transfer_tasks(lv_draw_dma2d_unit_t * u);
  **********************/
 void lv_draw_buf_dma2d_init_handlers(void)
 {
-#if LV_DRAW_DMA2D_CACHE
     lv_draw_buf_handlers_t * handlers = lv_draw_buf_get_handlers();
+    handlers->buf_clear_cb = dma2d_buf_clear_cb;
+#if LV_DRAW_DMA2D_CACHE
     lv_draw_buf_handlers_t * font_handlers = lv_draw_buf_get_font_handlers();
     lv_draw_buf_handlers_t * image_handlers = lv_draw_buf_get_image_handlers();
     handlers->invalidate_cache_cb = invalidate_cache;
@@ -345,6 +347,75 @@ static void flush_cache(const lv_draw_buf_t * draw_buf, const lv_area_t * area)
 /**********************
  *   STATIC FUNCTIONS
  **********************/
+static void cpu_buf_clear(lv_draw_buf_t * draw_buf, const lv_area_t * area)
+{
+    uint32_t bpp = lv_color_format_get_bpp(draw_buf->header.cf);
+    uint32_t line_bytes = ((uint32_t)lv_area_get_width(area) * bpp + 7u) >> 3;
+    uint8_t * dst = lv_draw_buf_goto_xy(draw_buf, area->x1, area->y1);
+    for(int32_t y = area->y1; y <= area->y2; ++y) {
+        lv_memzero(dst, line_bytes);
+        dst += draw_buf->header.stride;
+    }
+    lv_draw_buf_flush_cache(draw_buf, area);
+}
+
+static void dma2d_buf_clear_cb(lv_draw_buf_t * draw_buf, const lv_area_t * area, lv_layer_t * layer)
+{
+    LV_UNUSED(layer);
+    lv_area_t full = {
+        .x1 = 0,
+        .y1 = 0,
+        .x2 = (int32_t)draw_buf->header.w - 1,
+        .y2 = (int32_t)draw_buf->header.h - 1,
+    };
+    lv_area_t clipped;
+    if(area == NULL) area = &full;
+    if(!lv_area_intersect(&clipped, area, &full)) return;
+
+#if CARTDESK_RENDER_AUDIT_ENABLE
+    if(g_render_audit_preclear_mode != RENDER_AUDIT_PRECLEAR_DMA2D) {
+        cpu_buf_clear(draw_buf, &clipped);
+        return;
+    }
+#endif
+
+    lv_color_format_t cf = draw_buf->header.cf;
+    uint32_t bpp = lv_color_format_get_bpp(cf);
+    if(cf != LV_COLOR_FORMAT_ARGB8888 || bpp == 0u || (bpp & 7u) != 0u) {
+        cpu_buf_clear(draw_buf, &clipped);
+        return;
+    }
+
+    uint32_t bytes_per_pixel = bpp >> 3;
+    uint32_t stride_pixels = draw_buf->header.stride / bytes_per_pixel;
+    uint32_t width = (uint32_t)lv_area_get_width(&clipped);
+    uint32_t height = (uint32_t)lv_area_get_height(&clipped);
+    lv_draw_buf_flush_cache(draw_buf, &clipped);
+
+    /* Draw-buffer clears run before this layer's draw tasks are dispatched.
+     * Keep the existing synchronous ownership model and wait for any prior
+     * transfer before programming the shared DMA2D registers. */
+    while(DMA2D->CR & DMA2D_CR_START) {}
+    DMA2D->IFCR = DMA2D_IFCR_CTEIF | DMA2D_IFCR_CTCIF | DMA2D_IFCR_CTWIF |
+                  DMA2D_IFCR_CAECIF | DMA2D_IFCR_CCTCIF | DMA2D_IFCR_CCEIF;
+    lv_draw_dma2d_configuration_t conf = {
+        .mode = LV_DRAW_DMA2D_MODE_REGISTER_TO_MEMORY,
+        .w = width,
+        .h = height,
+        .output_address = lv_draw_buf_goto_xy(draw_buf, clipped.x1, clipped.y1),
+        .output_offset = stride_pixels - width,
+        .output_cf = lv_draw_dma2d_cf_to_dma2d_output_cf(cf),
+        .reg_to_mem_mode_color = 0u,
+    };
+    lv_draw_dma2d_configure_and_start_transfer(&conf);
+    while(DMA2D->CR & DMA2D_CR_START) {}
+    RenderAudit_PreclearDmaStatus(DMA2D->ISR & (DMA2D_ISR_TEIF | DMA2D_ISR_CEIF));
+    RenderAudit_DmaTransferEnd(0u);
+    DMA2D->IFCR = DMA2D_IFCR_CTEIF | DMA2D_IFCR_CTCIF | DMA2D_IFCR_CTWIF |
+                  DMA2D_IFCR_CAECIF | DMA2D_IFCR_CCTCIF | DMA2D_IFCR_CCEIF;
+    lv_draw_buf_invalidate_cache(draw_buf, &clipped);
+}
+
 #if defined(__ZEPHYR__) && LV_USE_DRAW_DMA2D_INTERRUPT
 static void zephyr_dma2d_irq_handler(void *)
 {
