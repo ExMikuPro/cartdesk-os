@@ -26,6 +26,8 @@
 #include "ui_font_provider.h"
 #include "ui_launcher_cache.h"
 #include "lvgl_render_benchmark.h"
+#include "lv_port_indev.h"
+#include "launcher_scroll.h"
 
 /* ------------------------------------------------------------------ */
 /*  SDRAM 地址布局                                                      */
@@ -192,15 +194,18 @@ volatile uint32_t g_fb_capture_ltdc_cdsr;
 
 static uint32_t s_scroll_capture_applied_frame_seq;
 static uint32_t s_scroll_capture_next_step_tick;
+#endif /* CARTDESK_LTDC_SYNC_TRACE_ENABLE */
 
 /* ------------------------------------------------------------------ */
-/*  Phase 5 A/B: Launcher scroll invalidation model                     */
+/*  Launcher 逻辑滚动模型（production）                                 */
 /*                                                                      */
-/*  Mode 0 keeps the production native LVGL scroll container.  Mode 1   */
-/*  freezes the native scroll offset at 0 and moves every App Slot (and */
-/*  its sibling title label) with a Launcher owned logical_scroll_x so  */
-/*  the invalidation collapses to old-bbox union new-bbox per slot.     */
-/*  Debug-only: only the trace/audit builds compile this block.         */
+/*  视口与背景不滚动。每个 App Slot 及其标题 label 的真实位置由 Launcher */
+/*  私有的 logical_scroll_x 决定：                                      */
+/*                                                                      */
+/*      slot_x = slot_base_x - logical_scroll_x                         */
+/*                                                                      */
+/*  native LVGL scroll 永久冻结在 0，因此失效面积收敛为每个 slot 的      */
+/*  old bbox ∪ new bbox，而不是整个 800×350 视口。                       */
 /* ------------------------------------------------------------------ */
 
 enum {
@@ -213,38 +218,67 @@ enum {
     LAUNCHER_SLOT_MOVE_API_TRANSLATE = 1u
 };
 
-volatile uint32_t g_launcher_scroll_mode;
-volatile uint32_t g_launcher_scroll_mode_applied;
-volatile uint32_t g_launcher_slot_move_api;
+/* 逻辑滚动位置的生产上报口径；Debug/audit 构建也从这里读取。 */
 volatile int32_t g_launcher_logical_scroll_x;
 volatile int32_t g_launcher_logical_scroll_max;
+
+/* logical_scroll_x 是唯一权威位置源，也是唯一上报给 GDB 的口径。
+ * 它由 launcher_scroll 模块通过 prv_apply_scroll_position_cb() 写入。 */
+static int32_t s_logical_scroll_x;
+static int32_t s_logical_scroll_max;
+
+/*
+ * Debug/audit mailbox（A/B 模式、槽位位移 API、dirty 记录辅助）。
+ * 这些量只被 trace/audit 构建读写，Release 不得包含（需求 #62）。
+ */
+#if CARTDESK_LTDC_SYNC_TRACE_ENABLE
+volatile uint32_t g_launcher_scroll_mode = LAUNCHER_SCROLL_MODE_SLOT_LOCAL;
+volatile uint32_t g_launcher_scroll_mode_applied;
+volatile uint32_t g_launcher_slot_move_api;
 volatile uint32_t g_launcher_slot_moves;
 volatile uint32_t g_launcher_slot_visible_mask;
 volatile int32_t g_launcher_slot_bbox_before[DESIGN_APP_COUNT][4];
 volatile int32_t g_launcher_slot_bbox_after[DESIGN_APP_COUNT][4];
+#endif /* CARTDESK_LTDC_SYNC_TRACE_ENABLE */
 
+/* --- 生产滚动状态 ------------------------------------------------- */
+
+/* 每个 slot 的静态基准位置；真实位置永远由 base - logical 计算，绝不累加。 */
 static int32_t s_slot_base_x[DESIGN_APP_COUNT];
-static int32_t s_logical_scroll_x;
-static uint32_t s_launcher_scroll_mode_applied;
-static bool s_slot_bbox_after_pending;
+static int32_t s_slot_count;
 
+#if CARTDESK_LTDC_SYNC_TRACE_ENABLE
+static uint32_t s_launcher_scroll_mode_applied = LAUNCHER_SCROLL_MODE_NATIVE;
+static bool s_slot_bbox_after_pending;
+#endif
+
+/* 滚动视口几何，创建时按 content width / viewport width 计算一次。 */
+static int32_t s_viewport_top;
+static int32_t s_viewport_bottom;
+static int32_t s_viewport_w;
+
+/* 指针输入设备（GT911 触摸）。 */
+static lv_indev_t *s_touch_indev;
+
+#if CARTDESK_LTDC_SYNC_TRACE_ENABLE
 static uint32_t prv_launcher_slot_local_active(void)
 {
     return (g_launcher_scroll_mode == LAUNCHER_SCROLL_MODE_SLOT_LOCAL) ? 1u : 0u;
 }
+#endif
 
+/* Debug/audit 的统一读取口径：logical_scroll_x 就是滚动位置。native 容器的
+ * scroll 已完全退出生产路径（恒为 0），因此这里不存在第二个真值源。 */
+#if CARTDESK_LTDC_SYNC_TRACE_ENABLE
 static int32_t prv_launcher_scroll_offset(void)
 {
-    if(prv_launcher_slot_local_active() != 0u) {
-        return s_logical_scroll_x;
-    }
-    return (s_box_scroll_container != NULL)
-               ? lv_obj_get_scroll_x(s_box_scroll_container)
-               : 0;
+    return s_logical_scroll_x;
 }
+#endif
 
 /* Union of the slot card box and its title label, i.e. the full visual unit
- * that has to be repainted when the slot moves. */
+ * that has to be repainted when the slot moves.  Debug/audit only. */
+#if CARTDESK_LTDC_SYNC_TRACE_ENABLE
 static void prv_slot_visual_bbox(int slot, int32_t out[4])
 {
     lv_area_t slot_coords;
@@ -281,77 +315,178 @@ static void prv_slot_snapshot_bboxes(volatile int32_t (*dst)[4])
         dst[slot][3] = bbox[3];
     }
 }
+#endif /* CARTDESK_LTDC_SYNC_TRACE_ENABLE */
 
 /* Move one slot unit.  Only geometry changes: no create/delete, no image
- * reload, no label set, no style set on the children. */
+ * reload, no label set, no style set on the children.  The title label is a
+ * sibling that must be offset explicitly; the card image and border follow
+ * their parent slot automatically. */
 static void prv_slot_apply_offset(int slot, int32_t offset)
 {
     lv_obj_t *slot_obj = s_slots[slot];
-    lv_obj_t *label_obj = s_slot_labels[slot];
 
     if(slot_obj == NULL) {
         return;
     }
 
+    /* Production 固定使用 lv_obj_set_x()：语义与整数像素位置一致，coords 立即
+     * 反映真实位置（hit-test 天然正确）。translate_x 的 A/B 只在 trace 构建存在。 */
+#if CARTDESK_LTDC_SYNC_TRACE_ENABLE
     if(g_launcher_slot_move_api == LAUNCHER_SLOT_MOVE_API_TRANSLATE) {
         lv_obj_set_style_translate_x(slot_obj, -offset, LV_PART_MAIN);
-        if(label_obj != NULL) {
-            lv_obj_set_style_translate_x(label_obj, -offset, LV_PART_MAIN);
+        if(s_slot_labels[slot] != NULL) {
+            lv_obj_set_style_translate_x(s_slot_labels[slot], -offset, LV_PART_MAIN);
         }
-    }
-    else {
-        const int32_t x = s_slot_base_x[slot] - offset;
-        lv_obj_set_x(slot_obj, x);
-        if(label_obj != NULL) {
-            lv_obj_set_x(label_obj, x);
-        }
-    }
-    ++g_launcher_slot_moves;
-}
-
-static void prv_slot_apply_all(int32_t offset)
-{
-    for(int slot = 0; slot < DESIGN_APP_COUNT; slot++) {
-        prv_slot_apply_offset(slot, offset);
-    }
-    s_logical_scroll_x = offset;
-    g_launcher_logical_scroll_x = offset;
-}
-
-static void prv_slot_local_step(int32_t target_x)
-{
-    if(target_x < 0) {
-        target_x = 0;
-    }
-    if(g_launcher_logical_scroll_max >= 0 && target_x > g_launcher_logical_scroll_max) {
-        target_x = g_launcher_logical_scroll_max;
-    }
-    prv_slot_snapshot_bboxes(g_launcher_slot_bbox_before);
-    prv_slot_apply_all(target_x);
-    s_slot_bbox_after_pending = true;
-}
-
-static void prv_slot_local_publish_after_bboxes(void)
-{
-    if(!s_slot_bbox_after_pending) {
+        ++g_launcher_slot_moves;
         return;
     }
-    s_slot_bbox_after_pending = false;
-    prv_slot_snapshot_bboxes(g_launcher_slot_bbox_after);
+#endif
+    {
+        /* 永远由 base 重新计算，绝不累加 x += delta，避免长期漂移。 */
+        const int32_t x = s_slot_base_x[slot] - offset;
+        lv_obj_set_x(slot_obj, x);
+        if(s_slot_labels[slot] != NULL) {
+            lv_obj_set_x(s_slot_labels[slot], x);
+        }
+    }
+#if CARTDESK_LTDC_SYNC_TRACE_ENABLE
+    ++g_launcher_slot_moves;
+#endif
+}
+
+#if CARTDESK_LTDC_SYNC_TRACE_ENABLE
+static void prv_slot_update_visibility(void)
+{
     uint32_t mask = 0u;
-    for(int slot = 0; slot < DESIGN_APP_COUNT; slot++) {
-        lv_area_t coords;
+
+    for(int slot = 0; slot < (int)s_slot_count; slot++) {
         if(s_slots[slot] == NULL) {
             continue;
         }
-        lv_obj_get_coords(s_slots[slot], &coords);
-        if(coords.x2 >= 0 && coords.x1 <= SCREEN_W - 1) {
+        const int32_t x = s_slot_base_x[slot] - s_logical_scroll_x;
+        if(x + BOX_WIDTH > 0 && x < s_viewport_w) {
             mask |= UINT32_C(1) << (uint32_t)slot;
         }
     }
     g_launcher_slot_visible_mask = mask;
 }
+#endif /* CARTDESK_LTDC_SYNC_TRACE_ENABLE */
 
+/*
+ * 生产滚动位置的唯一落地点。drag / inertia / snap / scene restore 全部通过
+ * launcher_scroll 模块的回调汇聚到这里，因此 slot 几何只有一个实现。
+ *
+ * 只更新「在旧位置或新位置与滚动视口相交」的 slot：完全在视口外的 slot 既不
+ * 产生 draw task，也不需要写 LV_STYLE_X（那会白付一次 layout pass）。相邻
+ * 1 px 的重叠是刻意保留的安全边际。
+ */
+static void prv_apply_scroll_position_cb(int32_t position, void *user_data)
+{
+    LV_UNUSED(user_data);
+
+    const int32_t previous = s_logical_scroll_x;
+
+    for(int slot = 0; slot < (int)s_slot_count; slot++) {
+        if(s_slots[slot] == NULL) {
+            continue;
+        }
+
+        const int32_t base = s_slot_base_x[slot];
+        const int32_t new_x = base - position;
+        const int32_t old_x = base - previous;
+
+        const bool new_visible = (new_x + BOX_WIDTH > 0) && (new_x < s_viewport_w);
+        const bool old_visible = (old_x + BOX_WIDTH > 0) && (old_x < s_viewport_w);
+
+        if(new_visible || old_visible) {
+            prv_slot_apply_offset(slot, position);
+        }
+    }
+
+    s_logical_scroll_x = position;
+    g_launcher_logical_scroll_x = position;
+#if CARTDESK_LTDC_SYNC_TRACE_ENABLE
+    prv_slot_update_visibility();
+#endif
+}
+
+/*
+ * Launcher 手势 + 惯性 + 吸附控制器。全部逻辑在 Core/Screen/Page/launcher_scroll.c，
+ * 这里只负责把指针状态喂进去、把位置落地到 LVGL 对象。所有调用都发生在
+ * app/LVGL owner task 上下文；ISR 不得进入。
+ */
+static launcher_scroll_t s_scroll;
+
+static void prv_scroll_controller_init(void)
+{
+    const launcher_scroll_config_t cfg = {
+        .position = 0,
+        .max_position = s_logical_scroll_max,
+        /* 卡带按 pitch 排布，吸附网格必须与 pitch 对齐；否则「一次甩到底」的
+         * max_position 会落在网格之外，产生可见回弹。 */
+        .snap_anchor_x = 0,
+        .slot_pitch = BOX_WIDTH + BOX_SPACING,
+        .slot_count = (int32_t)s_slot_count,
+    };
+
+    launcher_scroll_init(&s_scroll, &cfg, prv_apply_scroll_position_cb, NULL);
+}
+
+/* 与 native 一致：本次手势只要滚动过，就不产生 click。 */
+static bool prv_take_scroll_gesture(void)
+{
+    return launcher_scroll_take_scroll_gesture(&s_scroll);
+}
+
+static bool prv_point_in_scroll_viewport(const lv_point_t *point)
+{
+    return point->y >= s_viewport_top && point->y <= s_viewport_bottom;
+}
+
+static bool prv_touch_read(lv_point_t *point, bool *pressed)
+{
+    if(s_touch_indev == NULL) {
+        return false;
+    }
+
+    lv_indev_get_point(s_touch_indev, point);
+    *pressed = (lv_indev_get_state(s_touch_indev) == LV_INDEV_STATE_PRESSED);
+    return true;
+}
+
+/*
+ * 每帧由 Launcher_Task 驱动。不在这里强制渲染：只推进目标状态，让 LVGL 按自己
+ * 的刷新节奏消费；触摸采样快于渲染时，多次采样自然合并成最新位置。
+ */
+static void prv_scroll_tick(uint32_t now_ms)
+{
+    if(s_main_container == NULL || s_slots[0] == NULL) {
+        return;
+    }
+
+    lv_point_t point;
+    bool pressed = false;
+
+    if(!prv_touch_read(&point, &pressed)) {
+        return;
+    }
+
+    if(pressed && !prv_point_in_scroll_viewport(&point)) {
+        /* 视口外（固定系统按钮区）的按下不参与滚动，避免与圆形按钮竞争。 */
+        if(s_scroll.state == LAUNCHER_SCROLL_DRAGGING) {
+            (void)launcher_scroll_tick(&s_scroll, true, point.x, now_ms);
+        }
+        else {
+            launcher_scroll_cancel(&s_scroll);
+        }
+    }
+    else {
+        (void)launcher_scroll_tick(&s_scroll, pressed, point.x, now_ms);
+    }
+}
+
+
+#if CARTDESK_LTDC_SYNC_TRACE_ENABLE
 static void prv_apply_launcher_scroll_mode(void)
 {
     uint32_t mode = g_launcher_scroll_mode;
@@ -365,23 +500,42 @@ static void prv_apply_launcher_scroll_mode(void)
     }
 
     if(mode == LAUNCHER_SCROLL_MODE_SLOT_LOCAL) {
-        /* The viewport stops moving the content strip; every slot is placed
-         * explicitly from logical_scroll_x instead. */
+        /* Production path: the viewport stops moving the content strip and
+         * every slot is placed explicitly from logical_scroll_x. */
         lv_obj_scroll_to_x(s_box_scroll_container, 0, LV_ANIM_OFF);
         lv_obj_set_scroll_dir(s_box_scroll_container, LV_DIR_NONE);
-        prv_slot_apply_all(0);
+        launcher_scroll_set_position(&s_scroll, s_logical_scroll_x);
     }
     else {
-        prv_slot_apply_all(0);
+        /* Regression baseline only: hand scrolling back to LVGL and stop the
+         * Launcher gesture controller so the two models never coexist. */
+        launcher_scroll_cancel(&s_scroll);
+        launcher_scroll_set_position(&s_scroll, 0);
         lv_obj_set_scroll_dir(s_box_scroll_container, LV_DIR_HOR);
         lv_obj_scroll_to_x(s_box_scroll_container, 0, LV_ANIM_OFF);
-        s_logical_scroll_x = 0;
-        g_launcher_logical_scroll_x = 0;
     }
 
     s_launcher_scroll_mode_applied = mode;
     g_launcher_scroll_mode_applied = mode;
     s_slot_bbox_after_pending = false;
+}
+
+static void prv_slot_local_publish_after_bboxes(void)
+{
+    if(!s_slot_bbox_after_pending) {
+        return;
+    }
+    s_slot_bbox_after_pending = false;
+    prv_slot_snapshot_bboxes(g_launcher_slot_bbox_after);
+    prv_slot_update_visibility();
+}
+
+/* Deterministic benchmark step: drives the same production position path. */
+static void prv_slot_local_step(int32_t target_x)
+{
+    prv_slot_snapshot_bboxes(g_launcher_slot_bbox_before);
+    launcher_scroll_set_position(&s_scroll, target_x);
+    s_slot_bbox_after_pending = true;
 }
 
 __attribute__((noinline, used)) void LauncherScrollCapture_IconsReady(void)
@@ -1318,6 +1472,11 @@ static void prv_box_clicked_cb(lv_event_t *e)
     int clicked_index = -1;
     bool should_launch = false;
 
+    /* 与 native 一致：本次手势只要滚动过，就不产生 click。 */
+    if(prv_take_scroll_gesture()) {
+        return;
+    }
+
     for (int i = 0; i < DESIGN_APP_COUNT; i++) {
         if (slot == s_slots[i]) {
             clicked_index = i;
@@ -1391,27 +1550,37 @@ static void prv_create_box_area(lv_obj_t *parent)
 {
     const int container_height = BOX_Y_OFFSET + BOX_HEIGHT + 10;
     const int content_width    = DESIGN_APP_COUNT * (BOX_WIDTH + BOX_SPACING) + 20;
+    const int viewport_height  = container_height + 60;
 
     lv_obj_t *box_container = lv_obj_create(parent);
-    lv_obj_set_size(box_container, SCREEN_W, container_height + 60);
+    lv_obj_set_size(box_container, SCREEN_W, viewport_height);
     lv_obj_set_y(box_container, BOX_CONTAINER_Y);
     lv_obj_set_style_bg_color(box_container, lv_color_hex(COLOR_BG), 0);
     lv_obj_set_style_border_width(box_container, 0, 0);
     lv_obj_set_style_pad_all(box_container, 0, 0);
     lv_obj_set_scrollbar_mode(box_container, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_set_scroll_dir(box_container, LV_DIR_HOR);
+    /* Production: the viewport never scrolls its content strip.  The strip is
+     * modelled by Launcher owned logical_scroll_x + per-slot lv_obj_set_x(). */
+    lv_obj_set_scroll_dir(box_container, LV_DIR_NONE);
     lv_obj_set_style_anim_duration(box_container, 0, 0);
     lv_obj_set_scroll_elastic(box_container, false);
     RenderAudit_RegisterObject(box_container, RENDER_AUDIT_OBJ_KIND_BOX_VIEWPORT, 0u);
+
+    s_viewport_top    = BOX_CONTAINER_Y;
+    s_viewport_bottom = BOX_CONTAINER_Y + viewport_height - 1;
+    s_viewport_w      = SCREEN_W;
+
+    s_logical_scroll_max = (content_width > SCREEN_W) ? (content_width - SCREEN_W) : 0;
+    s_logical_scroll_x = 0;
+    g_launcher_logical_scroll_x = 0;
+    g_launcher_logical_scroll_max = s_logical_scroll_max;
+
 #if CARTDESK_LTDC_SYNC_TRACE_ENABLE
     s_box_scroll_container = box_container;
-    g_launcher_logical_scroll_max = (content_width > SCREEN_W)
-                                        ? (content_width - SCREEN_W)
-                                        : 0;
 #endif
 
     lv_obj_t *content_container = lv_obj_create(box_container);
-    lv_obj_set_size(content_container, content_width, container_height + 60);
+    lv_obj_set_size(content_container, content_width, viewport_height);
     lv_obj_set_style_bg_color(content_container, lv_color_hex(COLOR_BG), 0);
     lv_obj_set_style_border_width(content_container, 0, 0);
     lv_obj_set_style_pad_all(content_container, 0, 0);
@@ -1467,9 +1636,9 @@ static void prv_create_box_area(lv_obj_t *parent)
 
         lv_obj_add_event_cb(slot_container, prv_box_clicked_cb, LV_EVENT_CLICKED, NULL);
         s_slots[i] = slot_container;
-#if CARTDESK_LTDC_SYNC_TRACE_ENABLE
+        /* 静态基准位置是 slot 位置的唯一来源；绝不按帧累加坐标。 */
         s_slot_base_x[i] = box_x;
-#endif
+        s_slot_count = (uint32_t)i + 1u;
         RenderAudit_RegisterObject(slot_container, RENDER_AUDIT_OBJ_KIND_SLOT,
                                    (uint32_t)i);
 
@@ -1578,10 +1747,23 @@ static void prv_create_status_label(lv_obj_t *parent)
 /*  公开 API                                                            */
 /* ------------------------------------------------------------------ */
 
+/* 复位 Launcher 手势/惯性/吸附状态。只在 scene teardown 与重建时使用。 */
+static void prv_scroll_state_reset(void)
+{
+    launcher_scroll_cancel(&s_scroll);
+    s_logical_scroll_x = 0;
+    s_logical_scroll_max = 0;
+    s_slot_count = 0u;
+    g_launcher_logical_scroll_x = 0;
+    g_launcher_logical_scroll_max = 0;
+}
+
 void Launcher_Init(void)
 {
     s_launcher_screen = lv_screen_active();
     s_runtime_exit_pending = false;
+    s_touch_indev = lv_port_indev_get_touchpad();
+    prv_scroll_state_reset();
     DesignLauncher_Destroy();
     DesignLauncher_Create(NULL);
 }
@@ -1963,6 +2145,9 @@ void Launcher_Task(void)
         }
     }
 
+    /* 生产手势推进：只在 Launcher 存在时运行，且不强制任何渲染。 */
+    prv_scroll_tick(HAL_GetTick());
+
 #if CARTDESK_LTDC_SYNC_TRACE_ENABLE
     prv_scroll_capture_poll();
 #endif
@@ -1974,6 +2159,8 @@ void Launcher_Task(void)
         return;
     }
 
+    /* Scene 退出前先停掉惯性/吸附，避免 teardown 之后仍去写已删除对象的 x。 */
+    prv_scroll_state_reset();
     prv_show_launcher_screen();
     s_runtime_exit_pending = false;
 }
@@ -2009,7 +2196,13 @@ void DesignLauncher_Create(lv_display_t *disp)
         s_launcher_assets_initialized = true;
     }
     memset(s_slot_images, 0, sizeof(s_slot_images));
+
+    /* 每次重建 Launcher 都把滚动模型拉回确定初态：logical_scroll_x = 0，
+     * slot 位置回到 base，不留任何上一场景的偏移或惯性。 */
+    prv_scroll_state_reset();
 #if CARTDESK_LTDC_SYNC_TRACE_ENABLE
+    g_launcher_slot_moves = 0u;
+    g_launcher_slot_visible_mask = 0u;
     memset(s_slot_trace_rects, 0, sizeof(s_slot_trace_rects));
     g_launcher_slot_trace_visual_mode = LAUNCHER_SLOT_TRACE_VISUAL_IMAGE;
     s_launcher_slot_trace_visual_mode = LAUNCHER_SLOT_TRACE_VISUAL_IMAGE;
@@ -2027,15 +2220,10 @@ void DesignLauncher_Create(lv_display_t *disp)
     g_scroll_capture_icons_ready = 0u;
     g_fb_capture_request_step = UINT32_MAX;
     g_fb_capture_ready = 0u;
-    /* Debug mode mailbox is owned by the debugger; only the applied state and
-     * the Launcher owned scroll offset are reset here. */
-    s_launcher_scroll_mode_applied = LAUNCHER_SCROLL_MODE_NATIVE;
-    g_launcher_scroll_mode_applied = LAUNCHER_SCROLL_MODE_NATIVE;
-    s_logical_scroll_x = 0;
-    g_launcher_logical_scroll_x = 0;
-    g_launcher_logical_scroll_max = 0;
-    g_launcher_slot_moves = 0u;
-    g_launcher_slot_visible_mask = 0u;
+    /* Debug mode mailbox is owned by the debugger; only the applied state is
+     * reset here, and the production path stays slot-local. */
+    s_launcher_scroll_mode_applied = LAUNCHER_SCROLL_MODE_SLOT_LOCAL;
+    g_launcher_scroll_mode_applied = LAUNCHER_SCROLL_MODE_SLOT_LOCAL;
     s_slot_bbox_after_pending = false;
 #endif
 
@@ -2050,6 +2238,8 @@ void DesignLauncher_Create(lv_display_t *disp)
     RenderAudit_RegisterObject(s_main_container, RENDER_AUDIT_OBJ_KIND_MAIN, 0u);
 
     prv_create_box_area(s_main_container);
+    /* 视口几何与 slot 数量在 prv_create_box_area() 里确定，控制器必须在其后初始化。 */
+    prv_scroll_controller_init();
     prv_create_circle_area(s_main_container);
     prv_create_divider_line(s_main_container);
     prv_create_status_label(s_main_container);
@@ -2079,6 +2269,11 @@ int DesignLauncher_GetSelected(void)
 void DesignLauncher_Destroy(void)
 {
     launcher_action_hints_deinit(&s_action_hints);
+
+    /* 先停滚动模型再删对象：惯性/吸附不得在对象树消失后继续执行。 */
+    prv_scroll_state_reset();
+    memset(s_slots, 0, sizeof(s_slots));
+    memset(s_slot_labels, 0, sizeof(s_slot_labels));
 
     if (s_main_container != NULL) {
         lv_obj_delete(s_main_container);

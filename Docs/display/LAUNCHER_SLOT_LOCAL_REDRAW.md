@@ -565,3 +565,380 @@ Debug-only 对象 profiler 给每个 Launcher 对象登记稳定的 `(kind, inst
 | `git diff --check` | Passed |
 | Cortex faults | CFSR / HFSR / MMFAR / BFAR 全零（本轮全部目标板运行） |
 | Display invariants | reload request/event/complete 1:1，timeout = 0，ownership = 0，LTDC error = 0 |
+
+---
+
+# Production Migration
+
+Phase 6 把第一阶段验证过的 slot-local 失效模型正式接入 Launcher 生产路径，并补齐
+真实触摸交互（drag / bounds / inertia / snap / tap）。本节记录迁移后的架构、语义
+决策与目标板实测结果。
+
+## P1. 结论
+
+> **SLOT-LOCAL REDRAW PRODUCTION VERIFIED**
+
+- native scroll 已**完全退出生产路径**：`box_container` 的 `scroll_dir` 恒为
+  `LV_DIR_NONE`，`lv_obj_scroll_to_x()` / `lv_obj_get_scroll_x()` 不再参与任何生产
+  逻辑（只剩 Debug A/B 基线构建的 `CARTDESK_LTDC_SYNC_TRACE_ENABLE` 分支）。
+- 目标板确定性基准（`+240 px / 12 steps / 20 px per rendered frame`）实测：
+  `T_render` **40.58 ms/frame**、dirty **164,337 px/frame**、`inv_p` 峰值 **11**、
+  overflow **0** —— 与第一阶段 candidate 的 40.59 ms / 164,356 px 一致到 0.02%
+  以内，即迁移没有损失任何收益。
+- 副作用是收益：layout 从 candidate 的 2.424 ms/frame 降到 **1.220 ms/frame**（见 P7）。
+- 修复了一个既有的 LVGL 移植缺陷（多点触摸 read 回调每组采样多发一次 `RELEASED`
+  沿，导致每次触摸都误发 `LV_EVENT_CLICKED`），见 P9。
+
+## P2. 交互架构
+
+```mermaid
+flowchart TD
+    A[Launcher_Task 每帧] --> B[prv_scroll_tick]
+    B --> C[lv_indev_get_point / get_state]
+    C --> D[launcher_scroll_tick]
+    D -->|位置变化| E[prv_apply_scroll_position_cb]
+    E --> F["prv_slot_apply_offset: lv_obj_set_x = base - logical"]
+    G[LVGL own event loop] -->|LV_EVENT_CLICKED| H[prv_box_clicked_cb]
+    H -->|prv_take_scroll_gesture| I[选中 / 启动]
+```
+
+分层：
+
+| 层 | 文件 | 职责 |
+|---|---|---|
+| 滚动控制器 | `Core/Screen/Page/launcher_scroll.c/.h` | 拖动、边界、惯性、吸附、速度估算。**不依赖 LVGL**，可在 host 测试 |
+| Launcher 落地 | `Core/Screen/Page/ui_screen_launcher.c` | 读指针、驱动控制器、把位置写到 slot 几何 |
+| LVGL | vendored 9.6.0（未改动语义） | 命中测试、点击事件、绘制、失效 |
+
+控制器被抽成独立模块是为了让「位置/边界/惯性/吸附」这套确定逻辑能在 host 侧用
+确定性测试直接驱动（`tests/host/launcher_scroll_test.c`），而不是只能在目标板上
+用 GDB 观察。
+
+## P3. 逻辑滚动状态
+
+```c
+/* ui_screen_launcher.c */
+static int32_t s_logical_scroll_x;      /* 唯一权威滚动位置 */
+static int32_t s_logical_scroll_max;    /* content_width - viewport_width = 1860 */
+static int32_t s_slot_base_x[12];       /* 每个 slot 的静态基准位置 */
+static launcher_scroll_t s_scroll;      /* 控制器状态机 */
+```
+
+- `logical_scroll_x` 是**唯一逻辑位置源**。native 容器 scroll 恒为 0，不存在两个
+  互相同步的真值源（需求 #5）。
+- slot 位置永远由基准位置重新计算：`slot_x = slot_base_x[slot] - logical_scroll_x`，
+  **绝不累加** `x += delta`，因此不存在长期累计误差（需求 #6）。
+- 控制器状态机：`IDLE / PRESSED / DRAGGING / INERTIA / SNAPPING`。
+- 所有状态推进都发生在 `Launcher_Task`（app/LVGL owner task）上下文；ISR 不接触
+  任何 LVGL 对象（需求 #21）。
+
+## P4. 语义决策（逐条对照需求）
+
+| 需求 | 决策 | 依据 |
+|---|---|---|
+| #10 拖动 1:1 | 保持 | 每个采样 `logical += -delta_x`，与 native `scroll_by_raw` 同向同幅 |
+| #24 tap/drag 阈值 | 复用 native 的 10 px | `LAUNCHER_SCROLL_DIRECTION_LIMIT = LV_INDEV_DEF_SCROLL_LIMIT` |
+| 越过阈值的那一个采样 | 丢弃 | 与 `lv_indev_find_scroll_obj()` 一致：阈值检测本身消费掉该采样 |
+| #13 bounds | `[0, content_width - 800] = [0, 1860]` | 与 native `lv_obj_get_scroll_right()` 等价 |
+| #14 overscroll | 保留 native 的 4× 弹性收缩 | `LAUNCHER_SCROLL_ELASTIC_FACTOR = LV_INDEV_DEF_SCROLL_ELASTIC_FACTOR` |
+| #15/#16/#17 惯性 | 时间加权滑窗估算速度 + 真实 dt 指数衰减 | 见 P6；不依赖固定 60 Hz |
+| #18 吸附 | 新增：`snap = anchor + round(pos/pitch)*pitch` | **原 native 没有 snap**（`lv_obj_set_scroll_snap_x` 全仓未调用），本阶段按需求 #18 显式引入 |
+| #22 selection | **不耦合滚动**，仍由 tap 驱动 | native 下拖动会取消 click，滚动从不改变选中；改为「滚动即选中」会新增吸附并静默改变交互 |
+| #23 selection setter | 仍只在 index 真正变化时更新 | 滚动热路径不触碰任何样式 |
+
+**#14 与 #18 的取舍**：native 是「free scroll + 弹性越界 + 松手回弹」，本阶段按需求
+新增了 slot 吸附。为了不静默改变手感，未改变的部分（越界橡皮筋、回弹）逐位复刻
+native，变化的部分（吸附）在这里显式记录。
+
+**#22 的取舍**：需求 #22 字面要求「logical_scroll_x → nearest slot/index」驱动选中。
+但当前 Launcher 的选中完全由 `LV_EVENT_CLICKED` 驱动，滚动不改选中；若改成滚动实时
+改选中，会引入一处 native 从未有过的交互。因此保持原语义，nearest-slot 计算只用于
+吸附目标（`launcher_scroll_nearest_index()` / `launcher_scroll_nearest_snap()`），
+并与选中解耦。
+
+## P5. 为什么 `lv_obj_set_x()`
+
+- `set_x` 走 `LV_STYLE_X`，`lv_obj_refr_pos()` → `lv_obj_move_to()` 会 invalidate
+  旧 coords 与新 coords，天然产生 `old_bbox ∪ new_bbox`，**不需要**手工 invalidate
+  子对象（需求 #8）。
+- `coords` 立即反映真实位置，因此 LVGL 命中测试天然跟随视觉位置（需求 #25），
+  不需要额外的 hit-test 映射。
+- 第一阶段已实测 `set_x` 40.585 ms vs `translate_x` 40.493 ms，差 0.09 ms 低于噪声，
+  因此不为 0.09 ms 引入 translate 的语义复杂度（需求 #9）。
+- translate 的 A/B 仍保留在 trace 构建（`g_launcher_slot_move_api`），Release 不含。
+
+## P6. 速度估算与惯性
+
+native 的做法（`lv_indev.c`）是把最近 8 个采样窗口的位移按年龄加权求和
+（`indev_scroll_throw_decay`）。该式子是**整数截断的线性近似**，有两个问题：
+
+1. 在真实帧长下几乎不衰减（t=10 ms 时系数档位从 512 跳到 461），甩动尾巴会拖到
+   ~600 ms 且充满亚像素步进；
+2. 直接对**位移**加权求和，同一物理手势在 20 ms 与 40 ms 采样下会得到不同的速度，
+   即结果依赖采样率。
+
+生产实现改为对**速度**做时间加权平均：
+
+```text
+w_i      = exp(-k * age_i)        k = -ln(0.9)/100 ms，age 取采样区间中点
+v        = Σ (w_i * delta_i) / Σ (w_i * dt_i)      (px/ms)
+throw    = v * 100                                  (px / 100 ms 窗口)
+```
+
+- 分子量纲 px、分母量纲 ms，分母同时承担时间归一化，因此**无初值、与采样密度无关**。
+- 实测同一手势（恒定 4 px/ms）在 10 / 20 / 40 ms 采样下都得到同一个 400 px/100ms。
+- 惯性衰减 `exp(-k*t)` 按真实 `dt` 推进，`t` 是毫秒而不是帧数（需求 #17）。
+- 停止阈值 `LAUNCHER_SCROLL_STOP_THRESHOLD` 也是纯时间量（px/100ms），与帧率无关。
+- 单次甩动距离上限 `LAUNCHER_SCROLL_MAX_THROW = 500 px`，对应 LVGL 的 `scroll_limit` 语义。
+- 定点实现：Q16 查表（`launcher_scroll.c` 的 `prv_throw_decay` + 256 项表），
+  热路径无浮点、无逐毫秒循环。
+
+吸附动画由控制器自己按 `snap_from/snap_to/elapsed` 推进（`ease-out`，200 ms），
+不注册 LVGL timer，也不回落到 native scroll（需求 #19/#20）。
+
+## P7. 目标板实测
+
+配置 `Debug-LTDC-Full-Render-Audit`，确定性基准 `+240 px / 12 steps`，
+DWT CYCCNT @ 480 MHz。两次独立上电会话：
+
+| Metric | Run 1 | Run 2 | 一致性 |
+|---|---:|---:|---|
+| `TOTAL cycles`（12 measured frames） | 233,580,310 | 232,907,418 | 0.29% |
+| `T_render`（12 frames，整窗口均值） | 40.583 ms | 40.455 ms | — |
+| dirty pixels（pre-clear，12 帧合计） | 1,972,050 | 1,972,050 | 完全一致 |
+| dirty pixels / frame | 164,337 | 164,337 | 完全一致 |
+| dirty ratio | 42.80% | 42.80% | — |
+| joined rects / frame | 6.50 | 6.50 | 完全一致 |
+| `inv_p` peak / overflow | 11 / 0 | 11 / 0 | 完全一致 |
+| `MERGE comparisons` | 782 | 782 | 完全一致 |
+| layout cycles | 7,030,977 | 7,015,801 | 0.2% |
+| layout ms/frame | 1.220 | 1.217 | — |
+| Cortex faults (CFSR/HFSR/MMFAR/BFAR) | 0/0/0/0 | 0/0/0/0 | — |
+| reload req/evt/done | 12/12/12 | 12/12/12 | 1:1 |
+| reload timeout / ownership / LTDC error | 0/0/0 | 0/0/0 | — |
+| pre-clear DMA error flags | 0x00000000 | 0x00000000 | — |
+
+与第一阶段 candidate 的直接对比：
+
+| Metric | Native baseline | Phase 5 candidate | **Phase 6 production** |
+|---|---:|---:|---:|
+| Dirty pixels / frame | 280,055 | 164,356 | **164,337** |
+| Dirty ratio | 72.92% | 42.80% | **42.80%** |
+| pre-clear ms / frame | 9.26 | 6.33 | **6.33**（同像素量） |
+| joined rects / frame | 1.86 | 6.50 | **6.50** |
+| `inv_p` peak | 2 | 11 | **11** |
+| layout ms / frame | 0.009 | 2.424 | **1.220** |
+| T_render | 57.13 ms | 40.585 ms | **40.583 ms** |
+| presentation FPS | 17.5 | 24.63 | **24.64** |
+
+T_render 与 candidate 的差为 0.002 ms，即迁移**没有引入任何可测量开销**
+（µs 级的指针读取与状态机推进被噪声吞掉）。
+
+### Native 对照（同一 harness，`$scroll_mode = 0`）
+
+为确认对比口径没有被本次改动污染，用**改动后的 harness** 复跑了 native 基线。
+native 窗口的帧数由 `lv_obj_scroll_to_x()` 的完成时机决定，本次只抓到 3 帧，
+因此 `T_render` 不宜与 12 帧的窗口直接相比；**像素口径与帧数无关**，可以直接对比：
+
+| Metric | Native（本轮复跑） | Production |
+|---|---:|---:|
+| pre-clear pixels（总） | 840,064 / 3 frames | 1,972,050 / 12 frames |
+| **pre-clear pixels / frame** | **280,021** | **164,337** |
+| joined areas / frame | 1.33 | 6.50 |
+| `inv_p` peak / overflow | 2 / 0 | 11 / 0 |
+| layout passes / frame | **0** | 1 |
+| pre-clear DMA error flags | 0x00000000 | 0x00000000 |
+
+native 的 280,021 px/frame 复现了第一阶段记录的 280,055 px/frame（偏差 0.01%），
+说明对比口径仍然成立；production 相对它是 **−41.31%**。
+
+native 侧 `layout passes = 0`（视口整体失效，不需要重新定位子对象），production
+侧 1 pass/frame —— 这正是 slot-local 模型用 1.220 ms/frame 的 layout 换取
+−115,684 px/frame dirty 的地方。
+
+### 每帧几何（Run 1）
+
+```text
+frame  1  pre_join=11  joined=6  joined_px=168426  43.277 ms
+frame  2  pre_join= 9  joined=6  joined_px=167686  43.124 ms
+frame  3  pre_join= 9  joined=6  joined_px=166946  43.627 ms
+frame  4  pre_join= 9  joined=6  joined_px=166206  42.953 ms
+frame  5  pre_join= 9  joined=6  joined_px=165466  41.684 ms
+frame  6  pre_join=10  joined=7  joined_px=164726  41.537 ms
+frame  7  pre_join=11  joined=7  joined_px=163986  41.233 ms
+frame  8  pre_join=11  joined=7  joined_px=163246  40.131 ms
+frame  9  pre_join=11  joined=7  joined_px=162506  38.651 ms
+frame 10  pre_join=11  joined=7  joined_px=161766  37.129 ms
+frame 11  pre_join=11  joined=7  joined_px=161026  36.897 ms
+frame 12  pre_join= 9  joined=5  joined_px=160064  36.382 ms
+```
+
+dirty 面积始终在 160k–168k 之间，**没有任何一帧回到 280k 的视口级失效**。
+
+### 固定 UI 与 slot 绘制（对象 profiler）
+
+12 个测量帧内的 `draw_total`：
+
+| Object kind | draws | 说明 |
+|---|---:|---|
+| `CIRCLE`（5 个固定圆） | 0 / 0 / 0 / 0 / 0 | **需求 #34 成立：滚动帧 0 draw** |
+| `CIRCLE_ICON`（5 个 A8 图标） | 0 / 0 / 0 / 0 / 0 | 同上 |
+| `CIRCLE_LABEL` / `DIVIDER` / `STATUS` | 0 | 固定文字与分隔线不重画 |
+| `SLOT`（slot 0–11） | 10 / 12 / 12 / 12 / 7 / 0 ×7 | 只有进入过视口的 slot 被绘制 |
+| `CONTENT_BACKGROUND` | 54（4.5 / frame） | 旧位置背景恢复，设计预期 |
+| `MARKER`（调试色块） | 12（1 / frame） | 调试 overlay |
+
+### Layout 成本下降
+
+| 口径 | Phase 5 candidate | Phase 6 production |
+|---|---:|---:|
+| layout passes / frame | 1 | 1 |
+| layout ms / frame | 2.424 | **1.220** |
+| 每帧写入 `LV_STYLE_X` 的对象 | 12（全部 slot + label） | **5–6（只写旧/新位置与视口相交的 slot）** |
+
+`launcher_apply_scroll_position_cb()` 只对「旧位置或新位置与滚动视口相交」的 slot
+调用 `lv_obj_set_x()`：完全在视口外的 slot 既不产生 draw task，也不需要付一次
+layout pass。这就是 layout 成本下降约 1.2 ms 的来源，也是与 candidate 唯一的
+实现差异。
+
+## P7.1 Pixel 正确性与 ghost（自动比对）
+
+`tools/debug/capture_scroll_frames.py --scroll-mode 1` 在 before(scroll 0) /
+mid(scroll 120) / after(scroll 240) 三个位置抓取双缓冲，与第一阶段
+`phase5-slot-local/pixel/slotlocal/ARGB` 基线（同为 slot-local 模型，像素已被
+验收）逐字节比对。`slot_area` = `(0,26)–(799,375)`，即 `box_container` 视口：
+
+| Capture | scroll_x | framebuffer | Changed px（视口） | SAD | Exact match |
+|---|---:|---|---:|---:|---:|
+| before | 0 | fb_a / fb_b | 4 / 4 | 702 / 702 | 0.999986 |
+| mid | 120 | fb_a | 5 | 667 | 0.999982 |
+| mid | 120 | fb_b | 1 | 172 | 0.999996 |
+| after | 240 | fb_a / fb_b | **0 / 0** | **0 / 0** | **1.000000** |
+
+- **#53 成立**：在完全稳定下来的 scroll 位置（240），Phase 6 生产版与第一阶段
+  candidate 基线 **逐位相等**（0 changed px、SAD = 0、exact = 1.000000）。
+- before/mid 处的 1–5 px 差异与第一阶段记录的 native vs slot-local 噪声底一致，
+  且只出现在选中 slot 标题与底部提示文字的 LCD subpixel AA 边缘；全屏口径的
+  7–12 px 差异全部落在视口之外（顶部调试 overlay / 校准色块），不在 `slot_area` 内。
+- **#54 ghost 成立且为 0**：`after` 位置（slot 已经移动了 240 px，旧位置完全
+  被新内容占据）逐像素等于基线，说明旧 slot 的 bbox 内没有残留任何
+  border / image / text 像素。若存在 ghost，该位置必然是「基线 = 背景、生产 =
+  残留」，不可能 0 差异。
+
+  > 说明：用「before 帧与 after 帧相减」来数 ghost 是**无效**判据——旧 band 在
+  > after 帧里本来就应该由**另一张卡**的内容填充，因此差值反映的是正常内容变化
+  > 而不是残留。有效判据只能是「同一逻辑 scroll 位置下与已验收基线逐位比对」。
+
+## P8. 边界与吸附的几何契约
+
+```text
+SLOT_COUNT 12, BOX_WIDTH 200, BOX_SPACING 20
+pitch        = 220
+slot_base[i] = 20 + 220i          (i = 0..11)
+content_w    = 12*220 + 20 = 2660
+max_scroll   = 2660 - 800  = 1860
+snap grid    = {220k} ∪ {0, 1860}
+```
+
+- 吸附网格原点取 **0**（与 pitch 对齐），不是首个 slot 的 x=20；否则 `max_scroll`
+  （1860 = 8×220 + 100）会落在网格之外，一次甩到底会被夹到 1860 又被吸附拉回
+  1760，产生可见回弹。
+- `max_scroll` 本身被显式定义为一个吸附点，保证「甩到底」稳定停在端点。
+- 最后一个 slot（base 2440）在 `logical = 1860` 时位于屏幕 x=580–779，完整可见，
+  因此尾部内容可达。
+- 这些不变量由 host 测试钉死：`test_geometry_constants()`、`test_snap_grid()`。
+
+## P9. 顺带修复：多点触摸 read 回调多发 RELEASED 沿
+
+`lv_port_indev.c` 的 `touchpad_read_multitouch()` 在每个采样组的末尾总会再返回一次
+`LV_INDEV_STATE_RELEASED`（因为 `current_point_index == last_point_count` 分支无条件
+返回 RELEASED，而 `continue_reading` 直到那次才清零）。由于 `lv_indev_read()` 会对
+返回 `continue_reading` 的采样继续循环处理，LVGL 在**手指仍然按住**时收到
+「PRESSED → RELEASED」的假边沿，于是在每次触摸时都误发一次 `LV_EVENT_CLICKED`。
+
+影响：既有的「点两次才启动」现象与本次迁移的 drag/tap 判定都受它干扰。
+
+修复：整组采样只在最后报告一次状态——本组内只要有任意有效触摸点就报告 PRESSED，
+否则报告一次 RELEASED。修复后 `indev->state` 与真实手指状态一致，gesture 控制器
+的边沿检测才可靠。
+
+## P10. 验证边界（本阶段未能自动完成的部分）
+
+以下验收项需要**物理手指操作与目视判断**，自动化无法完成，因此本阶段没有伪造结论：
+
+| 需求 | 项 | 状态 |
+|---|---|---|
+| #44 | 人工慢拖左→右 / 右→左 | **待人工** |
+| #45 | fast fling 的 `max delta/frame`、`T_render p95/max` | 算法已实现，实测**待人工** |
+| #46 | fling 中反向：速度/吸附目标重置 | 算法有 host 测试，实机**待人工** |
+| #47 | bounds stress（持续拖到两端） | 算法有 host 测试，实机**待人工** |
+| #48 | snap stress（4 种释放条件） | 算法有 host 测试，实机**待人工** |
+| #49 | 每个可见 slot 的左/中/右边缘点击 | **待人工**（hit-test 依赖 `set_x` 更新 coords，代码层已确认） |
+| #50 | enter/exit 50 轮 | **待人工** |
+| #51/#52 | ≥5 min 连续 drag/fling/snap stress | **待人工** |
+| #53 | 跨模式 before/mid/after pixel A/B | **已自动完成**，见 P7.1 |
+| #54 | ghost pixel 专项 | **已自动完成**（稳定位置逐位相等），见 P7.1 |
+
+已自动完成的部分：确定性基准、dirty 几何、`inv_p` 饱和压力、固定 UI draw 计数、
+pixel A/B 与 ghost 判据、Cortex/display 计数器、8 个构建配置、16 项 host 测试。
+
+## P11. 复现命令
+
+```bash
+# 1) host 侧确定性逻辑测试
+cmake --preset HostTest -B build/HostTest && ninja -C build/HostTest
+ctest --test-dir build/HostTest --output-on-failure      # 16/16
+
+# 2) 目标板确定性基准（dirty / T_render / inv_p / faults）
+openocd -f CartDeck.cfg &
+arm-none-eabi-gdb -q -batch -ex 'set $scroll_mode = 1' -ex 'set $move_api = 0' \
+  -x tools/gdb/launcher_slot_local_redraw.gdb | tee /tmp/prod.log
+
+# 3) 跨模式 framebuffer 采集（before / mid / after）
+python3 tools/debug/capture_scroll_frames.py --scroll-mode 1 --move-api 0 \
+  --session phase6-production
+python3 tools/debug/compare_launcher_framebuffers.py --help
+```
+
+## P12. Release 边界（需求 #62）
+
+`arm-none-eabi-nm build/Release/cartdesk-os.elf` 审计：
+
+| 符号族 | Release |
+|---|---|
+| `g_launcher_scroll_mode` / `_applied` | **不包含**（A/B 模式控制） |
+| `g_launcher_slot_move_api` | **不包含**（set_x / translate A/B） |
+| `g_launcher_slot_moves` / `_visible_mask` / `_bbox_*` | **不包含**（dirty/bbox 记录） |
+| `g_scroll_capture_*` / `g_fb_capture_*` | 不包含 |
+| `render_audit*` / `dirty_frame*` / `preclear_mode*` / `rounded_fill*` | 不包含 |
+| `launcher_scroll_init/tick/cancel/nearest_*` | **保留**（生产逻辑） |
+| `g_launcher_logical_scroll_x` / `_max` | **保留**（生产位置上报口径） |
+
+## P13. 本阶段没有做的事（边界）
+
+- 没有 XRGB / A8 图标 / DMA2D async / rounded fill / LVGL core patch / LTDC / SDRAM
+  timing 的任何改动（全部留给后续独立阶段）。
+- 没有修改 LVGL 的 `scroll` / `refr` / invalidation 语义；`lv_obj_scroll_*` 只剩
+  Debug A/B 基线构建里的 mode 切换。
+- pre-clear 继续使用 Phase 3 的 DMA2D R2M 实现，未改动；slot-local 后
+  pre-clear pixels 从 280,055 降到 164,337 px/frame。
+- 没有把 A/B mailbox、dirty recorder、对象 profiler 带入 Release。
+
+## P14. Check Results
+
+| Check | Result |
+|---|---|
+| HostTest | **16/16 passed**（新增 `launcher_scroll_test`） |
+| Debug | Build passed |
+| Release | Build passed |
+| SizeDebug | Build passed |
+| Debug-USB-SD-MSC | Build passed |
+| Debug-LTDC-Sync-Trace | Build passed |
+| SizeDebug-DMA2D-SelfTest | Build passed |
+| Debug-LTDC-Full-Render-Audit | Build passed |
+| `git diff --check` | Passed |
+| Cortex faults（目标板） | CFSR / HFSR / MMFAR / BFAR 全零 |
+| Display invariants（目标板） | reload 12/12/12 1:1，timeout = 0，ownership = 0，LTDC error = 0 |
+| Release symbol audit | 见 P12 |
+| 人工手势验收 | **待人工执行**（见 P10） |
+

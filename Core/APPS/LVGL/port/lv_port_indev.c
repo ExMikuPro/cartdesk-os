@@ -286,6 +286,11 @@ static void touchpad_read(lv_indev_t * indev, lv_indev_data_t * data)
  * @param indev  输入设备对象指针
  * @param data   输入数据结构指针
  * @note  支持最多5个触摸点
+ *
+ * LVGL 通过 data->continue_reading 把一次物理采样展开成多次读取。整组读取
+ * 必须只报告一次按下/松开沿：本组内只要有任意有效触摸点就报告 PRESSED，
+ * 否则只报告一个 RELEASED。否则每组采样末尾都会多出一次 RELEASED，导致
+ * LVGL 在手指仍然按住时收到「按下→松开」的假边沿并误发 CLICKED 事件。
  */
 static void touchpad_read_multitouch(lv_indev_t * indev, lv_indev_data_t * data)
 {
@@ -359,7 +364,7 @@ static void touchpad_read_multitouch(lv_indev_t * indev, lv_indev_data_t * data)
             current_point_index = 0;
         }
     } else {
-        /* 无触摸点 */
+        /* 本组采样没有有效触摸点：只在这里报告一次松开 */
         data->state = LV_INDEV_STATE_RELEASED;
         data->point.x = last_x;
         data->point.y = last_y;

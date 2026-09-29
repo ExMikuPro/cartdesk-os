@@ -99,6 +99,14 @@ if(CARTDESK_HOST_TESTS_ONLY)
             XHGC_CART_NO_FLASH=1
     )
 
+    add_executable(launcher_scroll_test
+            ${PROJECT_ROOT}/tests/host/launcher_scroll_test.c
+            ${SCREEN_PAGE_DIR}/launcher_scroll.c
+    )
+    target_include_directories(launcher_scroll_test PRIVATE
+            ${SCREEN_PAGE_DIR}
+    )
+
     if(NOT MSVC)
         target_compile_options(xhgc_cart_host_test PRIVATE
                 -Wall -Wextra -Werror -Wconversion -Wsign-conversion)
@@ -109,12 +117,18 @@ if(CARTDESK_HOST_TESTS_ONLY)
                 -fsanitize=address,undefined -fno-omit-frame-pointer)
         target_link_options(resource_manager_test PRIVATE
                 -fsanitize=address,undefined -fno-omit-frame-pointer)
+        target_compile_options(launcher_scroll_test PRIVATE
+                -Wall -Wextra -Werror -Wconversion -Wsign-conversion
+                -fsanitize=address,undefined -fno-omit-frame-pointer)
+        target_link_options(launcher_scroll_test PRIVATE
+                -fsanitize=address,undefined -fno-omit-frame-pointer)
     endif()
 
     foreach(host_test IN ITEMS
             xhgc_cart_host_test
             task_message_contract_test
             resource_manager_test
+            launcher_scroll_test
             lua_runtime_task_test
             lua_ui_owner_test
             lua_foundation_owner_test
@@ -640,6 +654,8 @@ add_library(app_screen STATIC
         ${SCREEN_ASSETS_DIR}/cart_system_icons_data.h
         ${SCREEN_PAGE_DIR}/launcher_action_hints.c
         ${SCREEN_PAGE_DIR}/launcher_action_hints.h
+        ${SCREEN_PAGE_DIR}/launcher_scroll.c
+        ${SCREEN_PAGE_DIR}/launcher_scroll.h
         ${SCREEN_PAGE_DIR}/ui_screen_launcher.c
         ${SCREEN_PAGE_DIR}/ui_screen_launcher.h
         ${SCREEN_PAGE_DIR}/jbm_el_20px.h
