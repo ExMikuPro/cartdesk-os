@@ -33,7 +33,16 @@ static uint32_t s_irq_start;
 static uint32_t s_draw_start[RENDER_AUDIT_UNIT_COUNT];
 static RenderAuditRect s_draw_rect[RENDER_AUDIT_UNIT_COUNT];
 static uint32_t s_dma_start;
+static uint32_t s_dma_wait_start;
+static uint32_t s_dma_setup_start;
+static uint8_t s_dma_setup_kind;
 static uint8_t s_dma_mode;
+static uint8_t s_dma_kind;
+static uint8_t s_dma_kind_hint;
+static RenderAuditRect s_dma_region;
+static RenderAuditRect s_dma_region_candidate;
+static uint32_t s_dma_pending_wait_cycles;
+static uint8_t s_dma_dependency_pending;
 static uint8_t s_frame_active;
 static uint8_t s_task_accounting;
 static uint8_t s_irq_active;
@@ -140,6 +149,18 @@ static void add_frame(volatile RenderAuditFrame *dst, const RenderAuditFrame *sr
         dst->dma_mode_count[i] += src->dma_mode_count[i];
         dst->dma_mode_pixels[i] += src->dma_mode_pixels[i];
     }
+    for(i = 0u; i < RENDER_AUDIT_DMA_KIND_COUNT; ++i) {
+        dst->dma_kind_active_cycles[i] += src->dma_kind_active_cycles[i];
+        dst->dma_kind_wait_cycles[i] += src->dma_kind_wait_cycles[i];
+        dst->dma_kind_setup_cycles[i] += src->dma_kind_setup_cycles[i];
+        dst->dma_kind_count[i] += src->dma_kind_count[i];
+        dst->dma_kind_pixels[i] += src->dma_kind_pixels[i];
+    }
+    for(i = 0u; i < RENDER_AUDIT_DMA_DEP_COUNT; ++i) {
+        dst->dma_dependency_count[i] += src->dma_dependency_count[i];
+        dst->dma_dependency_pixels[i] += src->dma_dependency_pixels[i];
+        dst->dma_dependency_wait_cycles[i] += src->dma_dependency_wait_cycles[i];
+    }
 #define ADD_FIELD(name) dst->name += src->name
     ADD_FIELD(objects_considered); ADD_FIELD(objects_hidden);
     ADD_FIELD(objects_clip_rejected); ADD_FIELD(objects_drawn);
@@ -151,6 +172,7 @@ static void add_frame(volatile RenderAuditFrame *dst, const RenderAuditFrame *sr
     ADD_FIELD(preclear_area_count); ADD_FIELD(preclear_pixels); ADD_FIELD(preclear_bytes);
     ADD_FIELD(preclear_opaque_pixels); ADD_FIELD(preclear_cleared_pixels);
     ADD_FIELD(preclear_skipped_pixels); ADD_FIELD(preclear_dma_error_count);
+    ADD_FIELD(dma_hard_wait_cycles); ADD_FIELD(dma_hideable_wait_cycles);
     g_render_audit_total.preclear_dma_error_flags |= s_frame.preclear_dma_error_flags;
     ADD_FIELD(rect_count); ADD_FIELD(rect_overflow); ADD_FIELD(stack_error_count);
 #undef ADD_FIELD
@@ -176,6 +198,12 @@ void RenderAudit_Reset(void)
     s_task_accounting = 0u;
     s_irq_active = 0u;
     s_swdraw_task_handle = NULL;
+    s_dma_kind_hint = RENDER_AUDIT_DMA_KIND_OTHER;
+    s_dma_kind = RENDER_AUDIT_DMA_KIND_OTHER;
+    s_dma_wait_start = 0u;
+    s_dma_setup_start = 0u;
+    s_dma_dependency_pending = 0u;
+    s_dma_pending_wait_cycles = 0u;
 }
 
 void RenderAudit_SetEnabled(uint32_t enabled)
@@ -210,6 +238,12 @@ void RenderAudit_FrameEnd(void)
     now = now_cycles();
     stop_category(now);
     stop_task(now);
+    if(s_dma_dependency_pending != 0u) {
+        ++s_frame.dma_dependency_count[RENDER_AUDIT_DMA_DEP_UNKNOWN];
+        s_frame.dma_dependency_wait_cycles[RENDER_AUDIT_DMA_DEP_UNKNOWN] += s_dma_pending_wait_cycles;
+        s_frame.dma_hard_wait_cycles += s_dma_pending_wait_cycles;
+        s_dma_dependency_pending = 0u;
+    }
     s_frame.frame_cycles = now - s_frame_start;
     memcpy((void *)&g_render_audit_last, &s_frame, sizeof(s_frame));
     add_frame(&g_render_audit_total, &s_frame);
@@ -469,15 +503,102 @@ void RenderAudit_DmaTransferBegin(uint32_t mode, uint32_t pixels)
     if(s_frame_active == 0u || mode >= RENDER_AUDIT_DMA_MODE_COUNT) return;
     s_dma_start = now_cycles();
     s_dma_mode = (uint8_t)mode;
+    s_dma_kind = s_dma_kind_hint < RENDER_AUDIT_DMA_KIND_COUNT ?
+                 s_dma_kind_hint : RENDER_AUDIT_DMA_KIND_OTHER;
+    s_dma_kind_hint = RENDER_AUDIT_DMA_KIND_OTHER;
+    s_dma_region = s_dma_region_candidate;
+    s_dma_dependency_pending = 1u;
+    s_dma_pending_wait_cycles = 0u;
     ++s_frame.dma_mode_count[mode];
     s_frame.dma_mode_pixels[mode] += pixels;
+    ++s_frame.dma_kind_count[s_dma_kind];
+    s_frame.dma_kind_pixels[s_dma_kind] += pixels;
 }
 
 void RenderAudit_DmaTransferEnd(uint32_t mode)
 {
     (void)mode;
     if(s_frame_active == 0u || s_dma_mode >= RENDER_AUDIT_DMA_MODE_COUNT) return;
-    s_frame.dma_mode_cycles[s_dma_mode] += now_cycles() - s_dma_start;
+    uint32_t elapsed = now_cycles() - s_dma_start;
+    s_frame.dma_mode_cycles[s_dma_mode] += elapsed;
+    if(s_dma_kind < RENDER_AUDIT_DMA_KIND_COUNT) {
+        s_frame.dma_kind_active_cycles[s_dma_kind] += elapsed;
+    }
+}
+
+void RenderAudit_DmaJobHint(RenderAuditDmaKind kind)
+{
+    if(kind < RENDER_AUDIT_DMA_KIND_COUNT) s_dma_kind_hint = (uint8_t)kind;
+}
+
+void RenderAudit_DmaWaitBegin(void)
+{
+    if(s_frame_active != 0u) s_dma_wait_start = now_cycles();
+}
+
+void RenderAudit_DmaWaitEnd(void)
+{
+    if(s_frame_active == 0u || s_dma_wait_start == 0u ||
+       s_dma_kind >= RENDER_AUDIT_DMA_KIND_COUNT) return;
+    uint32_t elapsed = now_cycles() - s_dma_wait_start;
+    s_frame.dma_kind_wait_cycles[s_dma_kind] += elapsed;
+    s_dma_pending_wait_cycles += elapsed;
+    s_dma_wait_start = 0u;
+}
+
+void RenderAudit_DmaSetupBegin(void)
+{
+    if(s_frame_active == 0u) return;
+    s_dma_setup_kind = s_dma_kind_hint < RENDER_AUDIT_DMA_KIND_COUNT ?
+                       s_dma_kind_hint : RENDER_AUDIT_DMA_KIND_OTHER;
+    s_dma_setup_start = now_cycles();
+}
+
+void RenderAudit_DmaSetupEnd(void)
+{
+    if(s_frame_active == 0u || s_dma_setup_start == 0u ||
+       s_dma_setup_kind >= RENDER_AUDIT_DMA_KIND_COUNT) return;
+    s_frame.dma_kind_setup_cycles[s_dma_setup_kind] += now_cycles() - s_dma_setup_start;
+    s_dma_setup_start = 0u;
+}
+
+void RenderAudit_DmaRegion(int32_t x1, int32_t y1, int32_t x2, int32_t y2)
+{
+    s_dma_region_candidate.x1 = (int16_t)x1;
+    s_dma_region_candidate.y1 = (int16_t)y1;
+    s_dma_region_candidate.x2 = (int16_t)x2;
+    s_dma_region_candidate.y2 = (int16_t)y2;
+}
+
+void RenderAudit_DrawDependencyRegion(uint32_t unit, int32_t x1, int32_t y1,
+                                      int32_t x2, int32_t y2, uint32_t reads_destination)
+{
+    if(s_frame_active == 0u) return;
+    if(s_dma_dependency_pending != 0u) {
+        int32_t ix1 = x1 > s_dma_region.x1 ? x1 : s_dma_region.x1;
+        int32_t iy1 = y1 > s_dma_region.y1 ? y1 : s_dma_region.y1;
+        int32_t ix2 = x2 < s_dma_region.x2 ? x2 : s_dma_region.x2;
+        int32_t iy2 = y2 < s_dma_region.y2 ? y2 : s_dma_region.y2;
+        if(ix1 > ix2 || iy1 > iy2) {
+            ++s_frame.dma_dependency_count[RENDER_AUDIT_DMA_DEP_INDEPENDENT];
+            s_frame.dma_dependency_wait_cycles[RENDER_AUDIT_DMA_DEP_INDEPENDENT] += s_dma_pending_wait_cycles;
+            s_frame.dma_hideable_wait_cycles += s_dma_pending_wait_cycles;
+        }
+        else {
+            uint32_t pixels = (uint32_t)(ix2 - ix1 + 1) * (uint32_t)(iy2 - iy1 + 1);
+            if(reads_destination != 0u) {
+                ++s_frame.dma_dependency_count[RENDER_AUDIT_DMA_DEP_RAW];
+                s_frame.dma_dependency_pixels[RENDER_AUDIT_DMA_DEP_RAW] += pixels;
+                s_frame.dma_dependency_wait_cycles[RENDER_AUDIT_DMA_DEP_RAW] += s_dma_pending_wait_cycles;
+            }
+            ++s_frame.dma_dependency_count[RENDER_AUDIT_DMA_DEP_WAW];
+            s_frame.dma_dependency_pixels[RENDER_AUDIT_DMA_DEP_WAW] += pixels;
+            s_frame.dma_dependency_wait_cycles[RENDER_AUDIT_DMA_DEP_WAW] += s_dma_pending_wait_cycles;
+            s_frame.dma_hard_wait_cycles += s_dma_pending_wait_cycles;
+        }
+        s_dma_dependency_pending = 0u;
+    }
+    if(unit == RENDER_AUDIT_UNIT_DMA2D) RenderAudit_DmaRegion(x1, y1, x2, y2);
 }
 
 void RenderAudit_Cache(uint32_t bytes)

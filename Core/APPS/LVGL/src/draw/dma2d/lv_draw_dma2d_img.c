@@ -8,6 +8,7 @@
  *********************/
 
 #include "lv_draw_dma2d_private.h"
+#include "render_audit.h"
 #if LV_USE_DRAW_DMA2D
 
 #include "../lv_draw_image_private.h"
@@ -133,6 +134,8 @@ static void lv_draw_dma2d_image_core(lv_draw_task_t * t, const lv_draw_image_dsc
         conf.bg_alpha = 0xff;
     }
 
+    RenderAudit_DmaJobHint(conf.mode == LV_DRAW_DMA2D_MODE_MEMORY_TO_MEMORY_WITH_PFC ?
+                           RENDER_AUDIT_DMA_KIND_PFC : RENDER_AUDIT_DMA_KIND_BLEND);
     lv_draw_dma2d_configure_and_start_transfer(&conf);
     DisplayTrace_Dma2dImageDraw((uint32_t)conf.mode, (uint32_t)image_cf,
                                 (uint32_t)output_cf, image_stride,

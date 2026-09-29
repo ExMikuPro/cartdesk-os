@@ -8,6 +8,7 @@
  *********************/
 
 #include "lv_draw_dma2d_private.h"
+#include "render_audit.h"
 #if LV_USE_DRAW_DMA2D
 
 #include "display_trace.h"
@@ -82,6 +83,8 @@ void lv_draw_dma2d_fill(lv_draw_task_t * t, void * first_pixel, int32_t w, int32
         }
     }
 
+    RenderAudit_DmaJobHint(conf.mode == LV_DRAW_DMA2D_MODE_REGISTER_TO_MEMORY ?
+                           RENDER_AUDIT_DMA_KIND_FILL_R2M : RENDER_AUDIT_DMA_KIND_BLEND);
     lv_draw_dma2d_configure_and_start_transfer(&conf);
     DisplayTrace_Dma2dFill();
 }

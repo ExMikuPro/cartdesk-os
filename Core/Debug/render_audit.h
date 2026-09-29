@@ -62,6 +62,7 @@ typedef enum {
 
 #define RENDER_AUDIT_DRAW_TYPE_COUNT 16u
 #define RENDER_AUDIT_DMA_MODE_COUNT  3u
+#define RENDER_AUDIT_DMA_KIND_COUNT  5u
 #define RENDER_AUDIT_RECT_CAPACITY   160u
 #define RENDER_AUDIT_REJECT_BUCKETS  16u
 #define RENDER_AUDIT_PRECLEAR_CAPACITY 16u
@@ -78,6 +79,23 @@ typedef enum {
     RENDER_AUDIT_COVERAGE_OPAQUE,
     RENDER_AUDIT_COVERAGE_BLEND
 } RenderAuditCoverage;
+
+typedef enum {
+    RENDER_AUDIT_DMA_KIND_PRECLEAR = 0,
+    RENDER_AUDIT_DMA_KIND_FILL_R2M,
+    RENDER_AUDIT_DMA_KIND_BLEND,
+    RENDER_AUDIT_DMA_KIND_PFC,
+    RENDER_AUDIT_DMA_KIND_OTHER
+} RenderAuditDmaKind;
+
+typedef enum {
+    RENDER_AUDIT_DMA_DEP_INDEPENDENT = 0,
+    RENDER_AUDIT_DMA_DEP_RAW,
+    RENDER_AUDIT_DMA_DEP_WAR,
+    RENDER_AUDIT_DMA_DEP_WAW,
+    RENDER_AUDIT_DMA_DEP_UNKNOWN,
+    RENDER_AUDIT_DMA_DEP_COUNT
+} RenderAuditDmaDependency;
 
 typedef struct {
     int16_t x1;
@@ -138,6 +156,16 @@ typedef struct {
     uint32_t dma_mode_cycles[RENDER_AUDIT_DMA_MODE_COUNT];
     uint32_t dma_mode_count[RENDER_AUDIT_DMA_MODE_COUNT];
     uint32_t dma_mode_pixels[RENDER_AUDIT_DMA_MODE_COUNT];
+    uint32_t dma_kind_active_cycles[RENDER_AUDIT_DMA_KIND_COUNT];
+    uint32_t dma_kind_wait_cycles[RENDER_AUDIT_DMA_KIND_COUNT];
+    uint32_t dma_kind_setup_cycles[RENDER_AUDIT_DMA_KIND_COUNT];
+    uint32_t dma_kind_count[RENDER_AUDIT_DMA_KIND_COUNT];
+    uint32_t dma_kind_pixels[RENDER_AUDIT_DMA_KIND_COUNT];
+    uint32_t dma_dependency_count[RENDER_AUDIT_DMA_DEP_COUNT];
+    uint32_t dma_dependency_pixels[RENDER_AUDIT_DMA_DEP_COUNT];
+    uint32_t dma_dependency_wait_cycles[RENDER_AUDIT_DMA_DEP_COUNT];
+    uint32_t dma_hard_wait_cycles;
+    uint32_t dma_hideable_wait_cycles;
     uint32_t cache_calls;
     uint32_t cache_bytes;
     uint32_t preclear_area_count;
@@ -204,6 +232,14 @@ void RenderAudit_DrawExecBegin(uint32_t type, uint32_t unit, int32_t x1, int32_t
 void RenderAudit_DrawExecEnd(uint32_t type, uint32_t unit);
 void RenderAudit_DmaTransferBegin(uint32_t mode, uint32_t pixels);
 void RenderAudit_DmaTransferEnd(uint32_t mode);
+void RenderAudit_DmaJobHint(RenderAuditDmaKind kind);
+void RenderAudit_DmaWaitBegin(void);
+void RenderAudit_DmaWaitEnd(void);
+void RenderAudit_DmaSetupBegin(void);
+void RenderAudit_DmaSetupEnd(void);
+void RenderAudit_DrawDependencyRegion(uint32_t unit, int32_t x1, int32_t y1,
+                                      int32_t x2, int32_t y2, uint32_t reads_destination);
+void RenderAudit_DmaRegion(int32_t x1, int32_t y1, int32_t x2, int32_t y2);
 void RenderAudit_Cache(uint32_t bytes);
 uint32_t RenderAudit_MeasureBegin(void);
 void RenderAudit_MergeEnd(uint32_t start, uint32_t comparisons);
@@ -256,6 +292,17 @@ static inline void RenderAudit_DrawExecEnd(uint32_t type, uint32_t unit)
 static inline void RenderAudit_DmaTransferBegin(uint32_t mode, uint32_t pixels)
 { (void)mode; (void)pixels; }
 static inline void RenderAudit_DmaTransferEnd(uint32_t mode) { (void)mode; }
+static inline void RenderAudit_DmaJobHint(RenderAuditDmaKind kind) { (void)kind; }
+static inline void RenderAudit_DmaWaitBegin(void) {}
+static inline void RenderAudit_DmaWaitEnd(void) {}
+static inline void RenderAudit_DmaSetupBegin(void) {}
+static inline void RenderAudit_DmaSetupEnd(void) {}
+static inline void RenderAudit_DrawDependencyRegion(uint32_t unit, int32_t x1, int32_t y1,
+                                                     int32_t x2, int32_t y2,
+                                                     uint32_t reads_destination)
+{ (void)unit; (void)x1; (void)y1; (void)x2; (void)y2; (void)reads_destination; }
+static inline void RenderAudit_DmaRegion(int32_t x1, int32_t y1, int32_t x2, int32_t y2)
+{ (void)x1; (void)y1; (void)x2; (void)y2; }
 static inline void RenderAudit_Cache(uint32_t bytes) { (void)bytes; }
 static inline uint32_t RenderAudit_MeasureBegin(void) { return 0u; }
 static inline void RenderAudit_MergeEnd(uint32_t start, uint32_t comparisons)

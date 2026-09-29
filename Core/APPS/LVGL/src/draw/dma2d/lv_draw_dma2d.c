@@ -195,6 +195,7 @@ uint32_t lv_draw_dma2d_color_to_dma2d_color(lv_draw_dma2d_output_cf_t cf, lv_col
 
 void lv_draw_dma2d_configure_and_start_transfer(const lv_draw_dma2d_configuration_t * conf)
 {
+    RenderAudit_DmaSetupBegin();
     /* Check that addresses are valid regarding to alignment constraints */
     if(((conf->output_cf == LV_DRAW_DMA2D_OUTPUT_CF_ARGB8888) &&
         (((uint32_t)(lv_uintptr_t) conf->output_address) & 0x03)) ||
@@ -281,6 +282,7 @@ void lv_draw_dma2d_configure_and_start_transfer(const lv_draw_dma2d_configuratio
                            conf->mode == LV_DRAW_DMA2D_MODE_MEMORY_TO_MEMORY_WITH_BLENDING_AND_FIXED_COLOR_FG ||
                            conf->mode == LV_DRAW_DMA2D_MODE_MEMORY_TO_MEMORY_WITH_BLENDING_AND_FIXED_COLOR_BG) ? 2u : 1u;
     RenderAudit_DmaTransferBegin(audit_mode, conf->w * conf->h);
+    RenderAudit_DmaSetupEnd();
 }
 
 
@@ -361,7 +363,6 @@ static void cpu_buf_clear(lv_draw_buf_t * draw_buf, const lv_area_t * area)
 
 static void dma2d_buf_clear_cb(lv_draw_buf_t * draw_buf, const lv_area_t * area, lv_layer_t * layer)
 {
-    LV_UNUSED(layer);
     lv_area_t full = {
         .x1 = 0,
         .y1 = 0,
@@ -407,8 +408,15 @@ static void dma2d_buf_clear_cb(lv_draw_buf_t * draw_buf, const lv_area_t * area,
         .output_cf = lv_draw_dma2d_cf_to_dma2d_output_cf(cf),
         .reg_to_mem_mode_color = 0u,
     };
+    RenderAudit_DmaJobHint(RENDER_AUDIT_DMA_KIND_PRECLEAR);
+    int32_t layer_x = layer != NULL ? layer->buf_area.x1 : 0;
+    int32_t layer_y = layer != NULL ? layer->buf_area.y1 : 0;
+    RenderAudit_DmaRegion(clipped.x1 + layer_x, clipped.y1 + layer_y,
+                          clipped.x2 + layer_x, clipped.y2 + layer_y);
     lv_draw_dma2d_configure_and_start_transfer(&conf);
+    RenderAudit_DmaWaitBegin();
     while(DMA2D->CR & DMA2D_CR_START) {}
+    RenderAudit_DmaWaitEnd();
     RenderAudit_PreclearDmaStatus(DMA2D->ISR & (DMA2D_ISR_TEIF | DMA2D_ISR_CEIF));
     RenderAudit_DmaTransferEnd(0u);
     DMA2D->IFCR = DMA2D_IFCR_CTEIF | DMA2D_IFCR_CTCIF | DMA2D_IFCR_CTWIF |
@@ -521,6 +529,19 @@ static int32_t dispatch_cb(lv_draw_unit_t * draw_unit, lv_layer_t * layer)
     RenderAudit_DrawExecBegin((uint32_t)t->type, RENDER_AUDIT_UNIT_DMA2D,
                               clipped_coords.x1, clipped_coords.y1,
                               clipped_coords.x2, clipped_coords.y2);
+    uint32_t audit_reads_destination = 1u;
+    if(t->type == LV_DRAW_TASK_TYPE_FILL) {
+        const lv_draw_fill_dsc_t * dsc = t->draw_dsc;
+        audit_reads_destination = dsc->opa < LV_OPA_MAX || t->opa < LV_OPA_MAX;
+    }
+    else if(t->type == LV_DRAW_TASK_TYPE_IMAGE) {
+        const lv_draw_image_dsc_t * dsc = t->draw_dsc;
+        audit_reads_destination = dsc->opa < LV_OPA_MAX || lv_color_format_has_alpha(dsc->header.cf);
+    }
+    RenderAudit_DrawDependencyRegion(RENDER_AUDIT_UNIT_DMA2D,
+                                     clipped_coords.x1, clipped_coords.y1,
+                                     clipped_coords.x2, clipped_coords.y2,
+                                     audit_reads_destination);
 
     int32_t x = 0 - t->target_layer->buf_area.x1;
     int32_t y = 0 - t->target_layer->buf_area.y1;
@@ -557,7 +578,9 @@ static int32_t dispatch_cb(lv_draw_unit_t * draw_unit, lv_layer_t * layer)
     return LV_DRAW_UNIT_IDLE;
 #else
     RenderAudit_Begin(RENDER_AUDIT_CAT_DMA2D_WAIT);
+    RenderAudit_DmaWaitBegin();
     while(DMA2D->CR & DMA2D_CR_START);
+    RenderAudit_DmaWaitEnd();
     RenderAudit_End(RENDER_AUDIT_CAT_DMA2D_WAIT);
     RenderAudit_DmaTransferEnd(0u);
 
