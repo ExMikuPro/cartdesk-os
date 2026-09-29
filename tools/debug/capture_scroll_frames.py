@@ -42,7 +42,8 @@ EVENT_BUFFER_SYNC_BEGIN = 21
 EVENT_BUFFER_SYNC_END = 22
 
 
-def gdb_common(mode: int, elf: Path, preclear_mode: int | None) -> list[str]:
+def gdb_common(mode: int, elf: Path, preclear_mode: int | None,
+               scroll_mode: int = 0, move_api: int = 0) -> list[str]:
     lines = [
         "set pagination off",
         "set confirm off",
@@ -59,6 +60,10 @@ def gdb_common(mode: int, elf: Path, preclear_mode: int | None) -> list[str]:
         lines.append(f"set variable g_render_audit_preclear_mode = {preclear_mode}")
     lines += [
         f"set variable g_launcher_slot_trace_visual_mode = {mode}",
+        # Phase 5 A/B: 0 keeps the production native scroll container, 1 freezes
+        # it and moves every App Slot from the Launcher logical_scroll_x.
+        f"set variable g_launcher_scroll_mode = {scroll_mode}",
+        f"set variable g_launcher_slot_move_api = {move_api}",
         "tbreak DisplayTrace_RenderEnd",
         "continue",
         "monitor resume",
@@ -348,8 +353,9 @@ def analyze_timing_trace(output: str, folder: Path) -> None:
 
 
 def timing_run(mode_name: str, mode: int, folder: Path, gdb: str,
-               elf: Path, preclear_mode: int | None) -> None:
-    lines = gdb_common(mode, elf, preclear_mode)
+               elf: Path, preclear_mode: int | None,
+               scroll_mode: int = 0, move_api: int = 0) -> None:
+    lines = gdb_common(mode, elf, preclear_mode, scroll_mode, move_api)
     lines += scroll_setup(0xFFFFFFFF)
     lines += [
         "set variable g_display_trace_command = 1",
@@ -415,10 +421,11 @@ def parse_captures(output: str) -> dict[str, dict[str, object]]:
 
 
 def capture_run(mode_name: str, mode: int, folder: Path, gdb: str,
-                elf: Path, preclear_mode: int | None) -> None:
+                elf: Path, preclear_mode: int | None,
+                scroll_mode: int = 0, move_api: int = 0) -> None:
     for label, _ in CAPTURES:
         (folder / label).mkdir(parents=True, exist_ok=True)
-    lines = gdb_common(mode, elf, preclear_mode)
+    lines = gdb_common(mode, elf, preclear_mode, scroll_mode, move_api)
     lines += scroll_setup(CAPTURES[0][1])
     lines += [
         "set variable g_display_trace_command = 1",
@@ -467,6 +474,10 @@ def main() -> None:
     parser.add_argument("--session", type=Path)
     parser.add_argument("--elf", type=Path, default=ELF)
     parser.add_argument("--preclear-mode", type=int, choices=(0, 1, 2, 3))
+    parser.add_argument("--scroll-mode", type=int, choices=(0, 1), default=0,
+                        help="0 = native LVGL scroll, 1 = Phase 5 slot-local candidate")
+    parser.add_argument("--move-api", type=int, choices=(0, 1), default=0,
+                        help="slot-local position API: 0 = lv_obj_set_x, 1 = translate_x")
     args = parser.parse_args()
     if not args.gdb:
         raise SystemExit("arm-none-eabi-gdb not found; pass --gdb")
@@ -482,9 +493,11 @@ def main() -> None:
         folder.mkdir(exist_ok=True)
         mode = MODE_IDS[mode_name]
         if not args.skip_timing:
-            timing_run(mode_name, mode, folder, args.gdb, elf, args.preclear_mode)
+            timing_run(mode_name, mode, folder, args.gdb, elf,
+                       args.preclear_mode, args.scroll_mode, args.move_api)
         if not args.skip_capture:
-            capture_run(mode_name, mode, folder, args.gdb, elf, args.preclear_mode)
+            capture_run(mode_name, mode, folder, args.gdb, elf,
+                        args.preclear_mode, args.scroll_mode, args.move_api)
     print(session)
 
 

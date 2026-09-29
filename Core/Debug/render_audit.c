@@ -22,6 +22,22 @@ volatile uint32_t g_render_audit_merge_cycles;
 volatile uint32_t g_render_audit_merge_comparisons;
 volatile uint32_t g_render_audit_invalid_before;
 volatile uint32_t g_render_audit_invalid_after;
+volatile uint32_t g_render_audit_invalidate_calls;
+volatile uint32_t g_render_audit_inv_p_peak;
+volatile uint32_t g_render_audit_inv_overflow_count;
+volatile uint32_t g_render_audit_dirty_frame_count;
+volatile uint32_t g_render_audit_dirty_frame_index;
+volatile RenderAuditDirtyFrame
+    g_render_audit_dirty_frames[RENDER_AUDIT_DIRTY_FRAME_CAPACITY];
+volatile uint32_t g_render_audit_layout_calls;
+volatile uint32_t g_render_audit_layout_passes;
+volatile uint32_t g_render_audit_layout_cycles;
+volatile uint32_t g_render_audit_object_count;
+volatile uintptr_t g_render_audit_object_ptr[RENDER_AUDIT_OBJECT_CAPACITY];
+volatile uint8_t g_render_audit_object_kind[RENDER_AUDIT_OBJECT_CAPACITY];
+volatile uint8_t g_render_audit_object_index[RENDER_AUDIT_OBJECT_CAPACITY];
+volatile uint32_t g_render_audit_object_draw_last[RENDER_AUDIT_OBJECT_CAPACITY];
+volatile uint32_t g_render_audit_object_draw_total[RENDER_AUDIT_OBJECT_CAPACITY];
 
 static RenderAuditFrame s_frame;
 static RenderAuditCategory s_stack[RENDER_AUDIT_STACK_DEPTH];
@@ -50,6 +66,8 @@ static uint8_t s_draw_type;
 static uint8_t s_draw_unit;
 static RenderAuditTaskClass s_task_class;
 static TaskHandle_t s_swdraw_task_handle;
+static uint32_t s_dirty_pending_index;
+static uint8_t s_dirty_pending;
 
 static uint32_t now_cycles(void)
 {
@@ -192,6 +210,22 @@ void RenderAudit_Reset(void)
     g_render_audit_merge_comparisons = 0u;
     g_render_audit_invalid_before = 0u;
     g_render_audit_invalid_after = 0u;
+    g_render_audit_invalidate_calls = 0u;
+    g_render_audit_inv_p_peak = 0u;
+    g_render_audit_inv_overflow_count = 0u;
+    g_render_audit_dirty_frame_count = 0u;
+    g_render_audit_dirty_frame_index = 0u;
+    memset((void *)g_render_audit_dirty_frames, 0, sizeof(g_render_audit_dirty_frames));
+    g_render_audit_layout_calls = 0u;
+    g_render_audit_layout_passes = 0u;
+    g_render_audit_layout_cycles = 0u;
+    /* The registered object pointers stay valid across a trace reset; only the
+     * per-frame and cumulative draw counters are cleared.  The registry itself
+     * is rebuilt by RenderAudit_ObjectRegistryReset() on Launcher creation. */
+    memset((void *)g_render_audit_object_draw_last, 0,
+           sizeof(g_render_audit_object_draw_last));
+    memset((void *)g_render_audit_object_draw_total, 0,
+           sizeof(g_render_audit_object_draw_total));
     s_frame_active = 0u;
     s_stack_depth = 0u;
     s_category_start = 0u;
@@ -204,6 +238,8 @@ void RenderAudit_Reset(void)
     s_dma_setup_start = 0u;
     s_dma_dependency_pending = 0u;
     s_dma_pending_wait_cycles = 0u;
+    s_dirty_pending = 0u;
+    s_dirty_pending_index = 0u;
 }
 
 void RenderAudit_SetEnabled(uint32_t enabled)
@@ -218,6 +254,7 @@ void RenderAudit_FrameBegin(uint32_t frame_seq)
     memset(&s_frame, 0, sizeof(s_frame));
     memset((void *)g_render_audit_rects, 0, sizeof(g_render_audit_rects));
     memset((void *)g_render_audit_preclear_rects, 0, sizeof(g_render_audit_preclear_rects));
+    memset((void *)g_render_audit_object_draw_last, 0, sizeof(g_render_audit_object_draw_last));
     s_frame.frame_seq = frame_seq;
     s_stack_depth = 1u;
     s_stack[0] = RENDER_AUDIT_CAT_BOOKKEEPING;
@@ -229,6 +266,14 @@ void RenderAudit_FrameBegin(uint32_t frame_seq)
     s_task_start = now;
     s_task_accounting = 1u;
     s_frame_active = 1u;
+    /* LV_EVENT_RENDER_START is emitted after lv_refr_join_area(), so the dirty
+     * record for this frame already exists.  Attach the render cycles to it. */
+    if(g_render_audit_dirty_frame_count != 0u) {
+        s_dirty_pending_index = (g_render_audit_dirty_frame_index +
+                                 RENDER_AUDIT_DIRTY_FRAME_CAPACITY - 1u) %
+                                RENDER_AUDIT_DIRTY_FRAME_CAPACITY;
+        s_dirty_pending = 1u;
+    }
 }
 
 void RenderAudit_FrameEnd(void)
@@ -245,6 +290,10 @@ void RenderAudit_FrameEnd(void)
         s_dma_dependency_pending = 0u;
     }
     s_frame.frame_cycles = now - s_frame_start;
+    if(s_dirty_pending != 0u) {
+        s_dirty_pending = 0u;
+        g_render_audit_dirty_frames[s_dirty_pending_index].render_cycles = s_frame.frame_cycles;
+    }
     memcpy((void *)&g_render_audit_last, &s_frame, sizeof(s_frame));
     add_frame(&g_render_audit_total, &s_frame);
     ++g_render_audit_frame_count;
@@ -624,6 +673,146 @@ void RenderAudit_InvalidAreaCounts(uint32_t before, uint32_t after)
     if(g_render_audit_enabled == 0u) return;
     g_render_audit_invalid_before += before;
     g_render_audit_invalid_after += after;
+}
+
+void RenderAudit_InvalidAreaAppend(void)
+{
+    if(g_render_audit_enabled != 0u) ++g_render_audit_invalidate_calls;
+}
+
+void RenderAudit_InvalidAreaOverflow(void)
+{
+    if(g_render_audit_enabled != 0u) ++g_render_audit_inv_overflow_count;
+}
+
+static uint32_t dirty_area_pixels(const RenderAuditArea * area)
+{
+    int32_t w = (int32_t)area->x2 - (int32_t)area->x1 + 1;
+    int32_t h = (int32_t)area->y2 - (int32_t)area->y1 + 1;
+    if(w <= 0 || h <= 0) return 0u;
+    return (uint32_t)w * (uint32_t)h;
+}
+
+/* Copy one {x1,y1,x2,y2} group out of a caller-owned lv_area_t array without
+ * relying on struct aliasing.  `areas` is a flat int32_t stream. */
+static void dirty_read_area(const void * areas, uint32_t index, RenderAuditArea * out)
+{
+    int32_t v[4];
+    memcpy(v, (const uint8_t *)areas + (size_t)index * 4u * sizeof(int32_t), sizeof(v));
+    out->x1 = (int16_t)v[0];
+    out->y1 = (int16_t)v[1];
+    out->x2 = (int16_t)v[2];
+    out->y2 = (int16_t)v[3];
+}
+
+void RenderAudit_InvalidAreasPreJoin(const void * areas, uint32_t count)
+{
+    uint32_t i;
+    uint32_t stored;
+    if(g_render_audit_enabled == 0u) return;
+
+    volatile RenderAuditDirtyFrame * frame =
+        &g_render_audit_dirty_frames[g_render_audit_dirty_frame_index];
+    memset((void *)frame, 0, sizeof(*frame));
+    frame->ordinal = g_render_audit_dirty_frame_count;
+    frame->frame_seq = s_frame.frame_seq;
+    frame->pre_join_count = count;
+    if(count > RENDER_AUDIT_INV_AREA_CAPACITY) {
+        frame->truncated = 1u;
+        count = RENDER_AUDIT_INV_AREA_CAPACITY;
+    }
+    for(i = 0u; i < count; ++i) {
+        RenderAuditArea area;
+        dirty_read_area(areas, i, &area);
+        stored = i;
+        frame->pre_join[stored] = area;
+        frame->pre_join_pixels += dirty_area_pixels(&area);
+    }
+    if(g_render_audit_inv_p_peak < frame->pre_join_count) {
+        g_render_audit_inv_p_peak = frame->pre_join_count;
+    }
+    s_dirty_pending_index = g_render_audit_dirty_frame_index;
+    s_dirty_pending = 1u;
+}
+
+void RenderAudit_InvalidAreasPostJoin(const void * areas, const uint8_t * joined,
+                                      uint32_t count)
+{
+    uint32_t i;
+    uint32_t out = 0u;
+    if(g_render_audit_enabled == 0u) return;
+
+    volatile RenderAuditDirtyFrame * frame =
+        &g_render_audit_dirty_frames[g_render_audit_dirty_frame_index];
+    for(i = 0u; i < count; ++i) {
+        RenderAuditArea area;
+        if(joined[i] != 0u) continue;
+        if(out >= RENDER_AUDIT_INV_AREA_CAPACITY) {
+            frame->truncated = 1u;
+            break;
+        }
+        dirty_read_area(areas, i, &area);
+        frame->joined[out] = area;
+        frame->joined_pixels += dirty_area_pixels(&area);
+        ++out;
+    }
+    frame->joined_count = out;
+    g_render_audit_dirty_frame_index =
+        (g_render_audit_dirty_frame_index + 1u) % RENDER_AUDIT_DIRTY_FRAME_CAPACITY;
+    ++g_render_audit_dirty_frame_count;
+}
+
+uint32_t RenderAudit_LayoutBegin(void)
+{
+    return g_render_audit_enabled != 0u ? now_cycles() : 0u;
+}
+
+void RenderAudit_LayoutEnd(uint32_t start, uint32_t passes)
+{
+    if(g_render_audit_enabled == 0u || start == 0u) return;
+    ++g_render_audit_layout_calls;
+    g_render_audit_layout_passes += passes;
+    g_render_audit_layout_cycles += now_cycles() - start;
+}
+
+void RenderAudit_ObjectRegistryReset(void)
+{
+    g_render_audit_object_count = 0u;
+    memset((void *)g_render_audit_object_ptr, 0, sizeof(g_render_audit_object_ptr));
+    memset((void *)g_render_audit_object_kind, 0, sizeof(g_render_audit_object_kind));
+    memset((void *)g_render_audit_object_index, 0, sizeof(g_render_audit_object_index));
+    memset((void *)g_render_audit_object_draw_last, 0,
+           sizeof(g_render_audit_object_draw_last));
+    memset((void *)g_render_audit_object_draw_total, 0,
+           sizeof(g_render_audit_object_draw_total));
+}
+
+void RenderAudit_RegisterObject(const void * obj, uint32_t kind, uint32_t index)
+{
+    uint32_t slot;
+    if(obj == NULL || kind == RENDER_AUDIT_OBJ_KIND_UNKNOWN) return;
+    if(kind >= RENDER_AUDIT_OBJ_KIND_COUNT) return;
+    slot = g_render_audit_object_count;
+    if(slot >= RENDER_AUDIT_OBJECT_CAPACITY) return;
+    g_render_audit_object_ptr[slot] = (uintptr_t)obj;
+    g_render_audit_object_kind[slot] = (uint8_t)kind;
+    g_render_audit_object_index[slot] = (uint8_t)index;
+    g_render_audit_object_count = slot + 1u;
+}
+
+void RenderAudit_ObjectDrawnPtr(const void * obj)
+{
+    uint32_t i;
+    uintptr_t target;
+    if(s_frame_active == 0u || obj == NULL) return;
+    target = (uintptr_t)obj;
+    for(i = 0u; i < g_render_audit_object_count; ++i) {
+        if(g_render_audit_object_ptr[i] == target) {
+            ++g_render_audit_object_draw_last[i];
+            ++g_render_audit_object_draw_total[i];
+            return;
+        }
+    }
 }
 
 #endif

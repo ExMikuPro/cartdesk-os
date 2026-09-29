@@ -130,6 +130,7 @@ void lv_obj_redraw(lv_layer_t * layer, lv_obj_t * obj)
         return;
     }
     RenderAudit_ObjectDrawn();
+    RenderAudit_ObjectDrawnPtr(obj);
     /*If the object is visible on the current clip area*/
     layer->_clip_area = clip_coords_for_obj;
 
@@ -342,9 +343,11 @@ lv_result_t lv_inv_area(lv_display_t * disp, const lv_area_t * area_p)
     /*Save the area*/
     lv_area_t * tmp_area_p = &com_area;
     if(disp->inv_p >= LV_INV_BUF_SIZE) { /*If no place for the area add the screen*/
+        RenderAudit_InvalidAreaOverflow();
         disp->inv_p = 0;
         tmp_area_p = &scr_area;
     }
+    RenderAudit_InvalidAreaAppend();
     disp->inv_areas[disp->inv_p] = *tmp_area_p;
     disp->inv_p++;
 
@@ -669,6 +672,11 @@ static void lv_refr_join_area(void)
     uint32_t audit_start = RenderAudit_MeasureBegin();
     uint32_t audit_comparisons = 0u;
     uint32_t audit_before = disp_refr->inv_p;
+    /* Debug-only: lv_area_t is four contiguous int32_t and the audit recorder
+     * reads that flat layout through memcpy. */
+    _Static_assert(sizeof(lv_area_t) == 4u * sizeof(int32_t),
+                   "render audit expects a four-int32 lv_area_t");
+    RenderAudit_InvalidAreasPreJoin(disp_refr->inv_areas, disp_refr->inv_p);
     uint32_t join_from;
     uint32_t join_in;
     lv_area_t joined_area;
@@ -704,6 +712,8 @@ static void lv_refr_join_area(void)
     for(join_in = 0; join_in < disp_refr->inv_p; ++join_in) {
         if(disp_refr->inv_area_joined[join_in] == 0u) ++audit_after;
     }
+    RenderAudit_InvalidAreasPostJoin(disp_refr->inv_areas, disp_refr->inv_area_joined,
+                                     disp_refr->inv_p);
     RenderAudit_InvalidAreaCounts(audit_before, audit_after);
     RenderAudit_MergeEnd(audit_start, audit_comparisons);
     LV_PROFILER_REFR_END;

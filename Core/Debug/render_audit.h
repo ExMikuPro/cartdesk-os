@@ -66,6 +66,9 @@ typedef enum {
 #define RENDER_AUDIT_RECT_CAPACITY   160u
 #define RENDER_AUDIT_REJECT_BUCKETS  16u
 #define RENDER_AUDIT_PRECLEAR_CAPACITY 16u
+#define RENDER_AUDIT_INV_AREA_CAPACITY 32u
+#define RENDER_AUDIT_DIRTY_FRAME_CAPACITY 24u
+#define RENDER_AUDIT_OBJECT_CAPACITY 128u
 
 typedef enum {
     RENDER_AUDIT_PRECLEAR_CURRENT = 0,
@@ -117,6 +120,54 @@ typedef struct {
     uint8_t opaque_cover;
     uint8_t reserved[2];
 } RenderAuditPreclearRect;
+
+typedef struct {
+    int16_t x1;
+    int16_t y1;
+    int16_t x2;
+    int16_t y2;
+} RenderAuditArea;
+
+/*
+ * One LVGL refresh worth of invalidation geometry.  `pre_join` is the raw
+ * inv_areas[] content that lv_inv_area() collected, `joined` is what survived
+ * lv_refr_join_area()'s merge pass.  The host tool derives union coverage,
+ * merge factor and the dirty-region rendering from these records.
+ */
+typedef struct {
+    uint32_t ordinal;
+    uint32_t frame_seq;
+    uint32_t render_cycles;
+    uint32_t pre_join_count;
+    uint32_t joined_count;
+    uint32_t pre_join_pixels;
+    uint32_t joined_pixels;
+    uint32_t truncated;
+    RenderAuditArea pre_join[RENDER_AUDIT_INV_AREA_CAPACITY];
+    RenderAuditArea joined[RENDER_AUDIT_INV_AREA_CAPACITY];
+} RenderAuditDirtyFrame;
+
+/*
+ * Debug-only object profiler.  The Launcher registers every object it creates
+ * with a stable (kind, instance) pair so a frame dump can show exactly which
+ * slot / image / label / fixed system widget was drawn.
+ */
+typedef enum {
+    RENDER_AUDIT_OBJ_KIND_UNKNOWN = 0,
+    RENDER_AUDIT_OBJ_KIND_MAIN,
+    RENDER_AUDIT_OBJ_KIND_BOX_VIEWPORT,
+    RENDER_AUDIT_OBJ_KIND_CONTENT_BACKGROUND,
+    RENDER_AUDIT_OBJ_KIND_SLOT,
+    RENDER_AUDIT_OBJ_KIND_SLOT_IMAGE,
+    RENDER_AUDIT_OBJ_KIND_SLOT_LABEL,
+    RENDER_AUDIT_OBJ_KIND_CIRCLE,
+    RENDER_AUDIT_OBJ_KIND_CIRCLE_ICON,
+    RENDER_AUDIT_OBJ_KIND_CIRCLE_LABEL,
+    RENDER_AUDIT_OBJ_KIND_DIVIDER,
+    RENDER_AUDIT_OBJ_KIND_STATUS,
+    RENDER_AUDIT_OBJ_KIND_MARKER,
+    RENDER_AUDIT_OBJ_KIND_COUNT
+} RenderAuditObjectKind;
 
 typedef struct {
     uint32_t frame_seq;
@@ -195,6 +246,22 @@ extern volatile uint32_t g_render_audit_merge_cycles;
 extern volatile uint32_t g_render_audit_merge_comparisons;
 extern volatile uint32_t g_render_audit_invalid_before;
 extern volatile uint32_t g_render_audit_invalid_after;
+extern volatile uint32_t g_render_audit_invalidate_calls;
+extern volatile uint32_t g_render_audit_inv_p_peak;
+extern volatile uint32_t g_render_audit_inv_overflow_count;
+extern volatile uint32_t g_render_audit_dirty_frame_count;
+extern volatile uint32_t g_render_audit_dirty_frame_index;
+extern volatile RenderAuditDirtyFrame
+    g_render_audit_dirty_frames[RENDER_AUDIT_DIRTY_FRAME_CAPACITY];
+extern volatile uint32_t g_render_audit_layout_calls;
+extern volatile uint32_t g_render_audit_layout_passes;
+extern volatile uint32_t g_render_audit_layout_cycles;
+extern volatile uint32_t g_render_audit_object_count;
+extern volatile uintptr_t g_render_audit_object_ptr[RENDER_AUDIT_OBJECT_CAPACITY];
+extern volatile uint8_t g_render_audit_object_kind[RENDER_AUDIT_OBJECT_CAPACITY];
+extern volatile uint8_t g_render_audit_object_index[RENDER_AUDIT_OBJECT_CAPACITY];
+extern volatile uint32_t g_render_audit_object_draw_last[RENDER_AUDIT_OBJECT_CAPACITY];
+extern volatile uint32_t g_render_audit_object_draw_total[RENDER_AUDIT_OBJECT_CAPACITY];
 
 void RenderAudit_Reset(void);
 void RenderAudit_SetEnabled(uint32_t enabled);
@@ -244,6 +311,16 @@ void RenderAudit_Cache(uint32_t bytes);
 uint32_t RenderAudit_MeasureBegin(void);
 void RenderAudit_MergeEnd(uint32_t start, uint32_t comparisons);
 void RenderAudit_InvalidAreaCounts(uint32_t before, uint32_t after);
+void RenderAudit_InvalidAreaAppend(void);
+void RenderAudit_InvalidAreaOverflow(void);
+void RenderAudit_InvalidAreasPreJoin(const void * areas, uint32_t count);
+void RenderAudit_InvalidAreasPostJoin(const void * areas, const uint8_t * joined,
+                                      uint32_t count);
+uint32_t RenderAudit_LayoutBegin(void);
+void RenderAudit_LayoutEnd(uint32_t start, uint32_t passes);
+void RenderAudit_ObjectRegistryReset(void);
+void RenderAudit_RegisterObject(const void * obj, uint32_t kind, uint32_t index);
+void RenderAudit_ObjectDrawnPtr(const void * obj);
 
 #else
 
@@ -309,6 +386,20 @@ static inline void RenderAudit_MergeEnd(uint32_t start, uint32_t comparisons)
 { (void)start; (void)comparisons; }
 static inline void RenderAudit_InvalidAreaCounts(uint32_t before, uint32_t after)
 { (void)before; (void)after; }
+static inline void RenderAudit_InvalidAreaAppend(void) {}
+static inline void RenderAudit_InvalidAreaOverflow(void) {}
+static inline void RenderAudit_InvalidAreasPreJoin(const void * areas, uint32_t count)
+{ (void)areas; (void)count; }
+static inline void RenderAudit_InvalidAreasPostJoin(const void * areas,
+                                                    const uint8_t * joined, uint32_t count)
+{ (void)areas; (void)joined; (void)count; }
+static inline uint32_t RenderAudit_LayoutBegin(void) { return 0u; }
+static inline void RenderAudit_LayoutEnd(uint32_t start, uint32_t passes)
+{ (void)start; (void)passes; }
+static inline void RenderAudit_ObjectRegistryReset(void) {}
+static inline void RenderAudit_RegisterObject(const void * obj, uint32_t kind, uint32_t index)
+{ (void)obj; (void)kind; (void)index; }
+static inline void RenderAudit_ObjectDrawnPtr(const void * obj) { (void)obj; }
 
 #endif
 

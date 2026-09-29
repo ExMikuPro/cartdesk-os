@@ -16,6 +16,7 @@
 #include "cart_system_icons.h"
 #include "dma2d_selftest.h"
 #include "display_trace.h"
+#include "render_audit.h"
 #include "launcher_store.h"
 #include "lua_runtime_task.h"
 #include "usb_sd_transfer_mode.h"
@@ -191,6 +192,197 @@ volatile uint32_t g_fb_capture_ltdc_cdsr;
 
 static uint32_t s_scroll_capture_applied_frame_seq;
 static uint32_t s_scroll_capture_next_step_tick;
+
+/* ------------------------------------------------------------------ */
+/*  Phase 5 A/B: Launcher scroll invalidation model                     */
+/*                                                                      */
+/*  Mode 0 keeps the production native LVGL scroll container.  Mode 1   */
+/*  freezes the native scroll offset at 0 and moves every App Slot (and */
+/*  its sibling title label) with a Launcher owned logical_scroll_x so  */
+/*  the invalidation collapses to old-bbox union new-bbox per slot.     */
+/*  Debug-only: only the trace/audit builds compile this block.         */
+/* ------------------------------------------------------------------ */
+
+enum {
+    LAUNCHER_SCROLL_MODE_NATIVE = 0u,
+    LAUNCHER_SCROLL_MODE_SLOT_LOCAL = 1u
+};
+
+enum {
+    LAUNCHER_SLOT_MOVE_API_SET_X = 0u,
+    LAUNCHER_SLOT_MOVE_API_TRANSLATE = 1u
+};
+
+volatile uint32_t g_launcher_scroll_mode;
+volatile uint32_t g_launcher_scroll_mode_applied;
+volatile uint32_t g_launcher_slot_move_api;
+volatile int32_t g_launcher_logical_scroll_x;
+volatile int32_t g_launcher_logical_scroll_max;
+volatile uint32_t g_launcher_slot_moves;
+volatile uint32_t g_launcher_slot_visible_mask;
+volatile int32_t g_launcher_slot_bbox_before[DESIGN_APP_COUNT][4];
+volatile int32_t g_launcher_slot_bbox_after[DESIGN_APP_COUNT][4];
+
+static int32_t s_slot_base_x[DESIGN_APP_COUNT];
+static int32_t s_logical_scroll_x;
+static uint32_t s_launcher_scroll_mode_applied;
+static bool s_slot_bbox_after_pending;
+
+static uint32_t prv_launcher_slot_local_active(void)
+{
+    return (g_launcher_scroll_mode == LAUNCHER_SCROLL_MODE_SLOT_LOCAL) ? 1u : 0u;
+}
+
+static int32_t prv_launcher_scroll_offset(void)
+{
+    if(prv_launcher_slot_local_active() != 0u) {
+        return s_logical_scroll_x;
+    }
+    return (s_box_scroll_container != NULL)
+               ? lv_obj_get_scroll_x(s_box_scroll_container)
+               : 0;
+}
+
+/* Union of the slot card box and its title label, i.e. the full visual unit
+ * that has to be repainted when the slot moves. */
+static void prv_slot_visual_bbox(int slot, int32_t out[4])
+{
+    lv_area_t slot_coords;
+    lv_area_t label_coords;
+
+    out[0] = 0; out[1] = 0; out[2] = -1; out[3] = -1;
+    if(s_slots[slot] == NULL) {
+        return;
+    }
+    lv_obj_get_coords(s_slots[slot], &slot_coords);
+    out[0] = slot_coords.x1;
+    out[1] = slot_coords.y1;
+    out[2] = slot_coords.x2;
+    out[3] = slot_coords.y2;
+
+    if(s_slot_labels[slot] == NULL || lv_obj_is_hidden(s_slot_labels[slot])) {
+        return;
+    }
+    lv_obj_get_coords(s_slot_labels[slot], &label_coords);
+    if(label_coords.x1 < out[0]) out[0] = label_coords.x1;
+    if(label_coords.y1 < out[1]) out[1] = label_coords.y1;
+    if(label_coords.x2 > out[2]) out[2] = label_coords.x2;
+    if(label_coords.y2 > out[3]) out[3] = label_coords.y2;
+}
+
+static void prv_slot_snapshot_bboxes(volatile int32_t (*dst)[4])
+{
+    for(int slot = 0; slot < DESIGN_APP_COUNT; slot++) {
+        int32_t bbox[4];
+        prv_slot_visual_bbox(slot, bbox);
+        dst[slot][0] = bbox[0];
+        dst[slot][1] = bbox[1];
+        dst[slot][2] = bbox[2];
+        dst[slot][3] = bbox[3];
+    }
+}
+
+/* Move one slot unit.  Only geometry changes: no create/delete, no image
+ * reload, no label set, no style set on the children. */
+static void prv_slot_apply_offset(int slot, int32_t offset)
+{
+    lv_obj_t *slot_obj = s_slots[slot];
+    lv_obj_t *label_obj = s_slot_labels[slot];
+
+    if(slot_obj == NULL) {
+        return;
+    }
+
+    if(g_launcher_slot_move_api == LAUNCHER_SLOT_MOVE_API_TRANSLATE) {
+        lv_obj_set_style_translate_x(slot_obj, -offset, LV_PART_MAIN);
+        if(label_obj != NULL) {
+            lv_obj_set_style_translate_x(label_obj, -offset, LV_PART_MAIN);
+        }
+    }
+    else {
+        const int32_t x = s_slot_base_x[slot] - offset;
+        lv_obj_set_x(slot_obj, x);
+        if(label_obj != NULL) {
+            lv_obj_set_x(label_obj, x);
+        }
+    }
+    ++g_launcher_slot_moves;
+}
+
+static void prv_slot_apply_all(int32_t offset)
+{
+    for(int slot = 0; slot < DESIGN_APP_COUNT; slot++) {
+        prv_slot_apply_offset(slot, offset);
+    }
+    s_logical_scroll_x = offset;
+    g_launcher_logical_scroll_x = offset;
+}
+
+static void prv_slot_local_step(int32_t target_x)
+{
+    if(target_x < 0) {
+        target_x = 0;
+    }
+    if(g_launcher_logical_scroll_max >= 0 && target_x > g_launcher_logical_scroll_max) {
+        target_x = g_launcher_logical_scroll_max;
+    }
+    prv_slot_snapshot_bboxes(g_launcher_slot_bbox_before);
+    prv_slot_apply_all(target_x);
+    s_slot_bbox_after_pending = true;
+}
+
+static void prv_slot_local_publish_after_bboxes(void)
+{
+    if(!s_slot_bbox_after_pending) {
+        return;
+    }
+    s_slot_bbox_after_pending = false;
+    prv_slot_snapshot_bboxes(g_launcher_slot_bbox_after);
+    uint32_t mask = 0u;
+    for(int slot = 0; slot < DESIGN_APP_COUNT; slot++) {
+        lv_area_t coords;
+        if(s_slots[slot] == NULL) {
+            continue;
+        }
+        lv_obj_get_coords(s_slots[slot], &coords);
+        if(coords.x2 >= 0 && coords.x1 <= SCREEN_W - 1) {
+            mask |= UINT32_C(1) << (uint32_t)slot;
+        }
+    }
+    g_launcher_slot_visible_mask = mask;
+}
+
+static void prv_apply_launcher_scroll_mode(void)
+{
+    uint32_t mode = g_launcher_scroll_mode;
+
+    if(mode > LAUNCHER_SCROLL_MODE_SLOT_LOCAL) {
+        mode = LAUNCHER_SCROLL_MODE_NATIVE;
+        g_launcher_scroll_mode = mode;
+    }
+    if(mode == s_launcher_scroll_mode_applied || s_box_scroll_container == NULL) {
+        return;
+    }
+
+    if(mode == LAUNCHER_SCROLL_MODE_SLOT_LOCAL) {
+        /* The viewport stops moving the content strip; every slot is placed
+         * explicitly from logical_scroll_x instead. */
+        lv_obj_scroll_to_x(s_box_scroll_container, 0, LV_ANIM_OFF);
+        lv_obj_set_scroll_dir(s_box_scroll_container, LV_DIR_NONE);
+        prv_slot_apply_all(0);
+    }
+    else {
+        prv_slot_apply_all(0);
+        lv_obj_set_scroll_dir(s_box_scroll_container, LV_DIR_HOR);
+        lv_obj_scroll_to_x(s_box_scroll_container, 0, LV_ANIM_OFF);
+        s_logical_scroll_x = 0;
+        g_launcher_logical_scroll_x = 0;
+    }
+
+    s_launcher_scroll_mode_applied = mode;
+    g_launcher_scroll_mode_applied = mode;
+    s_slot_bbox_after_pending = false;
+}
 
 __attribute__((noinline, used)) void LauncherScrollCapture_IconsReady(void)
 {
@@ -790,7 +982,7 @@ static void prv_scroll_capture_poll(void)
             g_scroll_capture_state = SCROLL_CAPTURE_STATE_ERROR;
             return;
         }
-        g_scroll_capture_start_x = lv_obj_get_scroll_x(s_box_scroll_container);
+        g_scroll_capture_start_x = prv_launcher_scroll_offset();
         g_scroll_capture_scroll_x = g_scroll_capture_start_x;
         g_scroll_capture_target_x = g_scroll_capture_start_x;
         g_scroll_capture_fb_a_scroll_x = g_scroll_capture_start_x;
@@ -821,8 +1013,9 @@ static void prv_scroll_capture_poll(void)
         if(g_display_frame_seq == s_scroll_capture_applied_frame_seq) {
             return;
         }
+        prv_slot_local_publish_after_bboxes();
 
-        g_scroll_capture_scroll_x = lv_obj_get_scroll_x(s_box_scroll_container);
+        g_scroll_capture_scroll_x = prv_launcher_scroll_offset();
         g_scroll_capture_frame_seq = g_display_frame_seq;
         if(g_display_fb_a_frame_seq == g_display_frame_seq) {
             g_scroll_capture_fb_a_scroll_x = g_scroll_capture_scroll_x;
@@ -852,13 +1045,18 @@ static void prv_scroll_capture_poll(void)
     int64_t scaled_delta = (int64_t)g_scroll_capture_delta_px * (int64_t)next_step;
     int32_t target_x = g_scroll_capture_start_x +
                        (int32_t)(scaled_delta / (int64_t)g_scroll_capture_steps);
-    int32_t previous_x = lv_obj_get_scroll_x(s_box_scroll_container);
+    int32_t previous_x = prv_launcher_scroll_offset();
 
     g_scroll_capture_target_x = target_x;
     g_scroll_capture_step = next_step;
     prv_scroll_capture_update_marker(g_display_frame_seq + 1u);
-    lv_obj_scroll_to_x(s_box_scroll_container, target_x, LV_ANIM_OFF);
-    g_scroll_capture_scroll_x = lv_obj_get_scroll_x(s_box_scroll_container);
+    if(prv_launcher_slot_local_active() != 0u) {
+        prv_slot_local_step(target_x);
+    }
+    else {
+        lv_obj_scroll_to_x(s_box_scroll_container, target_x, LV_ANIM_OFF);
+    }
+    g_scroll_capture_scroll_x = prv_launcher_scroll_offset();
     if(g_scroll_capture_scroll_x == previous_x && target_x != previous_x) {
         g_scroll_capture_state = SCROLL_CAPTURE_STATE_ERROR;
         return;
@@ -883,6 +1081,8 @@ static void prv_attach_slot_image(int slot)
         lv_obj_center(s_slot_images[slot]);
         lv_obj_set_style_border_width(s_slot_images[slot], 0, LV_PART_MAIN);
         lv_obj_set_scrollable(s_slot_images[slot], false);
+        RenderAudit_RegisterObject(s_slot_images[slot],
+                                   RENDER_AUDIT_OBJ_KIND_SLOT_IMAGE, (uint32_t)slot);
     }
     lv_image_set_src(s_slot_images[slot], &s_image_dsc[slot]);
 #if CARTDESK_LTDC_SYNC_TRACE_ENABLE
@@ -1181,6 +1381,8 @@ static void prv_create_scroll_capture_markers(lv_obj_t *parent)
     lv_obj_set_style_bg_opa(s_scroll_capture_frame_marker, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_clickable(s_scroll_capture_frame_marker, false);
     lv_obj_set_scrollable(s_scroll_capture_frame_marker, false);
+    RenderAudit_RegisterObject(s_scroll_capture_frame_marker,
+                              RENDER_AUDIT_OBJ_KIND_MARKER, 0u);
     prv_scroll_capture_update_marker(0u);
 }
 #endif
@@ -1200,8 +1402,12 @@ static void prv_create_box_area(lv_obj_t *parent)
     lv_obj_set_scroll_dir(box_container, LV_DIR_HOR);
     lv_obj_set_style_anim_duration(box_container, 0, 0);
     lv_obj_set_scroll_elastic(box_container, false);
+    RenderAudit_RegisterObject(box_container, RENDER_AUDIT_OBJ_KIND_BOX_VIEWPORT, 0u);
 #if CARTDESK_LTDC_SYNC_TRACE_ENABLE
     s_box_scroll_container = box_container;
+    g_launcher_logical_scroll_max = (content_width > SCREEN_W)
+                                        ? (content_width - SCREEN_W)
+                                        : 0;
 #endif
 
     lv_obj_t *content_container = lv_obj_create(box_container);
@@ -1211,6 +1417,8 @@ static void prv_create_box_area(lv_obj_t *parent)
     lv_obj_set_style_pad_all(content_container, 0, 0);
     lv_obj_set_scrollbar_mode(content_container, LV_SCROLLBAR_MODE_OFF);
     lv_obj_set_scrollable(content_container, false);
+    RenderAudit_RegisterObject(content_container,
+                              RENDER_AUDIT_OBJ_KIND_CONTENT_BACKGROUND, 0u);
 #if CARTDESK_RENDER_AUDIT_ENABLE
     s_launcher_rounded_fill_object = content_container;
     g_launcher_rounded_fill_object_ptr = (uintptr_t)content_container;
@@ -1259,6 +1467,11 @@ static void prv_create_box_area(lv_obj_t *parent)
 
         lv_obj_add_event_cb(slot_container, prv_box_clicked_cb, LV_EVENT_CLICKED, NULL);
         s_slots[i] = slot_container;
+#if CARTDESK_LTDC_SYNC_TRACE_ENABLE
+        s_slot_base_x[i] = box_x;
+#endif
+        RenderAudit_RegisterObject(slot_container, RENDER_AUDIT_OBJ_KIND_SLOT,
+                                   (uint32_t)i);
 
         lv_obj_t *label = lv_label_create(content_container);
         lv_label_set_text(label, prv_slot_title(i));
@@ -1270,6 +1483,8 @@ static void prv_create_box_area(lv_obj_t *parent)
         lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
         lv_obj_set_hidden(label, true);
         s_slot_labels[i] = label;
+        RenderAudit_RegisterObject(label, RENDER_AUDIT_OBJ_KIND_SLOT_LABEL,
+                                   (uint32_t)i);
     }
 
     lv_obj_set_hidden(s_slot_labels[0], false);
@@ -1300,6 +1515,7 @@ static void prv_create_circle_area(lv_obj_t *parent)
         lv_obj_set_scrollable(circle, false);
         lv_obj_add_event_cb(circle, prv_circle_clicked_cb, LV_EVENT_CLICKED, NULL);
         s_circles[i] = circle;
+        RenderAudit_RegisterObject(circle, RENDER_AUDIT_OBJ_KIND_CIRCLE, (uint32_t)i);
 
         const lv_image_dsc_t *icon_source = CartSystemIcon_GetSource(s_system_entries[i].icon_id);
         if (icon_source != NULL) {
@@ -1315,6 +1531,8 @@ static void prv_create_circle_area(lv_obj_t *parent)
                 lv_obj_set_style_image_recolor(icon, lv_color_hex(COLOR_BLACK), LV_PART_MAIN);
                 lv_obj_set_style_image_recolor_opa(icon, LV_OPA_COVER, LV_PART_MAIN);
                 s_circle_icons[i] = icon;
+                RenderAudit_RegisterObject(icon, RENDER_AUDIT_OBJ_KIND_CIRCLE_ICON,
+                                           (uint32_t)i);
             }
         }
 
@@ -1327,6 +1545,8 @@ static void prv_create_circle_area(lv_obj_t *parent)
         lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
         lv_obj_set_hidden(label, true);
         s_circle_labels[i] = label;
+        RenderAudit_RegisterObject(label, RENDER_AUDIT_OBJ_KIND_CIRCLE_LABEL,
+                                   (uint32_t)i);
     }
 }
 
@@ -1337,6 +1557,7 @@ static void prv_create_divider_line(lv_obj_t *parent)
     lv_obj_set_pos(line, LINE_X, LINE_Y);
     lv_obj_set_style_bg_color(line, lv_color_hex(COLOR_BLACK), 0);
     lv_obj_set_style_border_width(line, 0, 0);
+    RenderAudit_RegisterObject(line, RENDER_AUDIT_OBJ_KIND_DIVIDER, 0u);
 }
 
 static void prv_create_status_label(lv_obj_t *parent)
@@ -1350,6 +1571,7 @@ static void prv_create_status_label(lv_obj_t *parent)
     lv_obj_set_width(s_status_label, SCREEN_W - 80);
     lv_obj_set_pos(s_status_label, 40, LINE_Y + 16);
     lv_obj_set_hidden(s_status_label, true);
+    RenderAudit_RegisterObject(s_status_label, RENDER_AUDIT_OBJ_KIND_STATUS, 0u);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1693,6 +1915,7 @@ void Launcher_Task(void)
 #endif
 
 #if CARTDESK_LTDC_SYNC_TRACE_ENABLE
+    prv_apply_launcher_scroll_mode();
     if(g_launcher_slot_trace_visual_mode != s_launcher_slot_trace_visual_mode) {
         prv_apply_slot_trace_visual_mode();
     }
@@ -1768,6 +1991,8 @@ void DesignLauncher_Create(lv_display_t *disp)
 
     lv_obj_set_style_pad_all(scr, 0, 0);
 
+    RenderAudit_ObjectRegistryReset();
+
     if (!s_launcher_assets_initialized) {
         launcher_cache_init();
         memset(s_image_dsc, 0, sizeof(s_image_dsc));
@@ -1802,6 +2027,16 @@ void DesignLauncher_Create(lv_display_t *disp)
     g_scroll_capture_icons_ready = 0u;
     g_fb_capture_request_step = UINT32_MAX;
     g_fb_capture_ready = 0u;
+    /* Debug mode mailbox is owned by the debugger; only the applied state and
+     * the Launcher owned scroll offset are reset here. */
+    s_launcher_scroll_mode_applied = LAUNCHER_SCROLL_MODE_NATIVE;
+    g_launcher_scroll_mode_applied = LAUNCHER_SCROLL_MODE_NATIVE;
+    s_logical_scroll_x = 0;
+    g_launcher_logical_scroll_x = 0;
+    g_launcher_logical_scroll_max = 0;
+    g_launcher_slot_moves = 0u;
+    g_launcher_slot_visible_mask = 0u;
+    s_slot_bbox_after_pending = false;
 #endif
 
     /* 主容器 */
@@ -1812,6 +2047,7 @@ void DesignLauncher_Create(lv_display_t *disp)
     lv_obj_set_style_border_width(s_main_container, 0, 0);
     lv_obj_set_style_pad_all(s_main_container, 0, 0);
     lv_obj_set_scrollable(s_main_container, false);
+    RenderAudit_RegisterObject(s_main_container, RENDER_AUDIT_OBJ_KIND_MAIN, 0u);
 
     prv_create_box_area(s_main_container);
     prv_create_circle_area(s_main_container);

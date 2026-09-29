@@ -19,6 +19,7 @@
 #include "lv_obj_class_private.h"
 #include "lv_obj_style_internal.h"
 #include "../misc/lv_style_private.h"
+#include "render_audit.h"
 
 /*********************
  *      DEFINES
@@ -329,6 +330,7 @@ void lv_obj_update_layout(const lv_obj_t * obj)
     }
     LV_PROFILER_LAYOUT_BEGIN;
     update_layout_mutex = true;
+    uint32_t audit_layout_start = RenderAudit_LayoutBegin();
 
     lv_obj_t * scr = lv_obj_get_screen(obj);
     /*Repeat until there are no more layout invalidations*/
@@ -353,6 +355,7 @@ void lv_obj_update_layout(const lv_obj_t * obj)
     lv_display_t * disp = lv_obj_get_display(scr);
     lv_display_send_event(disp, LV_EVENT_UPDATE_LAYOUT_COMPLETED, NULL);
     update_layout_mutex = false;
+    RenderAudit_LayoutEnd(audit_layout_start, pass_cnt);
     LV_PROFILER_LAYOUT_END;
 }
 
