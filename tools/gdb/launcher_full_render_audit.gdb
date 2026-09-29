@@ -5,6 +5,7 @@ set print pretty on
 set print elements 512
 set breakpoint pending on
 init-if-undefined $preclear_mode = 0
+init-if-undefined $rounded_mode = 0
 file build/Debug-LTDC-Full-Render-Audit/cartdesk-os.elf
 target extended-remote localhost:3333
 monitor reset halt
@@ -13,6 +14,7 @@ monitor reset halt
 tbreak LauncherScrollCapture_IconsReady
 continue
 set variable g_render_audit_preclear_mode = $preclear_mode
+set variable g_launcher_rounded_fill_mode = $rounded_mode
 
 # Apply normal ARGB mode and allow its invalidation to settle before arming.
 set variable g_launcher_slot_trace_visual_mode = 0
@@ -34,6 +36,7 @@ shell sleep 4
 monitor halt
 
 printf "AUDIT_STATUS scroll_state=%lu step=%lu trace_frames=%lu audit_frames=%lu clock=%lu\n", g_scroll_capture_state, g_scroll_capture_step, g_display_render_count, g_render_audit_frame_count, SystemCoreClock
+printf "ROUNDED_MODE requested=%lu applied=%lu object=%p\n", g_launcher_rounded_fill_mode, g_launcher_rounded_fill_applied_mode, g_launcher_rounded_fill_object_ptr
 printf "FAULTS CFSR=0x%08lx HFSR=0x%08lx MMFAR=0x%08lx BFAR=0x%08lx\n", *(unsigned long*)0xE000ED28, *(unsigned long*)0xE000ED2C, *(unsigned long*)0xE000ED34, *(unsigned long*)0xE000ED38
 printf "DISPLAY render_total=%lu render_count=%lu reload_req=%lu reload_evt=%lu reload_done=%lu timeout=%lu ownership=%lu ltdc_fu=%lu ltdc_te=%lu ltdc_other=%lu\n", g_display_render_total_cycles, g_display_render_count, g_display_reload_requests, g_display_reload_events, g_display_reload_complete_signals, g_display_reload_wait_timeouts, g_display_potential_ownership_violations, g_display_ltdc_fifo_underruns, g_display_ltdc_transfer_errors, g_display_ltdc_other_errors
 printf "MERGE calls=%lu cycles=%lu comparisons=%lu invalid_before=%lu invalid_after=%lu\n", g_render_audit_merge_calls, g_render_audit_merge_cycles, g_render_audit_merge_comparisons, g_render_audit_invalid_before, g_render_audit_invalid_after

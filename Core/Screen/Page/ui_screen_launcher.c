@@ -105,6 +105,18 @@ static lv_obj_t *s_main_container = NULL;
 static lv_obj_t *s_slots[DESIGN_APP_COUNT];
 static lv_obj_t *s_slot_labels[DESIGN_APP_COUNT];
 static lv_obj_t *s_slot_images[DESIGN_APP_COUNT];
+#if CARTDESK_RENDER_AUDIT_ENABLE
+enum {
+    LAUNCHER_ROUNDED_FILL_MODE_NORMAL = 0u,
+    LAUNCHER_ROUNDED_FILL_MODE_RADIUS_ZERO = 1u,
+};
+
+/* Debug ID 1: the horizontally scrolling Launcher content background. */
+volatile uint32_t g_launcher_rounded_fill_mode;
+volatile uint32_t g_launcher_rounded_fill_applied_mode;
+volatile uintptr_t g_launcher_rounded_fill_object_ptr;
+static lv_obj_t *s_launcher_rounded_fill_object;
+#endif
 #if CARTDESK_LTDC_SYNC_TRACE_ENABLE
 static lv_obj_t *s_box_scroll_container;
 static lv_obj_t *s_slot_trace_rects[DESIGN_APP_COUNT];
@@ -1199,6 +1211,12 @@ static void prv_create_box_area(lv_obj_t *parent)
     lv_obj_set_style_pad_all(content_container, 0, 0);
     lv_obj_set_scrollbar_mode(content_container, LV_SCROLLBAR_MODE_OFF);
     lv_obj_set_scrollable(content_container, false);
+#if CARTDESK_RENDER_AUDIT_ENABLE
+    s_launcher_rounded_fill_object = content_container;
+    g_launcher_rounded_fill_object_ptr = (uintptr_t)content_container;
+    g_launcher_rounded_fill_mode = LAUNCHER_ROUNDED_FILL_MODE_NORMAL;
+    g_launcher_rounded_fill_applied_mode = LAUNCHER_ROUNDED_FILL_MODE_NORMAL;
+#endif
 
     for (int i = 0; i < DESIGN_APP_COUNT; i++) {
         const int box_x = 20 + i * (BOX_WIDTH + BOX_SPACING);
@@ -1679,6 +1697,20 @@ void Launcher_Task(void)
         prv_apply_slot_trace_visual_mode();
     }
 #endif
+#if CARTDESK_RENDER_AUDIT_ENABLE
+    if(s_launcher_rounded_fill_object != NULL &&
+       g_launcher_rounded_fill_mode != g_launcher_rounded_fill_applied_mode) {
+        if(g_launcher_rounded_fill_mode == LAUNCHER_ROUNDED_FILL_MODE_RADIUS_ZERO) {
+            lv_obj_set_style_radius(s_launcher_rounded_fill_object, 0, LV_PART_MAIN);
+        }
+        else {
+            lv_obj_remove_local_style_prop(s_launcher_rounded_fill_object,
+                                           LV_STYLE_RADIUS, LV_PART_MAIN);
+            g_launcher_rounded_fill_mode = LAUNCHER_ROUNDED_FILL_MODE_NORMAL;
+        }
+        g_launcher_rounded_fill_applied_mode = g_launcher_rounded_fill_mode;
+    }
+#endif
 
     if (s_runtime_screen != NULL && LuaRuntimeTask_HasError() &&
         LuaRuntimeTask_GetState() == LUA_RUNTIME_STATE_ERROR &&
@@ -1819,6 +1851,10 @@ void DesignLauncher_Destroy(void)
     s_status_label = NULL;
     s_info_popup = NULL;
     memset(s_circle_icons, 0, sizeof(s_circle_icons));
+#if CARTDESK_RENDER_AUDIT_ENABLE
+    s_launcher_rounded_fill_object = NULL;
+    g_launcher_rounded_fill_object_ptr = 0u;
+#endif
 #if CARTDESK_LTDC_SYNC_TRACE_ENABLE
     s_box_scroll_container = NULL;
     memset(s_slot_trace_rects, 0, sizeof(s_slot_trace_rects));
