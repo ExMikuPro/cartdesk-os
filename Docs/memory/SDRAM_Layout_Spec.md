@@ -1,9 +1,17 @@
-# SDRAM 内存布局规范 v1.0（中文）
+# SDRAM 内存布局规范 v2.0（中文）
 
 > 适用范围：本规范描述 STM32H7 系统中外部
 > SDRAM（64MiB）的固定分区结构。\
 > 目标：保证 LTDC / LVGL / DMA / 资源加载
 > 在同一套地址约束下稳定运行，并避免运行期碎片化问题。
+>
+> v2.0 变更：为 Launcher 固定 UI、Launcher 水平 cached strip 和后续
+> LTDC hardware panning 重排布局。前四块固定为
+> Layer0_FB / LVGL_FB_A / LVGL_FB_B / LAUNCHER_STRIP，其余固定 region
+> 从 `0xD0865000` 起紧密上移。**不保留旧绝对地址兼容**。
+>
+> 数值唯一来源为 `Core/Inc/sdram_layout.h`；完整说明见
+> `Docs/display/SDRAM_LAYOUT.md`。
 
 ------------------------------------------------------------------------
 
@@ -19,25 +27,33 @@ SDRAM 物理地址范围：
 
 SDRAM 采用"固定锚点 + 顺序紧贴"的布局策略，分为以下逻辑区：
 
-1.  FB 区（显存区）
-2.  LVGL_HEAP
-3.  DMA_POOL
-4.  LAUNCHER_CACHE
-5.  APP_ARENA_REST
+1.  Layer0_FB（Launcher 固定 UI，单缓冲）
+2.  LVGL_FB_A / LVGL_FB_B（LVGL DIRECT 双缓冲）
+3.  LAUNCHER_STRIP（Launcher 水平 cached strip 预留）
+4.  LVGL_HEAP
+5.  DMA_POOL
+6.  LAUNCHER_CACHE
+7.  APP_ARENA_REST（Lua heap + resource arena + cold pool）
 
 ------------------------------------------------------------------------
 
 ## 2. 固定分区总览表
 
-| 区域 | 起始地址 | 终止地址 | 容量 (MiB) | 用途 |
+以 end-exclusive 结束地址表示。
+
+| 区域 | 起始地址 | 结束(excl) | 容量 (MiB) | 用途 |
 |------|------------|------------|------------|--------------|
-| Layer1_FB0 | 0xD0000000 | 0xD0176FFF | 1.46 | 主图层缓冲0 |
-| Layer1_FB1 | 0xD0177000 | 0xD02EDFFF | 1.46 | 主图层缓冲1 |
-| Layer2_FB0 | 0xD02EE000 | 0xD0464FFF | 1.46 | 背景层单缓冲 |
-| LVGL_HEAP | 0xD0465000 | 0xD1464FFF | 16 | 保留/future-use |
-| DMA_POOL | 0xD1465000 | 0xD1864FFF | 4 | DMA 专用区 |
-| LAUNCHER_CACHE | 0xD1865000 | 0xD1C64FFF | 4 | 图标缓存 |
-| APP_ARENA_REST | 0xD1C65000 | 0xD3FFFFFF | 约 35.6 | 资源加载 |
+| LAYER0_FB | 0xD0000000 | 0xD0177000 | 1.46 | Launcher 固定 UI，单缓冲 |
+| LVGL_FB_A | 0xD0177000 | 0xD02EE000 | 1.46 | LVGL DIRECT 双缓冲 A |
+| LVGL_FB_B | 0xD02EE000 | 0xD0465000 | 1.46 | LVGL DIRECT 双缓冲 B |
+| LAUNCHER_STRIP | 0xD0465000 | 0xD0865000 | 4 | Launcher cached strip 预留（实用 3.557） |
+| LVGL_HEAP | 0xD0865000 | 0xD1865000 | 16 | 保留/future-use |
+| DMA_POOL | 0xD1865000 | 0xD1C65000 | 4 | DMA 专用区 |
+| LAUNCHER_CACHE | 0xD1C65000 | 0xD2065000 | 4 | 图标缓存 |
+| APP_ARENA_REST | 0xD2065000 | 0xD4000000 | 约 31.6 | Lua heap + 资源区 + cold pool |
+| └ LUA_HEAP | 0xD2065000 | 0xD2265000 | 2 | Lua VM SDRAM heap |
+| └ RESOURCE_ARENA | 0xD2265000 | 0xD3800000 | 约 21.6 | Resource Manager 独占 |
+| └ COLD_POOL | 0xD3800000 | 0xD4000000 | 8 | 冷元数据 / 字库烧写 staging |
 
 
 ------------------------------------------------------------------------
@@ -46,8 +62,9 @@ SDRAM 采用"固定锚点 + 顺序紧贴"的布局策略，分为以下逻辑区
 
 ### 3.1 锚点原则
 
--   FB 区必须（MUST）从 SDRAM 起始地址开始。
--   FB 区为固定大小，不得在运行期扩展。
+-   Layer0_FB 必须（MUST）从 SDRAM 起始地址开始。
+-   前三块 framebuffer 与 LAUNCHER_STRIP 的顺序固定，不得调整。
+-   各固定区为固定大小，不得在运行期扩展。
 
 ### 3.2 紧贴原则
 
@@ -57,9 +74,22 @@ SDRAM 采用"固定锚点 + 顺序紧贴"的布局策略，分为以下逻辑区
 
 ### 3.3 对齐规则
 
--   FB 区：必须 256 字节对齐。
+-   framebuffer 与 LAUNCHER_STRIP：必须 256 字节对齐（MUST）。
+-   LAUNCHER_STRIP 行 stride：必须 32 字节对齐（MUST）。
 -   DMA_POOL：必须 64 字节以上对齐。
 -   其它区域：建议 32 字节对齐。
+
+### 3.4 编译期检查
+
+`Core/Inc/sdram_layout.h` 用 `_Static_assert` 固定以下不变量：
+
+-   相邻 region 不重叠且首尾相接（`SDRAM_REGION_NO_OVERLAP` /
+    `SDRAM_REGION_TIGHTLY_FOLLOWS`）。
+-   前三块 framebuffer 的绝对 base 与冻结基线一致。
+-   全部 framebuffer / strip base 256 字节对齐，DMA_POOL 64 字节对齐。
+-   strip stride 32 字节对齐且不小于逻辑行字节。
+-   `LAUNCHER_STRIP_ALLOC_SIZE <= SDRAM_LAUNCHER_STRIP_ARENA_SIZE`。
+-   最后一块 region 不超过 `0xD4000000`。
 
 ------------------------------------------------------------------------
 
@@ -67,8 +97,10 @@ SDRAM 采用"固定锚点 + 顺序紧贴"的布局策略，分为以下逻辑区
 
 ### 4.1 图层结构
 
--   Layer1：双缓冲
--   Layer2：单缓冲
+-   Layer0（Launcher 固定 UI）：单缓冲，`SDRAM_LAYER0_FB_BASE`。
+-   LVGL（Lua Cart DIRECT 路径）：双缓冲，`SDRAM_LVGL_FB_A_BASE` /
+    `SDRAM_LVGL_FB_B_BASE`。
+-   LAUNCHER_STRIP：单缓存 surface，2660×350，stride 10656，硬件平移用。
 
 ### 4.2 显存容量说明
 
@@ -77,6 +109,11 @@ SDRAM 采用"固定锚点 + 顺序紧贴"的布局策略，分为以下逻辑区
     800 × 480 × 4 bytes
     = 1,536,000 bytes / frame
     = 4.39 MiB total (三帧)
+
+Launcher strip：
+
+    2660 × 4 = 10640 -> stride 对齐 32B -> 10656
+    10656 × 350 = 3,729,600 bytes (0x38E8C0)
 
 ### 4.3 使用限制
 
@@ -88,11 +125,12 @@ SDRAM 采用"固定锚点 + 顺序紧贴"的布局策略，分为以下逻辑区
 
 ## 5. LVGL_HEAP 规范
 
--   当前固定容量为 16 MiB，地址范围 `0xD0465000` -- `0xD1464FFF`。
+-   当前固定容量为 16 MiB，地址范围 `0xD0865000` -- `0xD1864FFF`
+    （v2.0 从 `0xD0465000` 整体上移 4 MiB，为 LAUNCHER_STRIP 让位）。
 -   实机验证发现将 LVGL builtin/TLSF heap 放入本区会引入显示撕裂/不稳定。
 -   当前策略：LVGL runtime heap 使用片内 RAM，`SDRAM_LVGL_HEAP` 保留为 reserved/future-use，不作为默认 lv_mem 主池。
 -   meminfo 中本区应保持 `total=0x01000000`，`used=0`，并在 dump 文本中标注 `RESERVED/FUTURE_USE`。
--   LVGL 输出 framebuffer 不属于 LVGL runtime heap，Layer1_FB0/Layer1_FB1 双缓冲仍使用独立 FB 区。
+-   LVGL 输出 framebuffer 不属于 LVGL runtime heap，LVGL_FB_A/LVGL_FB_B 双缓冲仍使用独立 FB 区。
 -   LVGL runtime heap 仅用于 LVGL 元数据和小对象，例如 `lv_obj`、`lv_image`、style、event、label text 和 descriptor 小结构。
 -   大图像禁止进入 LVGL 片内 heap；Lua cart 图片、解码后像素资源，以及 Lua UI image 的 copied/cropped/flipped view buffer 应继续使用 APP_ARENA_REST/LAUNCHER_CACHE 等专用区。
 -   禁止作为 DMA buffer 使用，DMA buffer 必须来自 DMA_POOL。
@@ -107,9 +145,10 @@ DMA_POOL 仅用于临时 DMA buffer，不作为通用 heap，也不接收 LVGL �
 
 固定 DMA 目标（Fixed DMA Target）不需要来自 DMA_POOL，但允许作为 DMA2D / MDMA / LTDC / 外设 DMA 的源或目标，前提是满足 cache 和对齐规则：
 
--   Layer1_FB0
--   Layer1_FB1
--   Layer2_FB0
+-   LAYER0_FB
+-   LVGL_FB_A
+-   LVGL_FB_B
+-   LAUNCHER_STRIP
 -   LAUNCHER_CACHE
 -   APP_ARENA_REST 中的资源区
 
@@ -203,11 +242,15 @@ Lua cart 图片资源使用 `APP_ARENA_REST` 中的资源区作为 scene 资源 
 
   地址范围     可能问题来源
   ------------ --------------
-  0xD000xxxx   FB 区
-  0xD04xxxxx   LVGL
-  0xD14xxxxx   DMA
-  0xD18xxxxx   Launcher
-  0xD2xxxxxx   Arena 溢出
+  0xD000xxxx   Layer0_FB
+  0xD01xxxxx   LVGL_FB_A
+  0xD02xxxxx   LVGL_FB_B
+  0xD04xxxxx   LAUNCHER_STRIP
+  0xD08xxxxx   LVGL_HEAP（reserved）
+  0xD18xxxxx   DMA_POOL
+  0xD1Cxxxxx   LAUNCHER_CACHE
+  0xD20xxxxx   APP_ARENA_REST（Lua heap / resource arena）
+  0xD38xxxxx   COLD_POOL / Arena 溢出
 
 ------------------------------------------------------------------------
 
@@ -217,7 +260,8 @@ Lua cart 图片资源使用 `APP_ARENA_REST` 中的资源区作为 scene 资源 
 
 -   `xhgc_meminfo_init()` 必须在 `xhgc_mem_layout_validate()` 通过后调用。
 -   初始化时从 `g_xhgc_mem_zones` 读取每个 zone 的 `total`。
--   三块 framebuffer zone 初始化为 fixed reserved，tag 为 `FRAMEBUFFER`，总占用 `0x00465000`。
+-   三块 framebuffer zone 初始化为 fixed reserved，tag 为 `FRAMEBUFFER`，总占用 `0x00465000`（3 × `0x177000`）。
+-   LAUNCHER_STRIP zone 按实际 strip 用量 `0x0038E8C0` 记为 reserved/used（tag `LAUNCHER`），4 MiB arena 的剩余 margin 保持空闲；启动期不 memset 整块 arena。
 -   fixed framebuffer 不允许通过 `xhgc_meminfo_release()` 释放。
 -   `xhgc_meminfo_alloc_record()` / `xhgc_meminfo_free_record()` 只记录已发生的分配和释放。
 -   `xhgc_meminfo_fail_record()` 只记录失败次数。
@@ -259,6 +303,12 @@ Lua cart 图片资源使用 `APP_ARENA_REST` 中的资源区作为 scene 资源 
 
 ## 版本记录
 
+-   v2.0 为 Launcher 固定 UI / Launcher 水平 cached strip / 后续 LTDC hardware
+    panning 重排 SDRAM：固定前四块为 LAYER0_FB / LVGL_FB_A / LVGL_FB_B /
+    LAUNCHER_STRIP（4 MiB），LVGL_HEAP / DMA_POOL / LAUNCHER_CACHE / APP_ARENA_REST
+    整体上移 4 MiB，RESOURCE_ARENA 紧随 Lua heap 并保留 cold pool 8 MiB；
+    新增 `_Static_assert` 布局断言与 `LAUNCHER_STRIP_*` 几何宏；
+    不再保留旧绝对地址兼容
 -   v1.0 回退 LVGL runtime heap 到片内 RAM，SDRAM_LVGL_HEAP 保留为 reserved/future-use
 -   v1.0 添加 Phase 9 allocator policy 入口、newlib 检查、littlefs fallback 计数和 RNG scratch 规则
 -   v1.0 补充 DMA_POOL 临时 DMA buffer 规则、cache helper 和 meminfo 接入

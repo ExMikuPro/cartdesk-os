@@ -35,7 +35,7 @@
 | 时钟 | CPU/SYSCLK 480 MHz，HCLK 240 MHz，APB1/2/3/4 120 MHz，QSPI/SDMMC 内核时钟 200 MHz |
 | 屏幕 | 800x480，ARGB8888 |
 | 显示 | LTDC + DMA2D |
-| 外部内存 | 64 MiB SDRAM，起始地址 `0xD0000000` |
+| 外部内存 | 64 MiB SDRAM，起始地址 `0xD0000000`，布局见 `Docs/display/SDRAM_LAYOUT.md` |
 | 外部字库 | QFLASH A8 霞鹜臻楷，16/20/24 px，默认 20 px |
 | 存储 | SD/FatFs，卡带镜像路径 `0:/cart.bin` |
 | 触摸 | GT911 路径已接入 LVGL 输入层 |
@@ -226,7 +226,8 @@ tests/              host 侧解析测试和 Lua smoke test
 
 - [Docs/stability/Lua执行预算与IWDG.md](Docs/stability/Lua执行预算与IWDG.md)：Lua callback/coroutine 执行预算、owner 清理、IWDG 健康策略与验证方法。
 - [Docs/STM32CubeMX_SYNC.md](Docs/STM32CubeMX_SYNC.md)：IOC 与实际硬件初始化的同步边界、Generate Code 保护策略和验证记录。
-- [Docs/memory/SDRAM_Layout_Spec_v1.0.md](Docs/memory/SDRAM_Layout_Spec_v1.0.md)：SDRAM 固定分区。
+- [Docs/display/SDRAM_LAYOUT.md](Docs/display/SDRAM_LAYOUT.md)：64 MiB SDRAM 完整布局、Launcher strip 预留与 stride 说明。
+- [Docs/memory/SDRAM_Layout_Spec.md](Docs/memory/SDRAM_Layout_Spec.md)：SDRAM 固定分区规范（v2.0）。
 - [Docs/CLion_Build_Presets.md](Docs/CLion_Build_Presets.md)：CLion / CMake preset、内存自测和实验构建入口。
 - [Docs/display/DMA2D_适配逻辑.md](Docs/display/DMA2D_适配逻辑.md)：DMA2D 与显示链路说明。
 - [Docs/display/FRAMEBUFFER_CAPTURE_ANALYSIS.md](Docs/display/FRAMEBUFFER_CAPTURE_ANALYSIS.md)：Launcher deterministic 滚动的双 framebuffer 抓取、ARGB/XRGB A/B 与像素分析。
@@ -247,7 +248,7 @@ tests/              host 侧解析测试和 Lua smoke test
 - `Core/APPS/TASK/cart_io_service.c` 负责 IO request/completion、取消、超时和 QFlash 独占窗口。
 - `Core/APPS/TASK/lua_runtime_task.c` 负责 Lua 启停请求；默认卡带路径是 `0:/cart.bin`。
 - `Core/Src/lua_vm.c` 负责 Lua VM、cart entry 加载和生命周期调度。
-- `Docs/memory/SDRAM_Layout_Spec_v1.0.md` 与链接脚本/`sdram_layout.h` 应保持一致。
+- `Core/Inc/sdram_layout.h` 是 SDRAM 固定布局的唯一来源；`STM32H743XX_FLASH.ld` 的 MEMORY 区域、`Core/Memory/xhgc_memory_layout.c` 的 zone 表都必须与它保持一致，不要在别处复制绝对地址。
 
 如果要临时开启板级 bring-up 测试，可以在配置时打开：
 

@@ -8,15 +8,29 @@ import re
 from pathlib import Path
 
 
+# Must stay in sync with Core/Inc/sdram_layout.h and STM32H743XX_FLASH.ld.
 SDRAM_REGION_NAMES = (
-    "SDRAM_LAYER1_FB0",
-    "SDRAM_LAYER1_FB1",
-    "SDRAM_LAYER2_FB0",
+    "SDRAM_LAYER0_FB",
+    "SDRAM_LVGL_FB_A",
+    "SDRAM_LVGL_FB_B",
+    "SDRAM_LAUNCHER_STRIP",
     "SDRAM_LVGL_HEAP",
     "SDRAM_DMA_POOL",
     "SDRAM_LAUNCHER",
     "SDRAM_APP_ARENA",
 )
+
+FB_REGION_NAMES = (
+    "SDRAM_LAYER0_FB",
+    "SDRAM_LVGL_FB_A",
+    "SDRAM_LVGL_FB_B",
+)
+
+STRIP_REGION_NAME = "SDRAM_LAUNCHER_STRIP"
+STRIP_WIDTH = 2660
+STRIP_HEIGHT = 350
+STRIP_BPP = 4
+STRIP_STRIDE_ALIGN = 32
 
 COLD_POOL_SIZE = 0x00800000
 LUA_HEAP_SIZE = 0x00200000
@@ -136,11 +150,12 @@ def main() -> int:
     resource_end = cold_base - 1
     resource_size = resource_end - resource_base + 1
 
-    fb_size = (
-        regions["SDRAM_LAYER1_FB0"][1]
-        + regions["SDRAM_LAYER1_FB1"][1]
-        + regions["SDRAM_LAYER2_FB0"][1]
-    )
+    fb_size = sum(regions[name][1] for name in FB_REGION_NAMES)
+
+    strip_row_bytes = STRIP_WIDTH * STRIP_BPP
+    strip_stride = (strip_row_bytes + STRIP_STRIDE_ALIGN - 1)
+    strip_stride -= strip_stride % STRIP_STRIDE_ALIGN
+    strip_alloc = strip_stride * STRIP_HEIGHT
 
     print("")
     print("========== SDRAM usage ==========")
@@ -150,13 +165,19 @@ def main() -> int:
         print_region(name, origin, length, usage[name])
 
     print(
-        f"  {'SDRAM_TOTAL':<18} 0x{regions['SDRAM_LAYER1_FB0'][0]:08X}-0x{app_end:08X}  "
+        f"  {'SDRAM_TOTAL':<18} 0x{regions['SDRAM_LAYER0_FB'][0]:08X}-0x{app_end:08X}  "
         f"static {fmt_size(total_static):>10} / {fmt_size(total_size):>10}  {total_percent:6.2f}%"
     )
 
     print("")
     print("Runtime SDRAM windows:")
-    print(f"  FB reserved       {fmt_size(fb_size):>10}  Layer1_FB0 + Layer1_FB1 + Layer2_FB0")
+    print(f"  FB reserved       {fmt_size(fb_size):>10}  LAYER0_FB + LVGL_FB_A + LVGL_FB_B")
+    print(
+        f"  LAUNCHER_STRIP reserved {fmt_size(regions[STRIP_REGION_NAME][1]):>10}  "
+        f"0x{regions[STRIP_REGION_NAME][0]:08X}-"
+        f"0x{regions[STRIP_REGION_NAME][0] + regions[STRIP_REGION_NAME][1] - 1:08X}  "
+        f"(strip {STRIP_WIDTH}x{STRIP_HEIGHT} stride {strip_stride} = {fmt_size(strip_alloc)})"
+    )
     print(f"  SDRAM_LVGL_HEAP reserved/future-use {fmt_size(regions['SDRAM_LVGL_HEAP'][1]):>10}  0x{regions['SDRAM_LVGL_HEAP'][0]:08X}-0x{regions['SDRAM_LVGL_HEAP'][0] + regions['SDRAM_LVGL_HEAP'][1] - 1:08X}")
     print(f"  DMA_POOL window   {fmt_size(regions['SDRAM_DMA_POOL'][1]):>10}  0x{regions['SDRAM_DMA_POOL'][0]:08X}-0x{regions['SDRAM_DMA_POOL'][0] + regions['SDRAM_DMA_POOL'][1] - 1:08X}")
     print(f"  LAUNCHER_CACHE    {fmt_size(regions['SDRAM_LAUNCHER'][1]):>10}  static used {fmt_size(usage['SDRAM_LAUNCHER'])}")

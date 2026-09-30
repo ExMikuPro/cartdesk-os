@@ -121,15 +121,16 @@ FMC SDRAM Bank2，32-bit 总线、13 行/9 列、4 banks、CAS 3、SDCLK period 
 
 | 分区 | 地址范围 | 容量 | 作用 |
 |---|---|---:|---|
-| Layer1 FB0 | `0xD0000000..0xD0176FFF` | 1.46 MiB | 主图层前/后缓冲之一 |
-| Layer1 FB1 | `0xD0177000..0xD02EDFFF` | 1.46 MiB | 主图层双缓冲之一 |
-| Layer2 FB0 | `0xD02EE000..0xD0464FFF` | 1.46 MiB | 背景层单缓冲保留 |
-| SDRAM_LVGL_HEAP | `0xD0465000..0xD1464FFF` | 16 MiB | 保留/未来用途；当前 LVGL heap 不在这里 |
-| DMA_POOL | `0xD1465000..0xD1864FFF` | 4 MiB | 64-byte 对齐线性 DMA 临时池 |
-| LAUNCHER_CACHE | `0xD1865000..0xD1C64FFF` | 4 MiB | 10 个 200×200 图标等，静态使用约 1.88 MiB |
-| APP_ARENA | `0xD1C65000..0xD3FFFFFF` | 35.61 MiB | Lua heap 2 MiB、resource arena 25.61 MiB、cold pool 8 MiB |
+| Layer0 FB | `0xD0000000..0xD0176FFF` | 1.46 MiB | Launcher 固定 UI，单缓冲 |
+| LVGL FB_A | `0xD0177000..0xD02EDFFF` | 1.46 MiB | LVGL DIRECT 双缓冲 A |
+| LVGL FB_B | `0xD02EE000..0xD0464FFF` | 1.46 MiB | LVGL DIRECT 双缓冲 B |
+| LAUNCHER_STRIP | `0xD0465000..0xD0864FFF` | 4 MiB | Launcher 水平 cached strip 预留（实用 3.557 MiB） |
+| SDRAM_LVGL_HEAP | `0xD0865000..0xD1864FFF` | 16 MiB | 保留/未来用途；当前 LVGL heap 不在这里 |
+| DMA_POOL | `0xD1865000..0xD1C64FFF` | 4 MiB | 64-byte 对齐线性 DMA 临时池 |
+| LAUNCHER_CACHE | `0xD1C65000..0xD2064FFF` | 4 MiB | 12 个 200×200 图标等，静态使用约 1.83 MiB |
+| APP_ARENA | `0xD2065000..0xD3FFFFFF` | 31.61 MiB | Lua heap 2 MiB、resource arena 21.61 MiB、cold pool 8 MiB |
 
-SDRAM 的 MPU region 为 64 MiB、可访问、不可执行、不可缓存/不可缓冲。运行时会调用 `sdram_layout_check()` 和 `xhgc_mem_layout_validate()`，失败进入 `Error_Handler()`。
+SDRAM 的 MPU region 为 64 MiB、full access、可执行、不可缓存/不可缓冲、shareable（region 5 沿用 region 4 的 cache/buffer 属性）。本次 SDRAM 重排不新增 MPU region、不修改这些属性。运行时会调用 `sdram_layout_check()` 和 `xhgc_mem_layout_validate()`，失败进入 `Error_Handler()`；数值唯一来源为 `Core/Inc/sdram_layout.h`，详见 `Docs/display/SDRAM_LAYOUT.md`。
 
 ### 外部存储、显示与接口
 

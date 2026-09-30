@@ -45,6 +45,7 @@ flowchart TD
 | layout validate | 启动调用 `xhgc_mem_layout_validate()`，失败进入 `Error_Handler()` | `Core/Src/main.c`、`Core/Memory/xhgc_memory_layout.c` | PASS |
 | meminfo init | layout validate 后调用 `xhgc_meminfo_init()` | `Core/Src/main.c`、`Core/Memory/xhgc_meminfo.c` | PASS |
 | LVGL heap location | `LV_MEM_ADR=0U`，内建静态池，未绑定 SDRAM_LVGL_HEAP | `Core/APPS/LVGL/lv_conf.h` | PASS |
+| SDRAM layout host test | `sdram_layout_test` 校验 region 边界/对齐/overlap 并打印 layout table | `tests/host/sdram_layout_test.c` | PASS |
 | framebuffer reserve | 三块 framebuffer 初始化 fixed reserve，总计 `0x00465000` | `Core/Memory/xhgc_meminfo.c` | PASS |
 | 启动日志 | dump layout 后 dump meminfo | `Core/Src/main.c` | 代码 PASS，实机未验证 |
 
@@ -52,15 +53,23 @@ flowchart TD
 
 | zone | base | size | exclusive end | 状态 | 对齐 | 当前状态 |
 |---|---:|---:|---:|---|---|---|
-| Layer1_FB0 | `0xD0000000` | `0x00177000` | `0xD0177000` | fixed framebuffer | 256-byte | PASS |
-| Layer1_FB1 | `0xD0177000` | `0x00177000` | `0xD02EE000` | fixed framebuffer | 256-byte | PASS |
-| Layer2_FB0 | `0xD02EE000` | `0x00177000` | `0xD0465000` | fixed framebuffer | 256-byte | PASS |
-| SDRAM_LVGL_HEAP | `0xD0465000` | `0x01000000` | `0xD1465000` | reserved/future-use | 32-byte | PASS |
-| DMA_POOL | `0xD1465000` | `0x00400000` | `0xD1865000` | temporary DMA buffer | 64-byte | PASS |
-| LAUNCHER_CACHE | `0xD1865000` | `0x00400000` | `0xD1C65000` | fixed cache zone | 32-byte | PASS |
-| APP_ARENA_REST | `0xD1C65000` | `0x0239B000` | `0xD4000000` | arena zone | 32-byte | PASS |
+| LAYER0_FB | `0xD0000000` | `0x00177000` | `0xD0177000` | fixed framebuffer (Launcher 固定 UI) | 256-byte | PASS |
+| LVGL_FB_A | `0xD0177000` | `0x00177000` | `0xD02EE000` | fixed framebuffer | 256-byte | PASS |
+| LVGL_FB_B | `0xD02EE000` | `0x00177000` | `0xD0465000` | fixed framebuffer | 256-byte | PASS |
+| LAUNCHER_STRIP | `0xD0465000` | `0x00400000` | `0xD0865000` | fixed launcher strip arena | 256-byte | PASS |
+| SDRAM_LVGL_HEAP | `0xD0865000` | `0x01000000` | `0xD1865000` | reserved/future-use | 32-byte | PASS |
+| DMA_POOL | `0xD1865000` | `0x00400000` | `0xD1C65000` | temporary DMA buffer | 64-byte | PASS |
+| LAUNCHER_CACHE | `0xD1C65000` | `0x00400000` | `0xD2065000` | fixed cache zone | 32-byte | PASS |
+| APP_ARENA_REST | `0xD2065000` | `0x01F9B000` | `0xD4000000` | arena zone | 32-byte | PASS |
+| └ LUA_HEAP | `0xD2065000` | `0x00200000` | `0xD2265000` | Lua VM heap | 32-byte | PASS |
+| └ RESOURCE_ARENA | `0xD2265000` | `0x0159B000` | `0xD3800000` | resource arena | 32-byte | PASS |
+| └ COLD_POOL | `0xD3800000` | `0x00800000` | `0xD4000000` | cold metadata / staging | 32-byte | PASS |
 
-全局 SDRAM base 为 `0xD0000000`，size 为 `0x04000000`，exclusive end 为 `0xD4000000`。当前 zone table 顺序紧贴、不重叠、不越界；`xhgc_mem_layout_validate()` 同时检查 zone id、base/size/end、紧贴关系和对齐。
+全局 SDRAM base 为 `0xD0000000`，size 为 `0x04000000`，exclusive end 为 `0xD4000000`。当前 zone table 顺序紧贴、不重叠、不越界；`xhgc_mem_layout_validate()` 同时检查 zone id、base/size/end、紧贴关系和对齐。数值唯一来源为 `Core/Inc/sdram_layout.h`，完整说明见 `Docs/display/SDRAM_LAYOUT.md`。
+
+Launcher strip 几何：逻辑 2660×350，行字节 10640，物理 stride 10656（32-byte 对齐，含 4 px padding），实际分配 `0x38E8C0`，arena margin `0x00071740`，`LAUNCHER_SCROLL_MAX_X = 1860`。
+
+Host 回归：`sdram_layout_test`（`tests/host/sdram_layout_test.c`）在 host 上复检全部 region 的 start/size/end/alignment/overlap 并打印 layout table。
 
 ## 运行时验收
 
@@ -81,10 +90,11 @@ flowchart TD
 |---|---|---|
 | 空闲运行 1 小时 | 无 HardFault、无屏幕撕裂、meminfo fail_count 不异常增长 | 未验证 |
 | launcher 页面切换 1000 次 | framebuffer 正常，APP_ARENA_REST used 不单调增长 | 未验证 |
+| Launcher strip arena | 预留期 used 恒为 `0x38E8C0`（未启用 strip），arena margin 不被其它 zone 侵占 | 未验证 |
 | cart 加载/卸载 100 次 | Lua heap peak 可解释，RESOURCE_ARENA reset 后 used 回基线 | 未验证 |
 | scene reset 100 次 | 旧 handle 失效，资源区 used 回基线，peak/fail 保留 | 未验证 |
 | DMA_POOL 压测 | reset 后 used 回 0 或基线，peak/fail 保留 | 未验证 |
-| LVGL heap 观察 | peak 可解释，不进入 `0xD0465000` 到 `0xD1465000` | 未验证 |
+| LVGL heap 观察 | peak 可解释，不进入 `0xD0865000` 到 `0xD1865000` | 未验证 |
 | LCD Memory Overlay 长跑 | hidden/visible 切换不频繁创建对象；1Hz 更新；不改变 meminfo peak/fail | 未验证 |
 
 ## 故障判定
@@ -122,11 +132,14 @@ flowchart TD
 - 路径已调整：请求中的 `Core/LuaPort/lua_vm_memory.c` 实际为 `Core/Src/lua_vm_memory.c`。
 - 路径已调整：未发现 `Core/LuaPort/lua_vm_runtime.c`；Lua VM runtime 主文件为 `Core/Src/lua_vm.c`。
 - `Core/Memory/xhgc_meminfo.h` 定义了 `XHGC_MEM_TAG_TEXTURE`，但当前审查未发现业务路径调用 `xhgc_meminfo_alloc_record(..., XHGC_MEM_TAG_TEXTURE)`；资源和 image view buffer 目前以 `XHGC_MEM_TAG_RESOURCE` 记录。
-- 未发现 SDRAM layout、allocator policy、CLion presets 文档与当前实现的地址、宏开关或主要生命周期存在矛盾。
+- SDRAM 布局已按 v2.0 重排（Launcher 固定 UI / LVGL 双缓冲 / Launcher strip 预留 / 资源区），文档、链接脚本与 `Core/Inc/sdram_layout.h` 的数值经 `tests/host/sdram_layout_test.c` 交叉校验一致。
 
 ## 参考文件
 
-- `Docs/memory/SDRAM_Layout_Spec_v1.0.md`
+- `Docs/memory/SDRAM_Layout_Spec.md`
+- `Docs/display/SDRAM_LAYOUT.md`
+- `Core/Inc/sdram_layout.h`
+- `tests/host/sdram_layout_test.c`
 - `Docs/memory/Allocator_Policy.md`
 - `Docs/CLion_Build_Presets.md`
 - `Docs/architecture.md`

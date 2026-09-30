@@ -3,7 +3,8 @@
 #include <stdio.h>
 #include <string.h>
 
-#define XHGC_MEMINFO_FRAMEBUFFER_SIZE ((uint32_t)0x00177000UL)
+/* 固定 framebuffer 的保留统计口径 = 统一布局中的单帧大小 */
+#define XHGC_MEMINFO_FRAMEBUFFER_SIZE ((uint32_t)SDRAM_LAYER0_FB_SIZE)
 
 static XHGC_MemZoneStats g_xhgc_meminfo_zone_stats[XHGC_MEM_ZONE_COUNT];
 static XHGC_MemTagStats g_xhgc_meminfo_tag_stats[XHGC_MEM_TAG_COUNT];
@@ -220,6 +221,8 @@ static bool xhgc_meminfo_sub_usage(XHGC_MemZoneId zone,
  * @retval None
  * @note   - 本函数会清零 zone/tag 统计并按内存布局表重建 total_sdram
  * @note   - 初始化完成后会把三块固定 framebuffer 记为 reserved/used
+ * @note   - Launcher strip arena 只按实际 strip 分配量记为 reserved/used，
+ *           4 MiB arena 的剩余 margin 保持空闲，不额外占用启动时间
  */
 void xhgc_meminfo_init(void)
 {
@@ -238,15 +241,18 @@ void xhgc_meminfo_init(void)
 
     g_xhgc_meminfo_initialized = true;
 
-    (void)xhgc_meminfo_reserve(XHGC_MEM_ZONE_LAYER1_FB0,
+    (void)xhgc_meminfo_reserve(XHGC_MEM_ZONE_LAYER0_FB,
                                XHGC_MEMINFO_FRAMEBUFFER_SIZE,
                                XHGC_MEM_TAG_FRAMEBUFFER);
-    (void)xhgc_meminfo_reserve(XHGC_MEM_ZONE_LAYER1_FB1,
+    (void)xhgc_meminfo_reserve(XHGC_MEM_ZONE_LVGL_FB_A,
                                XHGC_MEMINFO_FRAMEBUFFER_SIZE,
                                XHGC_MEM_TAG_FRAMEBUFFER);
-    (void)xhgc_meminfo_reserve(XHGC_MEM_ZONE_LAYER2_FB0,
+    (void)xhgc_meminfo_reserve(XHGC_MEM_ZONE_LVGL_FB_B,
                                XHGC_MEMINFO_FRAMEBUFFER_SIZE,
                                XHGC_MEM_TAG_FRAMEBUFFER);
+    (void)xhgc_meminfo_reserve(XHGC_MEM_ZONE_LAUNCHER_STRIP,
+                               (uint32_t)LAUNCHER_STRIP_ALLOC_SIZE,
+                               XHGC_MEM_TAG_LAUNCHER);
 }
 
 /**
@@ -424,7 +430,7 @@ void xhgc_meminfo_dump(void)
         const bool fixed = zone != NULL &&
                            (zone->flags & XHGC_MEM_ZONE_FLAG_FIXED) != 0u;
         const bool reserved_future = zone != NULL &&
-                                     zone->id == XHGC_MEM_ZONE_SDRAM_LVGL_HEAP;
+                                     zone->id == XHGC_MEM_ZONE_LAUNCHER_STRIP;
 
         printf("  %-16s %s%sused=0x%08lX total=0x%08lX peak=0x%08lX fail=%lu\r\n",
                zone != NULL ? zone->name : "<invalid>",

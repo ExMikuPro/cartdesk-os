@@ -1,3 +1,10 @@
+/*
+ * 绑定统一布局自检的失败回调；必须在包含 sdram_layout.h 之前定义。
+ * Error_Handler 由 main.h 声明，这里先做前置声明以便宏展开。
+ */
+void Error_Handler(void);
+#define SDRAM_LAYOUT_FAIL_HOOK() Error_Handler()
+
 #include "sdram.h"
 
 #include <stdbool.h>
@@ -15,16 +22,6 @@ uint32_t write_timer = 0, read_time = 0;
 static size_t s_dma_pool_offset = 0;
 static size_t s_dma_pool_peak = 0;
 static size_t s_resource_arena_offset = 0;
-
-static int sdram_range_tightly_follows(uintptr_t prev_end, uintptr_t next_base)
-{
-    return (prev_end + 1UL) == next_base;
-}
-
-static int sdram_range_aligned(uintptr_t base, uintptr_t end, size_t align)
-{
-    return ((base % align) == 0u) && (((end + 1UL) % align) == 0u);
-}
 
 static bool sdram_size_add_overflows(size_t a, size_t b)
 {
@@ -229,56 +226,15 @@ static void *sdram_linear_alloc(uintptr_t base, size_t capacity, size_t *offset,
 }
 
 /**
- * @brief  校验 SDRAM 编译期布局常量的边界和连续性
+ * @brief  校验 SDRAM 统一布局的边界、紧贴关系与对齐
  * @retval None
  * @note   检查失败会调用 Error_Handler；本函数不修改 SDRAM 初始化顺序
+ * @note   数值与判定逻辑全部来自 Core/Inc/sdram_layout.h，与
+ *         tests/host/sdram_layout_test.c 跑的是同一份 sdram_layout_runtime_validate()
  */
 void sdram_layout_check(void)
 {
-    if (SDRAM_BASE_ADDR != SDRAM_LAYER1_FB0_BASE ||
-        SDRAM_END_ADDR != SDRAM_APP_ARENA_END ||
-        SDRAM_TOTAL_SIZE != (uint32_t)(SDRAM_END_ADDR - SDRAM_BASE_ADDR + 1UL)) {
-        Error_Handler();
-    }
-
-    if (!sdram_range_tightly_follows(SDRAM_LAYER1_FB0_END, SDRAM_LAYER1_FB1_BASE) ||
-        !sdram_range_tightly_follows(SDRAM_LAYER1_FB1_END, SDRAM_LAYER2_FB0_BASE) ||
-        !sdram_range_tightly_follows(SDRAM_LAYER2_FB0_END, SDRAM_LVGL_HEAP_BASE) ||
-        !sdram_range_tightly_follows(SDRAM_LVGL_HEAP_END, SDRAM_DMA_POOL_BASE) ||
-        !sdram_range_tightly_follows(SDRAM_DMA_POOL_END, SDRAM_LAUNCHER_CACHE_BASE) ||
-        !sdram_range_tightly_follows(SDRAM_LAUNCHER_CACHE_END, SDRAM_APP_ARENA_BASE)) {
-        Error_Handler();
-    }
-
-    if (!sdram_range_aligned(SDRAM_LAYER1_FB0_BASE, SDRAM_LAYER1_FB0_END, SDRAM_FB_ALIGN) ||
-        !sdram_range_aligned(SDRAM_LAYER1_FB1_BASE, SDRAM_LAYER1_FB1_END, SDRAM_FB_ALIGN) ||
-        !sdram_range_aligned(SDRAM_LAYER2_FB0_BASE, SDRAM_LAYER2_FB0_END, SDRAM_FB_ALIGN)) {
-        Error_Handler();
-    }
-
-    if (!sdram_range_aligned(SDRAM_DMA_POOL_BASE, SDRAM_DMA_POOL_END, SDRAM_DMA_ALIGN)) {
-        Error_Handler();
-    }
-
-    if (!sdram_range_aligned(SDRAM_LVGL_HEAP_BASE, SDRAM_LVGL_HEAP_END, SDRAM_DEFAULT_ALIGN) ||
-        !sdram_range_aligned(SDRAM_LAUNCHER_CACHE_BASE, SDRAM_LAUNCHER_CACHE_END, SDRAM_DEFAULT_ALIGN) ||
-        !sdram_range_aligned(SDRAM_APP_ARENA_BASE, SDRAM_APP_ARENA_END, SDRAM_DEFAULT_ALIGN) ||
-        !sdram_range_aligned(LUA_HEAP_BASE, LUA_HEAP_END, SDRAM_DEFAULT_ALIGN) ||
-        !sdram_range_aligned(RESOURCE_ARENA_BASE, RESOURCE_ARENA_END, SDRAM_DEFAULT_ALIGN) ||
-        !sdram_range_aligned(COLD_POOL_BASE, COLD_POOL_END, SDRAM_DEFAULT_ALIGN)) {
-        Error_Handler();
-    }
-
-    if (!sdram_addr_in_app_arena(LUA_HEAP_BASE) ||
-        !sdram_addr_in_app_arena(LUA_HEAP_END) ||
-        !sdram_addr_in_app_arena(RESOURCE_ARENA_BASE) ||
-        !sdram_addr_in_app_arena(RESOURCE_ARENA_END) ||
-        !sdram_addr_in_app_arena(COLD_POOL_BASE) ||
-        !sdram_addr_in_app_arena(COLD_POOL_END) ||
-        !sdram_range_tightly_follows(LUA_HEAP_END, RESOURCE_ARENA_BASE) ||
-        RESOURCE_ARENA_END >= COLD_POOL_BASE) {
-        Error_Handler();
-    }
+    (void)sdram_layout_runtime_validate();
 }
 
 /**
@@ -713,8 +669,9 @@ void *SDRAM_AppArenaAlloc(size_t size, size_t align)
  */
 void SDRAM_AppArenaReset(void)
 {
+    /* end-exclusive 语义：Lua heap 的 end-exclusive 必须正好等于 resource arena base */
     if (RESOURCE_ARENA_BASE <= LUA_HEAP_END ||
-        !sdram_range_tightly_follows(LUA_HEAP_END, RESOURCE_ARENA_BASE)) {
+        (LUA_HEAP_END + 1UL) != RESOURCE_ARENA_BASE) {
         Error_Handler();
         return;
     }

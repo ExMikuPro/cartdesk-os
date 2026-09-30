@@ -101,7 +101,7 @@ flowchart TD
 | Cart Header Loader | 解析 XHGC Header、slot table、MANF、INDEX/DATA 文件 | `Core/Cart/xhgc_cart.c`、`Core/Cart/xhgc_cart.h` | 已确认 | 校验 magic、header version、header size、header CRC。 |
 | Launcher BIN Reader | 快速读取标题、预览图和 Header 概要 | `Core/Cart/cart_bin.c`、`Core/Cart/cart_bin.h` | 已确认 | 预览图从固定 `0x1000` 读取，而非通过 slot0 查找。 |
 | Resource Index | 加载 XHGCIDX2，建立路径到 DATA 偏移的元数据表 | `Core/Cart/cart_index.c`、`Core/Cart/cart_index.h` | 已确认 | 线性查找 path_hash + path 字符串。 |
-| Memory Layout / DMA_POOL | SDRAM zone table、meminfo、临时 DMA buffer allocator、cache helper | `Core/Memory/xhgc_memory_layout.c`、`xhgc_meminfo.c`、`xhgc_dcache.c`、`Core/Driver/SDRAM/sdram.c` | 已确认 | DMA_POOL 为 reset 型线性 allocator；固定 DMA target 不从 DMA_POOL 分配。 |
+| Memory Layout / DMA_POOL | SDRAM 统一布局、zone table、meminfo、临时 DMA buffer allocator、cache helper | `Core/Inc/sdram_layout.h`、`Core/Memory/xhgc_memory_layout.c`、`xhgc_meminfo.c`、`xhgc_dcache.c`、`Core/Driver/SDRAM/sdram.c` | 已确认 | DMA_POOL 为 reset 型线性 allocator；固定 DMA target 不从 DMA_POOL 分配。 |
 | Resource Manager | image/data 异步加载、handle/refcount、scene arena 管理 | `Core/LuaPort/resource_manager.c`、`resource_manager.h` | 已确认 | 支持 BGRA8888、JPEG、JPEG+A8；storage format 与 READY runtime BGRA8888 分离。 |
 | Display Renderer | LVGL display port、LTDC 双缓冲、VSync flush | `Core/APPS/LVGL/port/lv_port_disp.c`、`Core/Driver/LCD/lcd.c` | 已确认 | `lv_port_disp.c` 对 Layer 1 使用 NoReload 后请求 VBlank reload，并由 ReloadEvent 解除 flush ownership barrier。 |
 | Input System | GT911 触摸接入 LVGL pointer indev | `Core/APPS/LVGL/port/lv_port_indev.c`、`Core/Driver/TOUCH/*` | 已确认 | Lua 层输入主要来自 Lua UI widget 的 LVGL 事件回调。 |
@@ -206,6 +206,8 @@ sequenceDiagram
 
 说明：
 
+- `Core/Inc/sdram_layout.h` 是全部 SDRAM 固定地址与几何的唯一来源；`Core/Memory/xhgc_memory_layout.c` 中 `g_xhgc_mem_zones` 只给这些数值附加 zone id、名字和 flags，不自行维护绝对地址。
+- 前四块固定 region 顺序为 `LAYER0_FB` / `LVGL_FB_A` / `LVGL_FB_B` / `LAUNCHER_STRIP`；`LAUNCHER_STRIP` 是 4 MiB 预留 arena，实际 strip 用量 `0x38E8C0`，stride 10656，当前只完成内存预留。详见 `Docs/display/SDRAM_LAYOUT.md`。
 - `Core/Memory/xhgc_memory_layout.c` 中 `g_xhgc_mem_zones` 是 DMA_POOL base/size 的来源。
 - `Core/Driver/SDRAM/sdram.c` 中 `SDRAM_DmaPoolAlloc()` 使用 reset 型 bump allocator，成功记录 `XHGC_MEM_ZONE_DMA_POOL` + `XHGC_MEM_TAG_DMA` 的 used/peak/alloc_count，失败记录 fail_count。
 - `Core/Memory/xhgc_memory_layout.c` 中 `xhgc_mem_is_fixed_dma_target()` 确认 framebuffer、LAUNCHER_CACHE、APP_ARENA_REST 可作为固定 DMA 目标；这些区域不计入 DMA_POOL used。
@@ -714,7 +716,9 @@ flowchart TD
 - `Docs/lua/lua_lifecycle.md`
 - `Docs/display/DMA2D_适配逻辑.md`
 - `Docs/display/launcher_action_hints.md`
-- `Docs/memory/SDRAM_Layout_Spec_v1.0.md`
+- `Docs/memory/SDRAM_Layout_Spec.md`
+- `Docs/display/SDRAM_LAYOUT.md`
+- `tests/host/sdram_layout_test.c`
 - `tools/luavm/main.c`
 - `tools/luavm/CMakeLists.txt`
 - `CMakeLists.txt`

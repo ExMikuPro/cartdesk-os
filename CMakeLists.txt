@@ -107,6 +107,17 @@ if(CARTDESK_HOST_TESTS_ONLY)
             ${SCREEN_PAGE_DIR}
     )
 
+    # SDRAM 统一布局回归：直接使用 production 的 Core/Inc/sdram_layout.h，
+    # 不做 host stub，因此布局的编译期断言本身就是测试的一部分。
+    add_executable(sdram_layout_test
+            ${PROJECT_ROOT}/tests/host/sdram_layout_test.c
+            ${MEMORY_DIR}/xhgc_memory_layout.c
+    )
+    target_include_directories(sdram_layout_test PRIVATE
+            ${CORE_INC_DIR}
+            ${MEMORY_DIR}
+    )
+
     if(NOT MSVC)
         target_compile_options(xhgc_cart_host_test PRIVATE
                 -Wall -Wextra -Werror -Wconversion -Wsign-conversion)
@@ -122,6 +133,11 @@ if(CARTDESK_HOST_TESTS_ONLY)
                 -fsanitize=address,undefined -fno-omit-frame-pointer)
         target_link_options(launcher_scroll_test PRIVATE
                 -fsanitize=address,undefined -fno-omit-frame-pointer)
+        target_compile_options(sdram_layout_test PRIVATE
+                -Wall -Wextra -Werror -Wconversion -Wsign-conversion
+                -fsanitize=address,undefined -fno-omit-frame-pointer)
+        target_link_options(sdram_layout_test PRIVATE
+                -fsanitize=address,undefined -fno-omit-frame-pointer)
     endif()
 
     foreach(host_test IN ITEMS
@@ -129,6 +145,7 @@ if(CARTDESK_HOST_TESTS_ONLY)
             task_message_contract_test
             resource_manager_test
             launcher_scroll_test
+            sdram_layout_test
             lua_runtime_task_test
             lua_ui_owner_test
             lua_foundation_owner_test

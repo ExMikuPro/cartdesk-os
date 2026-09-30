@@ -21,7 +21,8 @@
 #include "ltdc.h"
 
 /* USER CODE BEGIN 0 */
-
+/* LTDC 图层的初始 CFBAR 来自统一 SDRAM 布局，不要在此写绝对地址。 */
+#include "sdram_layout.h"
 /* USER CODE END 0 */
 
 LTDC_HandleTypeDef hltdc;
@@ -69,7 +70,7 @@ void MX_LTDC_Init(void)
   pLayerCfg.Alpha0 = 0;
   pLayerCfg.BlendingFactor1 = LTDC_BLENDING_FACTOR1_CA;
   pLayerCfg.BlendingFactor2 = LTDC_BLENDING_FACTOR2_CA;
-  pLayerCfg.FBStartAdress = 0xD0000000;
+  pLayerCfg.FBStartAdress = (uint32_t)SDRAM_LAYER0_FB_BASE;
   pLayerCfg.ImageWidth = 800;
   pLayerCfg.ImageHeight = 480;
   pLayerCfg.Backcolor.Blue = 0;
@@ -88,7 +89,7 @@ void MX_LTDC_Init(void)
   pLayerCfg1.Alpha0 = 0;
   pLayerCfg1.BlendingFactor1 = LTDC_BLENDING_FACTOR1_PAxCA;
   pLayerCfg1.BlendingFactor2 = LTDC_BLENDING_FACTOR2_PAxCA;
-  pLayerCfg1.FBStartAdress = 0xD0177000;
+  pLayerCfg1.FBStartAdress = (uint32_t)SDRAM_LVGL_FB_A_BASE;
   pLayerCfg1.ImageWidth = 800;
   pLayerCfg1.ImageHeight = 480;
   pLayerCfg1.Backcolor.Blue = 0;

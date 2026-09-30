@@ -28,21 +28,27 @@
 #include "lvgl_render_benchmark.h"
 #include "lv_port_indev.h"
 #include "launcher_scroll.h"
+#include "launcher_strip.h"
 
 /* ------------------------------------------------------------------ */
 /*  SDRAM 地址布局                                                      */
 /* ------------------------------------------------------------------ */
 
 /*
- * 帧缓冲由 ltdc.c 管理，本文件只使用 launcher cache 分区。
+ * 帧缓冲与 Launcher strip 全部由统一 SDRAM 布局 (Core/Inc/sdram_layout.h) 定义，
+ * 本文件只使用 launcher icon cache 分区。
  *
- *  0xD0000000  Layer1_FB0         (0x177000 B)
- *  0xD0177000  Layer1_FB1         (0x177000 B)
- *  0xD02EE000  Layer2_FB0         (0x177000 B)
- *  0xD1865000  ← LAUNCHER_CACHE 起始，图片缓冲从这里开始
+ *  0xD0000000 -> 0xD0177000  LAYER0_FB       (Launcher 固定 UI, 单缓冲)
+ *  0xD0177000 -> 0xD02EE000  LVGL_FB_A
+ *  0xD02EE000 -> 0xD0465000  LVGL_FB_B
+ *  0xD0465000 -> 0xD0865000  LAUNCHER_STRIP  (水平 cached strip 预留 4 MiB)
+ *  0xD0865000 -> 0xD1865000  SDRAM_LVGL_HEAP
+ *  0xD1865000 -> 0xD1C65000  DMA_POOL
+ *  0xD1C65000 -> 0xD2065000  LAUNCHER_CACHE  (图片缓冲从这里开始)
+ *  0xD2065000 -> 0xD4000000  APP_ARENA_REST
  *
  * 每张图片 200×200×4 = 0x3E800 字节，预留 12 个槽。
- * 总占用: 12 × 0x3E800 = 0x2E6000 B ≈ 2.9 MB，绰绰有余。
+ * 总占用: 12 × 0x3E800 = 0x2E6000 B ≈ 2.9 MB，落在 4 MiB LAUNCHER_CACHE 内。
  */
 
 

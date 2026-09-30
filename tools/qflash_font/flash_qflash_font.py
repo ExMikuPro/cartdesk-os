@@ -68,7 +68,10 @@ def gdb_commands(elf: Path,
                  chunks: list[tuple[Path, int, int]],
                  port: int,
                  pack_size: int) -> str:
-    buffer_address = 0xD3800000
+    # 烧写 staging buffer 的地址由固件侧的 QFlashFont_ProgramBufferAddress()
+    # 提供（当前指向 COLD_POOL_BASE，见 Core/Driver/FLASH/qflash_font_programmer.c），
+    # 这里不要在脚本里重复硬编码 SDRAM 绝对地址。
+    buffer_symbol = "$buffer_addr"
     lines = [
         "set pagination off",
         "set confirm off",
@@ -78,6 +81,8 @@ def gdb_commands(elf: Path,
         "load",
         "tbreak QFlashFont_ProgrammerReady",
         "continue",
+        f"set {buffer_symbol} = (unsigned long)QFlashFont_ProgramBufferAddress()",
+        f'printf "qflash staging buffer = 0x%08lx\\n", {buffer_symbol}',
         "set $result = (int)QFlashFont_ProgramBegin()",
         "if $result != 0",
         '  printf "QFlashFont_ProgramBegin failed: %d\\n", $result',
@@ -91,10 +96,10 @@ def gdb_commands(elf: Path,
         percentage = completed * 100 // pack_size
         lines.extend(
             [
-                f"restore {chunk_path} binary 0x{buffer_address:08x}",
+                f"restore {chunk_path} binary {buffer_symbol}",
                 (
                     "set $result = (int)QFlashFont_ProgramBlock("
-                    f"{offset}u, (const void *)0x{buffer_address:08x}, {length}u)"
+                    f"{offset}u, (const void *){buffer_symbol}, {length}u)"
                 ),
                 "if $result != 0",
                 (

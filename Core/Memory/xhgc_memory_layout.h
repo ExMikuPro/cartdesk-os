@@ -5,18 +5,29 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "sdram_layout.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#define XHGC_SDRAM_BASE          ((uintptr_t)0xD0000000UL)
-#define XHGC_SDRAM_SIZE          ((uint32_t)0x04000000UL)
-#define XHGC_SDRAM_END_EXCLUSIVE ((uintptr_t)0xD4000000UL)
+/*
+ * SDRAM 固定分区元数据层。
+ *
+ * 所有 base / size / end 均来自 Core/Inc/sdram_layout.h（统一布局），本文件
+ * 只负责给分区附加 zone id、名字和 flags，供 meminfo / dcache / 调试使用。
+ * 禁止在本文件写绝对地址。
+ */
+
+#define XHGC_SDRAM_BASE          SDRAM_BASE_ADDR
+#define XHGC_SDRAM_SIZE          SDRAM_TOTAL_SIZE
+#define XHGC_SDRAM_END_EXCLUSIVE SDRAM_LIMIT_ADDR
 
 typedef enum {
-    XHGC_MEM_ZONE_LAYER1_FB0 = 0,
-    XHGC_MEM_ZONE_LAYER1_FB1,
-    XHGC_MEM_ZONE_LAYER2_FB0,
+    XHGC_MEM_ZONE_LAYER0_FB = 0,
+    XHGC_MEM_ZONE_LVGL_FB_A,
+    XHGC_MEM_ZONE_LVGL_FB_B,
+    XHGC_MEM_ZONE_LAUNCHER_STRIP,
     XHGC_MEM_ZONE_SDRAM_LVGL_HEAP,
     XHGC_MEM_ZONE_DMA_POOL,
     XHGC_MEM_ZONE_LAUNCHER_CACHE,
@@ -25,13 +36,14 @@ typedef enum {
 } XHGC_MemZoneId;
 
 typedef enum {
-    XHGC_MEM_ZONE_FLAG_SDRAM       = (1u << 0),
-    XHGC_MEM_ZONE_FLAG_FIXED       = (1u << 1),
-    XHGC_MEM_ZONE_FLAG_FRAMEBUFFER = (1u << 2),
-    XHGC_MEM_ZONE_FLAG_LVGL_HEAP   = (1u << 3),
-    XHGC_MEM_ZONE_FLAG_DMA         = (1u << 4),
-    XHGC_MEM_ZONE_FLAG_CACHE       = (1u << 5),
-    XHGC_MEM_ZONE_FLAG_ARENA       = (1u << 6)
+    XHGC_MEM_ZONE_FLAG_SDRAM          = (1u << 0),
+    XHGC_MEM_ZONE_FLAG_FIXED          = (1u << 1),
+    XHGC_MEM_ZONE_FLAG_FRAMEBUFFER    = (1u << 2),
+    XHGC_MEM_ZONE_FLAG_LVGL_HEAP      = (1u << 3),
+    XHGC_MEM_ZONE_FLAG_DMA            = (1u << 4),
+    XHGC_MEM_ZONE_FLAG_CACHE          = (1u << 5),
+    XHGC_MEM_ZONE_FLAG_ARENA          = (1u << 6),
+    XHGC_MEM_ZONE_FLAG_LAUNCHER_STRIP = (1u << 7)
 } XHGC_MemZoneFlags;
 
 typedef struct {

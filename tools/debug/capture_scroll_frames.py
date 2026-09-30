@@ -24,6 +24,15 @@ FB_A_START = 0xD0177000
 FB_A_END = 0xD02EE000
 FB_B_START = 0xD02EE000
 FB_B_END = 0xD0465000
+# Frame-buffer capture bounds must track Core/Inc/sdram_layout.h.  They are also
+# resolved symbolically at dump time (see layout_lines) so the literals above
+# remain only an offline fallback and never the source of truth.
+LAYOUT_SYMBOLS = (
+    ("$fb_a_start", "SDRAM_LVGL_FB_A_BASE"),
+    ("$fb_a_end", "SDRAM_LVGL_FB_A_END"),
+    ("$fb_b_start", "SDRAM_LVGL_FB_B_BASE"),
+    ("$fb_b_end", "SDRAM_LVGL_FB_B_END"),
+)
 MODE_IDS = {"argb": 0, "xrgb": 3}
 CAPTURES = (("before", 0), ("mid", 6), ("after", 12))
 SCREEN_PIXELS = 800 * 480
@@ -83,10 +92,18 @@ def scroll_setup(capture_step: int) -> list[str]:
     ]
 
 
-def dump_lines(folder: Path, label: str, mode: int) -> list[str]:
+def layout_lines() -> list[str]:
+    """Resolve SDRAM layout bounds from the ELF instead of hardcoding them."""
     return [
-        f'dump binary memory {folder / "fb_a.raw"} 0x{FB_A_START:08X} 0x{FB_A_END:08X}',
-        f'dump binary memory {folder / "fb_b.raw"} 0x{FB_B_START:08X} 0x{FB_B_END:08X}',
+        f"set {name} = (unsigned long)({symbol})"
+        for name, symbol in LAYOUT_SYMBOLS
+    ]
+
+
+def dump_lines(folder: Path, label: str, mode: int) -> list[str]:
+    return layout_lines() + [
+        f'dump binary memory {folder / "fb_a.raw"} $fb_a_start $fb_a_end',
+        f'dump binary memory {folder / "fb_b.raw"} $fb_b_start $fb_b_end',
         (f'printf "CAPTURE label={label} visual={mode} step=%lu frame=%lu scroll_x=%ld '
          'fb_a_seq=%lu fb_b_seq=%lu fb_a_scroll_x=%ld fb_b_scroll_x=%ld '
          'presented_seq=%lu pending_seq=%lu render_seq=%lu front_fb=%lu pending_fb=%lu '

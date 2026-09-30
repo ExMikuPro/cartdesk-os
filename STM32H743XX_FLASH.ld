@@ -61,14 +61,16 @@ RAM_D2 (xrw)      : ORIGIN = 0x30000000, LENGTH = 288K
 RAM_D3 (xrw)      : ORIGIN = 0x38000000, LENGTH = 64K
 ITCMRAM (xrw)      : ORIGIN = 0x00000000, LENGTH = 64K
 FLASH (rx)      : ORIGIN = 0x8000000, LENGTH = 2048K
-/* SDRAM 固定分区 - 依据 Docs/memory/SDRAM_Layout_Spec_v1.0.md, 物理范围: 0xD0000000~0xD3FFFFFF */
-SDRAM_LAYER1_FB0 (xrw) : ORIGIN = 0xD0000000, LENGTH = 0x00177000  /* 1.46 MiB - 主图层缓冲0 */
-SDRAM_LAYER1_FB1 (xrw) : ORIGIN = 0xD0177000, LENGTH = 0x00177000  /* 1.46 MiB - 主图层缓冲1 */
-SDRAM_LAYER2_FB0 (xrw) : ORIGIN = 0xD02EE000, LENGTH = 0x00177000  /* 1.46 MiB - 背景层单缓冲 */
-SDRAM_LVGL_HEAP  (xrw) : ORIGIN = 0xD0465000, LENGTH = 0x01000000  /* 16   MiB - 保留/未来LVGL堆 */
-SDRAM_DMA_POOL   (xrw) : ORIGIN = 0xD1465000, LENGTH = 0x00400000  /*  4   MiB - DMA专用区   */
-SDRAM_LAUNCHER   (xrw) : ORIGIN = 0xD1865000, LENGTH = 0x00400000  /*  4   MiB - 图标缓存    */
-SDRAM_APP_ARENA  (xrw) : ORIGIN = 0xD1C65000, LENGTH = 0x0239B000  /* ~35.6MiB - 资源加载    */
+/* SDRAM 固定分区 - 依据 Core/Inc/sdram_layout.h, 物理范围: 0xD0000000~0xD3FFFFFF
+ * 数值必须与 sdram_layout.h 保持一致；前四块顺序不可调整。 */
+SDRAM_LAYER0_FB  (xrw) : ORIGIN = 0xD0000000, LENGTH = 0x00177000  /* 1.46 MiB - Layer0 静态帧缓冲 (Launcher 固定 UI) */
+SDRAM_LVGL_FB_A  (xrw) : ORIGIN = 0xD0177000, LENGTH = 0x00177000  /* 1.46 MiB - LVGL 双缓冲 A */
+SDRAM_LVGL_FB_B  (xrw) : ORIGIN = 0xD02EE000, LENGTH = 0x00177000  /* 1.46 MiB - LVGL 双缓冲 B */
+SDRAM_LAUNCHER_STRIP (xrw) : ORIGIN = 0xD0465000, LENGTH = 0x00400000  /* 4 MiB - Launcher 水平 cached strip 预留 (实际用 0x38E8C0) */
+SDRAM_LVGL_HEAP  (xrw) : ORIGIN = 0xD0865000, LENGTH = 0x01000000  /* 16   MiB - 预留/未来LVGL堆 */
+SDRAM_DMA_POOL   (xrw) : ORIGIN = 0xD1865000, LENGTH = 0x00400000  /*  4   MiB - DMA专用区   */
+SDRAM_LAUNCHER   (xrw) : ORIGIN = 0xD1C65000, LENGTH = 0x00400000  /*  4   MiB - 图标缓存    */
+SDRAM_APP_ARENA  (xrw) : ORIGIN = 0xD2065000, LENGTH = 0x01F9B000  /* ~31.6MiB - APP_ARENA_REST (Lua heap + resource arena + cold pool) */
 }
 
 /* Highest address of the user mode stack */
@@ -115,38 +117,14 @@ SECTIONS
   } >FLASH
 
   /* ------------------------------------------------------------------ */
-  /* SDRAM 固定分区 sections - 依据 Docs/memory/SDRAM_Layout_Spec_v1.0.md */
+  /* SDRAM 固定分区 sections - 依据 Core/Inc/sdram_layout.h              */
   /* ------------------------------------------------------------------ */
 
-  /* Layer1_FB0: 主图层双缓冲 帧0  1.46 MiB  256字节对齐 */
-  .sdram_layer1_fb0 (NOLOAD) :
-  {
-    . = ALIGN(256);
-    _sLayer1_FB0 = .;
-    *(.layer1_fb0)
-    *(.layer1_fb0*)
-    _eLayer1_FB0 = .;
-  } >SDRAM_LAYER1_FB0
-
-  /* Layer1_FB1: 主图层双缓冲 帧1  1.46 MiB  256字节对齐 */
-  .sdram_layer1_fb1 (NOLOAD) :
-  {
-    . = ALIGN(256);
-    _sLayer1_FB1 = .;
-    *(.layer1_fb1)
-    *(.layer1_fb1*)
-    _eLayer1_FB1 = .;
-  } >SDRAM_LAYER1_FB1
-
-  /* Layer2_FB0: 背景层单缓冲  1.46 MiB  256字节对齐 */
-  .sdram_layer2_fb0 (NOLOAD) :
-  {
-    . = ALIGN(256);
-    _sLayer2_FB0 = .;
-    *(.layer2_fb0)
-    *(.layer2_fb0*)
-    _eLayer2_FB0 = .;
-  } >SDRAM_LAYER2_FB0
+  /* Layer0_FB / LVGL_FB_A / LVGL_FB_B / LAUNCHER_STRIP 由运行期绝对指针使用
+   * （LTDC CFBAR 与 LVGL DIRECT buffer），不需要 linker section。
+   * 其边界与对齐由 sdram_layout.h 的编译期断言保证，MEMORY 区域在下方
+   * SDRAM_LVGL_HEAP / SDRAM_DMA_POOL / SDRAM_LAUNCHER / SDRAM_APP_ARENA
+   * 中仅用于校验剩余固定分区的容量。 */
 
   /* LVGL_HEAP: LVGL核心堆放到片内 AXI SRAM，避免占用 DTCM 或外部 SDRAM */
   .lvgl_heap_ram (NOLOAD) :
@@ -169,7 +147,21 @@ SECTIONS
     _eRamRuntime = .;
   } >RAM
 
-  /* DMA_POOL: DMA专用区  4 MiB  64字节对齐 */
+  /* Debug-only render-audit scratch.  Placed in RAM_D2 so the per-transfer
+   * DMA2D ring never competes with the DTCM budget that production state uses,
+   * and so it stays out of the DMA-reachable AXI SRAM path.  NOLOAD: the audit
+   * zeroes its own state in RenderAudit_Reset(). */
+  .render_audit_noinit (NOLOAD) :
+  {
+    . = ALIGN(32);
+    _sRenderAuditNoinit = .;
+    *(.render_audit_noinit)
+    *(.render_audit_noinit*)
+    . = ALIGN(32);
+    _eRenderAuditNoinit = .;
+  } >RAM_D2
+
+  /* DMA_POOL: DMA专用区  4 MiB  64字节对齐  0xD1865000~0xD1C65000 */
   .sdram_dma_pool (NOLOAD) :
   {
     . = ALIGN(64);
@@ -179,7 +171,7 @@ SECTIONS
     _eDmaPool = .;
   } >SDRAM_DMA_POOL
 
-  /* LAUNCHER_CACHE: 图标缓存  4 MiB  32字节对齐 */
+  /* LAUNCHER_CACHE: 图标缓存  4 MiB  32字节对齐  0xD1C65000~0xD2065000 */
   .sdram_launcher_cache (NOLOAD) :
   {
     . = ALIGN(32);
@@ -189,7 +181,8 @@ SECTIONS
     _eLauncherCache = .;
   } >SDRAM_LAUNCHER
 
-  /* APP_ARENA_REST: 资源加载 ~35.6 MiB  32字节对齐  线性分配 */
+  /* APP_ARENA_REST: 资源区 ~31.6 MiB  32字节对齐  线性分配  0xD2065000~0xD3FFFFFF
+   * 内部划分: Lua heap 2 MiB / resource arena 0x159B000 / cold pool 8 MiB */
   .sdram_app_arena (NOLOAD) :
   {
     . = ALIGN(32);

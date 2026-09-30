@@ -413,7 +413,9 @@ void MPU_Config(void)
   /** Initializes and configures the Region and the memory to be protected
   */
   MPU_InitStruct.Number = MPU_REGION_NUMBER5;
-  MPU_InitStruct.BaseAddress = 0xD0000000;
+  /* 整个 64 MiB 外部 SDRAM 使用单一 MPU region；SDRAM 内部重排不改变这里的
+   * cacheability / bufferability / shareability。 */
+  MPU_InitStruct.BaseAddress = (uint32_t)SDRAM_BASE_ADDR;
   MPU_InitStruct.Size = MPU_REGION_SIZE_64MB;
   MPU_InitStruct.AccessPermission = MPU_REGION_FULL_ACCESS;
   MPU_InitStruct.DisableExec = MPU_INSTRUCTION_ACCESS_ENABLE;

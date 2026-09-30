@@ -2,74 +2,89 @@
 
 #include <stdio.h>
 
-#define XHGC_MEM_ALIGN_FB      256u
-#define XHGC_MEM_ALIGN_DMA     64u
-#define XHGC_MEM_ALIGN_DEFAULT 32u
+/* 对齐要求直接取统一布局常量，避免在本文件重复魔法数字 */
+#define XHGC_MEM_ALIGN_FB      SDRAM_FB_ALIGN
+#define XHGC_MEM_ALIGN_DMA     SDRAM_DMA_ALIGN
+#define XHGC_MEM_ALIGN_DEFAULT SDRAM_DEFAULT_ALIGN
 
+/*
+ * 分区表按地址升序排列且首尾相接，必须与 Core/Inc/sdram_layout.h 完全一致。
+ * base/end 为 end-exclusive。
+ */
 const XHGC_MemZoneDesc g_xhgc_mem_zones[XHGC_MEM_ZONE_COUNT] = {
     {
-        XHGC_MEM_ZONE_LAYER1_FB0,
-        "Layer1_FB0",
-        (uintptr_t)0xD0000000UL,
-        (uint32_t)0x00177000UL,
-        (uintptr_t)0xD0177000UL,
+        XHGC_MEM_ZONE_LAYER0_FB,
+        "LAYER0_FB",
+        (uintptr_t)SDRAM_LAYER0_FB_BASE,
+        (uint32_t)SDRAM_LAYER0_FB_SIZE,
+        (uintptr_t)SDRAM_LAYER0_FB_END,
         XHGC_MEM_ZONE_FLAG_SDRAM |
         XHGC_MEM_ZONE_FLAG_FIXED |
         XHGC_MEM_ZONE_FLAG_FRAMEBUFFER
     },
     {
-        XHGC_MEM_ZONE_LAYER1_FB1,
-        "Layer1_FB1",
-        (uintptr_t)0xD0177000UL,
-        (uint32_t)0x00177000UL,
-        (uintptr_t)0xD02EE000UL,
+        XHGC_MEM_ZONE_LVGL_FB_A,
+        "LVGL_FB_A",
+        (uintptr_t)SDRAM_LVGL_FB_A_BASE,
+        (uint32_t)SDRAM_LVGL_FB_A_SIZE,
+        (uintptr_t)SDRAM_LVGL_FB_A_END,
         XHGC_MEM_ZONE_FLAG_SDRAM |
         XHGC_MEM_ZONE_FLAG_FIXED |
         XHGC_MEM_ZONE_FLAG_FRAMEBUFFER
     },
     {
-        XHGC_MEM_ZONE_LAYER2_FB0,
-        "Layer2_FB0",
-        (uintptr_t)0xD02EE000UL,
-        (uint32_t)0x00177000UL,
-        (uintptr_t)0xD0465000UL,
+        XHGC_MEM_ZONE_LVGL_FB_B,
+        "LVGL_FB_B",
+        (uintptr_t)SDRAM_LVGL_FB_B_BASE,
+        (uint32_t)SDRAM_LVGL_FB_B_SIZE,
+        (uintptr_t)SDRAM_LVGL_FB_B_END,
         XHGC_MEM_ZONE_FLAG_SDRAM |
         XHGC_MEM_ZONE_FLAG_FIXED |
         XHGC_MEM_ZONE_FLAG_FRAMEBUFFER
+    },
+    {
+        XHGC_MEM_ZONE_LAUNCHER_STRIP,
+        "LAUNCHER_STRIP",
+        (uintptr_t)SDRAM_LAUNCHER_STRIP_BASE,
+        (uint32_t)SDRAM_LAUNCHER_STRIP_ARENA_SIZE,
+        (uintptr_t)SDRAM_LAUNCHER_STRIP_ARENA_END,
+        XHGC_MEM_ZONE_FLAG_SDRAM |
+        XHGC_MEM_ZONE_FLAG_FIXED |
+        XHGC_MEM_ZONE_FLAG_LAUNCHER_STRIP
     },
     {
         XHGC_MEM_ZONE_SDRAM_LVGL_HEAP,
         "SDRAM_LVGL_HEAP",
-        (uintptr_t)0xD0465000UL,
-        (uint32_t)0x01000000UL,
-        (uintptr_t)0xD1465000UL,
+        (uintptr_t)SDRAM_LVGL_HEAP_BASE,
+        (uint32_t)SDRAM_LVGL_HEAP_SIZE,
+        (uintptr_t)SDRAM_LVGL_HEAP_END,
         XHGC_MEM_ZONE_FLAG_SDRAM |
         XHGC_MEM_ZONE_FLAG_LVGL_HEAP
     },
     {
         XHGC_MEM_ZONE_DMA_POOL,
         "DMA_POOL",
-        (uintptr_t)0xD1465000UL,
-        (uint32_t)0x00400000UL,
-        (uintptr_t)0xD1865000UL,
+        (uintptr_t)SDRAM_DMA_POOL_BASE,
+        (uint32_t)SDRAM_DMA_POOL_SIZE,
+        (uintptr_t)SDRAM_DMA_POOL_END,
         XHGC_MEM_ZONE_FLAG_SDRAM |
         XHGC_MEM_ZONE_FLAG_DMA
     },
     {
         XHGC_MEM_ZONE_LAUNCHER_CACHE,
         "LAUNCHER_CACHE",
-        (uintptr_t)0xD1865000UL,
-        (uint32_t)0x00400000UL,
-        (uintptr_t)0xD1C65000UL,
+        (uintptr_t)SDRAM_LAUNCHER_CACHE_BASE,
+        (uint32_t)SDRAM_LAUNCHER_CACHE_SIZE,
+        (uintptr_t)SDRAM_LAUNCHER_CACHE_END,
         XHGC_MEM_ZONE_FLAG_SDRAM |
         XHGC_MEM_ZONE_FLAG_CACHE
     },
     {
         XHGC_MEM_ZONE_APP_ARENA_REST,
         "APP_ARENA_REST",
-        (uintptr_t)0xD1C65000UL,
-        (uint32_t)0x0239B000UL,
-        (uintptr_t)0xD4000000UL,
+        (uintptr_t)SDRAM_APP_ARENA_BASE,
+        (uint32_t)SDRAM_APP_ARENA_SIZE,
+        (uintptr_t)(SDRAM_APP_ARENA_END + 1UL),
         XHGC_MEM_ZONE_FLAG_SDRAM |
         XHGC_MEM_ZONE_FLAG_ARENA
     }
@@ -102,6 +117,7 @@ static void xhgc_mem_print_flags(uint32_t flags)
     XHGC_MEM_PRINT_FLAG(XHGC_MEM_ZONE_FLAG_SDRAM, "SDRAM");
     XHGC_MEM_PRINT_FLAG(XHGC_MEM_ZONE_FLAG_FIXED, "FIXED");
     XHGC_MEM_PRINT_FLAG(XHGC_MEM_ZONE_FLAG_FRAMEBUFFER, "FRAMEBUFFER");
+    XHGC_MEM_PRINT_FLAG(XHGC_MEM_ZONE_FLAG_LAUNCHER_STRIP, "LAUNCHER_STRIP");
     XHGC_MEM_PRINT_FLAG(XHGC_MEM_ZONE_FLAG_LVGL_HEAP, "LVGL_HEAP");
     XHGC_MEM_PRINT_FLAG(XHGC_MEM_ZONE_FLAG_DMA, "DMA");
     XHGC_MEM_PRINT_FLAG(XHGC_MEM_ZONE_FLAG_CACHE, "CACHE");
@@ -187,9 +203,10 @@ bool xhgc_mem_addr_in_zone(XHGC_MemZoneId id, uintptr_t addr, uint32_t size)
 bool xhgc_mem_is_fixed_dma_target(const void *ptr, size_t size)
 {
     static const XHGC_MemZoneId fixed_dma_zones[] = {
-        XHGC_MEM_ZONE_LAYER1_FB0,
-        XHGC_MEM_ZONE_LAYER1_FB1,
-        XHGC_MEM_ZONE_LAYER2_FB0,
+        XHGC_MEM_ZONE_LAYER0_FB,
+        XHGC_MEM_ZONE_LVGL_FB_A,
+        XHGC_MEM_ZONE_LVGL_FB_B,
+        XHGC_MEM_ZONE_LAUNCHER_STRIP,
         XHGC_MEM_ZONE_LAUNCHER_CACHE,
         XHGC_MEM_ZONE_APP_ARENA_REST
     };
@@ -213,20 +230,22 @@ bool xhgc_mem_is_fixed_dma_target(const void *ptr, size_t size)
  * @retval true=布局连续、边界和对齐均符合预期
  * @retval false=基址、大小、连续性、越界或对齐检查失败
  * @note   本函数只读检查全局分区表，不修改初始化顺序或内存内容
+ * @note   分区表的数值来源是 sdram_layout.h，本函数因此同时是统一布局的
+ *         运行时回归检查
  */
 bool xhgc_mem_layout_validate(void)
 {
     uintptr_t expected_base = XHGC_SDRAM_BASE;
 
-    if (XHGC_SDRAM_BASE != (uintptr_t)0xD0000000UL) {
+    if (XHGC_SDRAM_BASE != SDRAM_BASE_ADDR) {
         return false;
     }
 
-    if (XHGC_SDRAM_SIZE != (uint32_t)0x04000000UL) {
+    if (XHGC_SDRAM_SIZE != SDRAM_TOTAL_SIZE) {
         return false;
     }
 
-    if (XHGC_SDRAM_END_EXCLUSIVE != (uintptr_t)0xD4000000UL) {
+    if (XHGC_SDRAM_END_EXCLUSIVE != SDRAM_LIMIT_ADDR) {
         return false;
     }
 
@@ -284,6 +303,17 @@ bool xhgc_mem_layout_validate(void)
         return false;
     }
 
+    if (g_xhgc_mem_zones[XHGC_MEM_ZONE_LAYER0_FB].end != SDRAM_LVGL_FB_A_BASE ||
+        g_xhgc_mem_zones[XHGC_MEM_ZONE_LVGL_FB_A].end != SDRAM_LVGL_FB_B_BASE ||
+        g_xhgc_mem_zones[XHGC_MEM_ZONE_LVGL_FB_B].end != SDRAM_LAUNCHER_STRIP_BASE ||
+        g_xhgc_mem_zones[XHGC_MEM_ZONE_LAUNCHER_STRIP].end != SDRAM_LVGL_HEAP_BASE) {
+        return false;
+    }
+
+    if (LAUNCHER_STRIP_ALLOC_SIZE > g_xhgc_mem_zones[XHGC_MEM_ZONE_LAUNCHER_STRIP].size) {
+        return false;
+    }
+
     return true;
 }
 
@@ -310,7 +340,7 @@ void xhgc_mem_layout_dump(void)
 }
 
 #if defined(__cplusplus)
-static_assert(XHGC_MEM_ZONE_COUNT == 7, "unexpected XHGC memory zone count");
+static_assert(XHGC_MEM_ZONE_COUNT == 8, "unexpected XHGC memory zone count");
 #else
-_Static_assert(XHGC_MEM_ZONE_COUNT == 7, "unexpected XHGC memory zone count");
+_Static_assert(XHGC_MEM_ZONE_COUNT == 8, "unexpected XHGC memory zone count");
 #endif
