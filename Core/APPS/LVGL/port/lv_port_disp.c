@@ -5,6 +5,8 @@
  */
 
 #include "lv_port_disp.h"
+
+#include "ltdc_reload.h"
 #include "lvgl.h"
 #include "lcd.h"
 #include "display_trace.h"
@@ -70,6 +72,10 @@ static void display_trace_render_end_cb(lv_event_t *event);
  */
 void lv_port_disp_init(void)
 {
+    /* LTDC reload 所有权登记表必须先于任何 VBR 请求初始化：
+     * LCD_DoubleBufferInit() 在下面就会发出一次几何 latch。 */
+    ltdc_reload_init();
+
     /* 统一由 LCD 驱动初始化 LTDC 双缓冲和 VBlank LineEvent，避免和 LVGL flush 的翻页逻辑失配。 */
 #if USE_VSYNC || USE_DOUBLE_BUFFER
     LCD_DoubleBufferInit();
@@ -121,6 +127,35 @@ void lv_port_disp_init(void)
     g_last_fps_time = HAL_GetTick();
 }
 
+/* Launcher -> Lua 原子切换钩子：在 LVGL 自己的 CFBAR 更新之前、
+ * 同一个 VBR 之内恢复 HW Layer1 全屏几何并关闭 HW Layer0。 */
+static void (*s_pre_latch_hook)(void *user);
+static void *s_pre_latch_user;
+
+void lv_port_disp_set_pre_latch_hook(void (*hook)(void *user), void *user)
+{
+    s_pre_latch_hook = hook;
+    s_pre_latch_user = user;
+}
+
+static bool (*s_presentation_gate)(void *user);
+static void *s_presentation_gate_user;
+
+void lv_port_disp_set_presentation_gate(bool (*gate)(void *user), void *user)
+{
+    s_presentation_gate = gate;
+    s_presentation_gate_user = user;
+}
+
+bool lv_port_disp_is_flush_idle(void)
+{
+#if USE_DOUBLE_BUFFER
+    return !g_ltdc_reload_pending && !ltdc_reload_is_pending();
+#else
+    return true;
+#endif
+}
+
 /**
  * @brief 显示刷新回调函数
  * @param disp 显示对象
@@ -155,6 +190,13 @@ static void disp_flush(lv_display_t *disp, const lv_area_t *area, uint8_t *px_ma
         return;
     }
 
+    /* 门控：Launcher 硬件平移期间 HW Layer1 由 pan 状态机独占扫描来源，
+     * LVGL 不得改动 CFBAR/几何。这里只结束 flush，不碰硬件。 */
+    if (s_presentation_gate != NULL && !s_presentation_gate(s_presentation_gate_user)) {
+        disp_finish_flush(disp, true);
+        return;
+    }
+
 #if USE_DOUBLE_BUFFER
     /* Invariants:
      * 1. LTDC scanout front buffer is never written by LVGL.
@@ -164,13 +206,20 @@ static void disp_flush(lv_display_t *disp, const lv_area_t *area, uint8_t *px_ma
     extern LTDC_HandleTypeDef hltdc;
     uint32_t submit_start = PerfMonitor_Begin();
 
-    if (g_ltdc_reload_complete_sem == NULL || g_ltdc_reload_pending) {
+    if (g_ltdc_reload_complete_sem == NULL || g_ltdc_reload_pending ||
+        ltdc_reload_is_pending()) {
         /* Do not overwrite an in-flight CFBAR request.  Dropping this presentation
          * retains the current front buffer and avoids an unsafe immediate swap. */
         g_update_enabled = false;
         DisplayTrace_ReloadRejected((uint32_t)px_map);
         disp_finish_flush(disp, true);
         return;
+    }
+
+    /* 模式切换过渡：先让上层在同一个 VBR 内补齐几何/图层使能变更。
+     * 正常 LVGL_APP 模式下这个钩子为空操作，保持既有语义不变。 */
+    if (s_pre_latch_hook != NULL) {
+        s_pre_latch_hook(s_pre_latch_user);
     }
 
     /* Write Layer 1 shadow configuration only.  This HAL API deliberately does
@@ -194,12 +243,24 @@ static void disp_flush(lv_display_t *disp, const lv_area_t *area, uint8_t *px_ma
     ++g_ltdc_reload_request_seq;
     g_ltdc_reload_pending_fb = (uint32_t)px_map;
     g_ltdc_reload_pending = true;
+    /* 登记本次 VBR 的 owner：完成事件必须回到 LVGL flush，不能被 Launcher
+     * pan 之类的其它提交者接管。 */
+    const uint32_t owner_generation = ltdc_reload_arm(LTDC_RELOAD_OWNER_LVGL_FLUSH);
+    if (owner_generation == 0u) {
+        /* 已有其它 owner 持有 VBR：不能抢用，也不留下半个 generation。 */
+        g_ltdc_reload_pending = false;
+        __set_PRIMASK(primask);
+        g_update_enabled = false;
+        disp_finish_flush(disp, true);
+        return;
+    }
     __DMB();
     DisplayTrace_LvglReloadRequest((uint32_t)px_map);
     status = HAL_LTDC_Reload(&hltdc, LTDC_RELOAD_VERTICAL_BLANKING);
     __set_PRIMASK(primask);
     if (status != HAL_OK) {
         g_ltdc_reload_pending = false;
+        (void)ltdc_reload_abandon(LTDC_RELOAD_OWNER_LVGL_FLUSH);
         g_update_enabled = false;
         /* No VBR was accepted, so the new shadow address is not presented. */
         disp_finish_flush(disp, true);

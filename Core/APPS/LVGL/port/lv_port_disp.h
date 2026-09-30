@@ -16,6 +16,8 @@ extern "C" {
 #include "lvgl.h"
 #include "stm32h7xx_hal.h"
 
+#include <stdbool.h>
+
 /*********************
  *      宏定义
  *********************/
@@ -79,6 +81,31 @@ void lv_port_disp_signal_reload_complete(void);
  * @note  兼容旧调用点，保留为空实现
  */
 void LTDC_IRQHandler_Callback(void);
+
+/**
+ * @brief  当前是否没有在飞行中的 LVGL presentation（可以安全切换显示模式）
+ * @retval true=没有未完成的 CFBAR/reload 请求
+ */
+bool lv_port_disp_is_flush_idle(void);
+
+/**
+ * @brief  注册 LVGL flush 落地前的钩子
+ * @param  hook 在写 CFBAR 之前、同一个 VBR 之前调用；NULL 注销
+ * @param  user 回调上下文
+ * @note   Launcher -> Lua 的原子切换依赖这个钩子：第一次 LVGL flush 必须同时
+ *         恢复 HW Layer1 全屏几何并关闭 HW Layer0，与 LVGL 自己的 CFBAR 更新
+ *         在同一次 VBR 内生效，避免出现几何错乱或旧 Launcher 画面的一帧。
+ */
+void lv_port_disp_set_pre_latch_hook(void (*hook)(void *user), void *user);
+
+/**
+ * @brief  注册 presentation 门控
+ * @param  gate 返回 false 时 disp_flush 不修改 CFBAR、不请求 VBR，只结束本次
+ *              flush；NULL 表示不门控
+ * @note   Launcher 硬件平移模式下 HW Layer1 由 pan 状态机独占，任何 LVGL
+ *         presentation 都会破坏 strip 几何，因此必须在此拦掉。
+ */
+void lv_port_disp_set_presentation_gate(bool (*gate)(void *user), void *user);
 
 /**********************
  *      宏函数

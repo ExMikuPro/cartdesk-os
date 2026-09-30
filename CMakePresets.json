@@ -7,8 +7,7 @@
             "generator": "Ninja",
             "binaryDir": "${sourceDir}/build/${presetName}",
             "toolchainFile": "${sourceDir}/cmake/gcc-arm-none-eabi.cmake",
-            "cacheVariables": {
-            }
+            "cacheVariables": {}
         },
         {
             "name": "HostTest",
@@ -33,6 +32,15 @@
                 "XHGC_MEM_OVERLAY_ENABLE": "OFF",
                 "XHGC_MEM_OVERLAY_BOOT_VISIBLE": "OFF",
                 "XHGC_ENABLE_EXPERIMENTAL_CART_RESOURCE_CACHE": "OFF"
+            }
+        },
+        {
+            "name": "Debug-Launcher-HW-Pan",
+            "displayName": "Debug Launcher 双层硬件平移原型",
+            "description": "打开 CARTDESK_LAUNCHER_HW_PAN：HW Layer0 固定 UI + HW Layer1 cached strip 硬件平移。仅用于目标板验证。",
+            "inherits": "Debug",
+            "cacheVariables": {
+                "CARTDESK_LAUNCHER_HW_PAN": "ON"
             }
         },
         {
@@ -218,6 +226,13 @@
         {
             "name": "Debug",
             "configurePreset": "Debug",
+            "targets": [
+                "cartdesk-os"
+            ]
+        },
+        {
+            "name": "Debug-Launcher-HW-Pan",
+            "configurePreset": "Debug-Launcher-HW-Pan",
             "targets": [
                 "cartdesk-os"
             ]

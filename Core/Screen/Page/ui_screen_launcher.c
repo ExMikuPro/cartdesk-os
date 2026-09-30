@@ -29,6 +29,9 @@
 #include "lv_port_indev.h"
 #include "launcher_scroll.h"
 #include "launcher_strip.h"
+#include "launcher_display.h"
+#include "launcher_cache_render.h"
+#include "ltdc_reload.h"
 
 /* ------------------------------------------------------------------ */
 /*  SDRAM 地址布局                                                      */
@@ -126,6 +129,14 @@ volatile uint32_t g_launcher_rounded_fill_applied_mode;
 volatile uintptr_t g_launcher_rounded_fill_object_ptr;
 static lv_obj_t *s_launcher_rounded_fill_object;
 #endif
+/* Launcher 双层硬件平移需要的内容树句柄与几何（生产路径始终维护） */
+static lv_obj_t *s_hw_pan_box_container;
+static lv_obj_t *s_content_container;
+static int32_t    s_hw_pan_content_width;
+
+static void prv_hw_pan_configure(void);
+static bool prv_hw_pan_data_ready(void *user);
+
 #if CARTDESK_LTDC_SYNC_TRACE_ENABLE
 static lv_obj_t *s_box_scroll_container;
 static lv_obj_t *s_slot_trace_rects[DESIGN_APP_COUNT];
@@ -555,6 +566,16 @@ static void prv_slot_update_visibility(void)
 static void prv_apply_scroll_position_cb(int32_t position, void *user_data)
 {
     LV_UNUSED(user_data);
+
+    /* Launcher 双层硬件平移模式：滚动位置只写 LTDC Layer1 的 source 地址。
+     * 绝不移动 slot 坐标，也不产生任何 LVGL 失效 —— 这正是"0 rasterization"
+     * 的来源。strip 缓存保持静态，滚动只改 CFBAR。 */
+    if(launcher_display_hw_pan_active()) {
+        (void)launcher_display_set_scroll_x(position);
+        s_logical_scroll_x = position;
+        g_launcher_logical_scroll_x = position;
+        return;
+    }
 
     const int32_t previous = s_logical_scroll_x;
 
@@ -1105,6 +1126,11 @@ static void prv_runtime_exit_clicked_cb(lv_event_t *e)
 
 static void prv_show_runtime_screen(void)
 {
+    /* 进入 Lua/普通 App 视图：请求回到全屏 LVGL DIRECT 模式。真正生效要等
+     * 第一张 full frame 就绪后由同一次 VBR 原子切换（TO_LVGL_APP -> LVGL_APP），
+     * 因此不会先显示旧的 Launcher buffer。 */
+    (void)launcher_display_request_lvgl_app();
+
     s_runtime_exit_pending = false;
     s_runtime_error_visible = false;
 
@@ -1141,6 +1167,11 @@ static void prv_show_runtime_screen(void)
 
 static void prv_show_runtime_error_screen(void)
 {
+    /* 进入 Lua/普通 App 视图：请求回到全屏 LVGL DIRECT 模式。真正生效要等
+     * 第一张 full frame 就绪后由同一次 VBR 原子切换（TO_LVGL_APP -> LVGL_APP），
+     * 因此不会先显示旧的 Launcher buffer。 */
+    (void)launcher_display_request_lvgl_app();
+
     const LuaRuntimeErrorInfo *error = LuaRuntimeTask_GetErrorInfo();
     char details[384];
     const char *app_id = error != NULL && error->app_id[0] != '\0'
@@ -1759,6 +1790,9 @@ static void prv_create_box_area(lv_obj_t *parent)
     s_viewport_bottom = BOX_CONTAINER_Y + viewport_height - 1;
     s_viewport_w      = SCREEN_W;
 
+    s_hw_pan_box_container = box_container;
+    s_hw_pan_content_width = content_width;
+
     s_logical_scroll_max = (content_width > SCREEN_W) ? (content_width - SCREEN_W) : 0;
     s_logical_scroll_x = 0;
     g_launcher_logical_scroll_x = 0;
@@ -1769,6 +1803,7 @@ static void prv_create_box_area(lv_obj_t *parent)
 #endif
 
     lv_obj_t *content_container = lv_obj_create(box_container);
+    s_content_container = content_container;
     lv_obj_set_size(content_container, content_width, viewport_height);
     lv_obj_set_style_bg_color(content_container, lv_color_hex(COLOR_BG), 0);
     lv_obj_set_style_border_width(content_container, 0, 0);
@@ -2334,6 +2369,18 @@ void Launcher_Task(void)
         }
     }
 
+    /* Launcher 双层显示状态机：推进 enter/leave 过渡与 pan 提交。
+     * 非硬件平移模式下它是空转，不改变既有 slot-local 行为。 */
+    launcher_display_tick();
+
+    /* 数据就绪后自动进入硬件平移模式。进入失败时状态机已经 abort 回
+     * LVGL_APP，生产 slot-local 路径继续工作。 */
+    if (launcher_display_mode() == DISPLAY_MODE_LVGL_APP &&
+        s_main_container != NULL && !s_runtime_exit_pending &&
+        s_runtime_screen == NULL) {
+        (void)launcher_display_request_hw_pan();
+    }
+
     /* 生产手势推进：只在 Launcher 存在时运行，且不强制任何渲染。 */
     prv_scroll_tick(HAL_GetTick());
 
@@ -2443,6 +2490,81 @@ void DesignLauncher_Create(lv_display_t *disp)
     s_app_launch_armed = false;
     prv_update_action_hints();
     PerfMonitor_End(PERF_MONITOR_STARTUP_LAUNCHER_OBJECTS, objects_start);
+
+    prv_hw_pan_configure();
+}
+
+/*
+ * Launcher 双层硬件平移的几何与对象绑定。
+ *
+ * 几何全部从当前 UI 常量推导，不写死：
+ *   strip 源      = content_container（content_width x viewport_height）
+ *   窗口起始行    = BOX_CONTAINER_Y（= content_container 在面板上的 y）
+ *   窗口高度      = 到第一个"覆盖在 strip 之上"的固定控件为止
+ *
+ * 5 个固定圆按钮位于内容视口带之内（CIRCLE_Y < BOX_CONTAINER_Y + viewport_h），
+ * 而 HW Layer1（strip）在 HW Layer0（固定 UI）之上且第一版为不透明。如果 strip
+ * 窗口覆盖到圆按钮，圆按钮会被裁掉。因此窗口高度必须止于圆按钮上沿之前。
+ */
+static void prv_hw_pan_configure(void)
+{
+    if (s_main_container == NULL || s_hw_pan_box_container == NULL ||
+        s_content_container == NULL) {
+        return;
+    }
+
+    const uint32_t viewport_h =
+        (uint32_t)(s_viewport_bottom - s_viewport_top + 1);
+    const uint32_t window_y = (uint32_t)s_viewport_top;
+
+    /* 视口带内第一个固定覆盖物是圆按钮；窗口不得越过它。 */
+    uint32_t window_h = viewport_h;
+    if ((uint32_t)CIRCLE_Y > window_y && ((uint32_t)CIRCLE_Y - window_y) < window_h) {
+        window_h = (uint32_t)CIRCLE_Y - window_y;
+    }
+
+    const launcher_display_geometry_t geo = {
+        .static_front_addr = SDRAM_LAYER0_FB_BASE,
+        /* Launcher 模式下 LVGL 的 FB_A 不用于 scanout，借作固定层 staging back */
+        .static_back_addr = SDRAM_LVGL_FB_A_BASE,
+        .strip_base_addr = SDRAM_LAUNCHER_STRIP_BASE,
+        .strip_width = (uint32_t)(s_hw_pan_content_width > 0 ? s_hw_pan_content_width : LAUNCHER_STRIP_WIDTH),
+        .strip_height = viewport_h,
+        .strip_stride_bytes = LAUNCHER_STRIP_STRIDE_BYTES,
+        .viewport_width = SCREEN_W,
+        .window_y = window_y,
+        .window_height = window_h,
+    };
+
+    launcher_cache_render_init();
+    launcher_display_init();
+
+    if (!launcher_display_configure(&geo, s_main_container, s_hw_pan_box_container,
+                                    s_content_container)) {
+        /* 几何不自洽：保持 slot-local LVGL 生产路径，不进入半初始化硬件模式。 */
+        return;
+    }
+
+    launcher_display_set_ready_probe(prv_hw_pan_data_ready, NULL);
+}
+
+/*
+ * strip 只能在 icon cache / app 名 / slot 对象全部就绪之后烘焙，
+ * 否则会把 LOADING 占位图永久写进 strip。
+ */
+static bool prv_hw_pan_data_ready(void *user)
+{
+    (void)user;
+
+    if (s_cached_icon_cursor < DESIGN_APP_COUNT) {
+        return false;
+    }
+
+    if (s_io_pending_operation != CART_IO_OP_NONE) {
+        return false;
+    }
+
+    return true;
 }
 
 void DesignLauncher_SetSelected(int app_index)

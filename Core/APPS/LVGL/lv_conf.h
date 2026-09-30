@@ -231,6 +231,17 @@ extern struct _lv_font_t qflash_font_20;
    OTHERS
  *==================*/
 
+/*
+ * Launcher dual-layer hardware pan 使用公开的 lv_snapshot API 把 LVGL object tree
+ * 一次性烘焙到 SDRAM 缓存：
+ *   - HW Layer0 固定 UI  -> SDRAM_LAYER0_FB_BASE
+ *   - HW Layer1 strip    -> SDRAM_LAUNCHER_STRIP_BASE
+ * 只启用模块开关，未修改 LVGL renderer/refresh 核心。
+ */
+#ifndef LV_USE_SNAPSHOT
+    #define LV_USE_SNAPSHOT 1
+#endif
+
 #define LV_USE_LOG 0
 #if LV_USE_LOG
     #define LV_LOG_LEVEL LV_LOG_LEVEL_WARN

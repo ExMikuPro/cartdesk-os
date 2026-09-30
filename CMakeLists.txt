@@ -28,6 +28,7 @@ option(CARTDESK_RENDER_AUDIT_ENABLE "Enable the debug-only exclusive LVGL render
 option(XHGC_MEM_OVERLAY_ENABLE "Enable LCD memory debug overlay" OFF)
 option(XHGC_MEM_OVERLAY_BOOT_VISIBLE "Show LCD memory debug overlay at startup" OFF)
 option(XHGC_ENABLE_EXPERIMENTAL_CART_RESOURCE_CACHE "Enable legacy experimental cart resource cache owner for RESOURCE_ARENA" OFF)
+option(CARTDESK_LAUNCHER_HW_PAN "Enable Launcher dual-LTDC-layer hardware pan (HW Layer0 static UI + HW Layer1 cached strip)" OFF)
 find_package(Python3 QUIET COMPONENTS Interpreter)
 include(ExternalProject)
 
@@ -414,6 +415,10 @@ add_library(drv_display STATIC
         ${DEBUG_DIR}/render_audit.h
         ${DRIVER_DIR}/LCD/lcd.c
         ${DRIVER_DIR}/LCD/lcd.h
+        ${DRIVER_DIR}/LCD/ltdc_layer.c
+        ${DRIVER_DIR}/LCD/ltdc_layer.h
+        ${DRIVER_DIR}/LCD/ltdc_reload.c
+        ${DRIVER_DIR}/LCD/ltdc_reload.h
         ${DRIVER_DIR}/SDRAM/sdram.c
         ${DRIVER_DIR}/SDRAM/sdram.h
         ${DRIVER_DIR}/SDRAM/sdram_cold_pool.c
@@ -674,6 +679,15 @@ add_library(app_screen STATIC
         ${SCREEN_PAGE_DIR}/launcher_scroll.c
         ${SCREEN_PAGE_DIR}/launcher_scroll.h
         ${SCREEN_PAGE_DIR}/ui_screen_launcher.c
+        ${SCREEN_PAGE_DIR}/display_mode.c
+        ${SCREEN_PAGE_DIR}/display_mode.h
+        ${SCREEN_PAGE_DIR}/launcher_hw_pan.c
+        ${SCREEN_PAGE_DIR}/launcher_hw_pan.h
+        ${SCREEN_PAGE_DIR}/launcher_display.c
+        ${SCREEN_PAGE_DIR}/launcher_display.h
+        ${SCREEN_PAGE_DIR}/launcher_cache_render.c
+        ${SCREEN_PAGE_DIR}/launcher_cache_render.h
+        ${SCREEN_PAGE_DIR}/launcher_strip.h
         ${SCREEN_PAGE_DIR}/ui_screen_launcher.h
         ${SCREEN_PAGE_DIR}/jbm_el_20px.h
         ${SCREEN_PAGE_DIR}/ui_launcher_cache.c
@@ -691,6 +705,11 @@ target_include_directories(app_screen PUBLIC
         ${TASK_DIR}
         ${DRIVER_DIR}/LCD
         ${DEBUG_DIR}
+)
+
+# Launcher 双层硬件平移：默认 OFF，只有目标板验证通过后才切到 ON。
+target_compile_definitions(app_screen PUBLIC
+        CARTDESK_LAUNCHER_HW_PAN=$<BOOL:${CARTDESK_LAUNCHER_HW_PAN}>
 )
 target_link_libraries(app_screen
         PUBLIC cartdesk_common lvgl drv_storage cart_core

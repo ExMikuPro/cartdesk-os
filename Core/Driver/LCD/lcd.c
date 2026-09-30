@@ -27,6 +27,7 @@
 #include "ltdc.h"
 #include "dma2d.h"
 #include "lv_port_disp.h"
+#include "ltdc_reload.h"
 #include "display_trace.h"
 #include <string.h>
 #include <math.h>
@@ -1262,8 +1263,11 @@ void LCD_DoubleBufferInit(void) {
     layer0->CFBAR = layer_info[0].front_addr;
     layer1->CFBAR = layer_info[1].front_addr;
 
-    // VBlank reload：让 CFBAR 在 VBlank 生效
+    // VBlank reload：让 CFBAR 在 VBlank 生效。
+    // 这是一次几何/图层 latch，按 MODE_SWITCH 登记 owner；启动期消费者可能
+    // 还没注册，完成事件计入 unhandled_external（信息性，不算异常）。
     DisplayTrace_LegacyReloadRequest();
+    (void)ltdc_reload_arm(LTDC_RELOAD_OWNER_MODE_SWITCH);
     HAL_LTDC_Reload(&hltdc, LTDC_RELOAD_VERTICAL_BLANKING);
 
     // 【修复】正确计算LineEvent：使用AccumulatedActiveH + 1确保在VBlank区域触发
@@ -1353,7 +1357,25 @@ void HAL_LTDC_ReloadEventCallback(LTDC_HandleTypeDef *hltdc_param)
 {
     (void)hltdc_param;
     DisplayTrace_LtdcReloadEvent();
-    lv_port_disp_signal_reload_complete();
+
+    /* 一次 ReloadEvent 只能归还给它对应的提交者。LTDC 只有一个 SRCR.VBR 位和
+     * 一个 RR 事件，如果这里无条件当成 LVGL flush 完成，Launcher hardware pan
+     * 的 VBR 就会确认一个根本不存在的 LVGL frame（帧所有权串线）。 */
+    const uint32_t generation = ltdc_reload_pending_generation();
+    const ltdc_reload_owner_t owner = ltdc_reload_complete_from_irq();
+
+    switch (owner) {
+    case LTDC_RELOAD_OWNER_LVGL_FLUSH:
+        lv_port_disp_signal_reload_complete();
+        break;
+    case LTDC_RELOAD_OWNER_NONE:
+        /* 未登记的 legacy VBR（LCD_DoubleBufferInit 等）：保持既有行为。 */
+        break;
+    default:
+        /* Launcher pan / Layer0 swap / mode switch 由上层接手。 */
+        (void)ltdc_reload_notify_external(owner, generation);
+        break;
+    }
 }
 
 void HAL_LTDC_ErrorCallback(LTDC_HandleTypeDef *hltdc_param)
