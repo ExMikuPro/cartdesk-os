@@ -61,6 +61,17 @@ static void touchpad_read_multitouch(lv_indev_t * indev, lv_indev_data_t * data)
 static lv_indev_t * indev_touchpad = NULL;
 static bool touchpad_enabled = true;
 static uint8_t touch_sensitivity = 5;
+static lv_port_pointer_sample_t s_pointer_sample;
+
+static void pointer_sample_publish(int16_t x, int16_t y, bool pressed,
+                                   uint8_t touch_count)
+{
+    s_pointer_sample.x = x;
+    s_pointer_sample.y = y;
+    s_pointer_sample.pressed = pressed;
+    s_pointer_sample.touch_count = touch_count;
+    ++s_pointer_sample.sequence;
+}
 
 #if USE_IRQ_MODE
 static volatile bool touch_data_ready = false;
@@ -120,6 +131,18 @@ lv_indev_t * lv_port_indev_get_touchpad(void)
     return indev_touchpad;
 #else
     return NULL;
+#endif
+}
+
+bool lv_port_indev_get_pointer_sample(lv_port_pointer_sample_t *sample)
+{
+#if TOUCHSCREEN_ENABLED
+    if(sample == NULL || indev_touchpad == NULL) return false;
+    *sample = s_pointer_sample;
+    return true;
+#else
+    LV_UNUSED(sample);
+    return false;
 #endif
 }
 
@@ -233,6 +256,7 @@ static void touchpad_read(lv_indev_t * indev, lv_indev_data_t * data)
         data->state = LV_INDEV_STATE_RELEASED;
         data->point.x = last_x;
         data->point.y = last_y;
+        pointer_sample_publish(last_x, last_y, false, 0u);
         RuntimeStats_EndLvglInput();
         return;
     }
@@ -265,13 +289,16 @@ static void touchpad_read(lv_indev_t * indev, lv_indev_data_t * data)
 
             /* 设置按下状态 */
             data->state = LV_INDEV_STATE_PRESSED;
+            pointer_sample_publish(last_x, last_y, true, 1u);
         } else {
             /* 无有效触摸点 */
             data->state = LV_INDEV_STATE_RELEASED;
+            pointer_sample_publish(last_x, last_y, false, 0u);
         }
     } else {
         /* 无触摸 */
         data->state = LV_INDEV_STATE_RELEASED;
+        pointer_sample_publish(last_x, last_y, false, 0u);
     }
 
     /* 始终更新坐标（LVGL要求） */
@@ -307,6 +334,7 @@ static void touchpad_read_multitouch(lv_indev_t * indev, lv_indev_data_t * data)
         data->state = LV_INDEV_STATE_RELEASED;
         data->point.x = last_x;
         data->point.y = last_y;
+        pointer_sample_publish(last_x, last_y, false, 0u);
         RuntimeStats_EndLvglInput();
         return;
     }
@@ -348,6 +376,10 @@ static void touchpad_read_multitouch(lv_indev_t * indev, lv_indev_data_t * data)
         data->point.y = y;
         data->state = LV_INDEV_STATE_PRESSED;
 
+        if(current_point_index == 0u) {
+            pointer_sample_publish(x, y, true, last_point_count);
+        }
+
         /* 保存最后坐标 */
         last_x = x;
         last_y = y;
@@ -370,6 +402,7 @@ static void touchpad_read_multitouch(lv_indev_t * indev, lv_indev_data_t * data)
         data->point.y = last_y;
         data->continue_reading = false;
         current_point_index = 0;
+        pointer_sample_publish(last_x, last_y, false, 0u);
     }
 
     RuntimeStats_EndLvglInput();

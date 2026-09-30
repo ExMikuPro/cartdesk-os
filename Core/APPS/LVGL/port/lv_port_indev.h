@@ -15,6 +15,14 @@ extern "C" {
   *********************/
 #include "lvgl.h"
 
+typedef struct {
+    int16_t x;
+    int16_t y;
+    bool pressed;
+    uint8_t touch_count;
+    uint32_t sequence;
+} lv_port_pointer_sample_t;
+
  /*********************
   *      宏定义
   *********************/
@@ -38,6 +46,12 @@ extern "C" {
   * @return 触摸屏indev对象指针，如果禁用则返回NULL
   */
  lv_indev_t * lv_port_indev_get_touchpad(void);
+
+ /**
+  * @brief 获取最近一次经过坐标校准的物理触摸采样
+  * @note 不触发新的 GT911 扫描；Launcher HW-pan 路由与 LVGL 共用同一采样源
+  */
+ bool lv_port_indev_get_pointer_sample(lv_port_pointer_sample_t *sample);
 
  /**
   * @brief 启用/禁用触摸输入

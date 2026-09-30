@@ -104,6 +104,14 @@ if(CARTDESK_HOST_TESTS_ONLY)
             ${PROJECT_ROOT}/tests/host/launcher_scroll_test.c
             ${SCREEN_PAGE_DIR}/launcher_scroll.c
     )
+
+    add_executable(launcher_input_test
+            ${PROJECT_ROOT}/tests/host/launcher_input_test.c
+            ${SCREEN_PAGE_DIR}/launcher_input.c
+    )
+    target_include_directories(launcher_input_test PRIVATE
+            ${SCREEN_PAGE_DIR}
+    )
     target_include_directories(launcher_scroll_test PRIVATE
             ${SCREEN_PAGE_DIR}
     )
@@ -146,6 +154,11 @@ if(CARTDESK_HOST_TESTS_ONLY)
                 -fsanitize=address,undefined -fno-omit-frame-pointer)
         target_link_options(launcher_scroll_test PRIVATE
                 -fsanitize=address,undefined -fno-omit-frame-pointer)
+        target_compile_options(launcher_input_test PRIVATE
+                -Wall -Wextra -Werror -Wconversion -Wsign-conversion
+                -fsanitize=address,undefined -fno-omit-frame-pointer)
+        target_link_options(launcher_input_test PRIVATE
+                -fsanitize=address,undefined -fno-omit-frame-pointer)
         target_compile_options(sdram_layout_test PRIVATE
                 -Wall -Wextra -Werror -Wconversion -Wsign-conversion
                 -fsanitize=address,undefined -fno-omit-frame-pointer)
@@ -163,6 +176,7 @@ if(CARTDESK_HOST_TESTS_ONLY)
             task_message_contract_test
             resource_manager_test
             launcher_scroll_test
+            launcher_input_test
             sdram_layout_test
             launcher_hw_pan_test
             lua_runtime_task_test
@@ -696,6 +710,8 @@ add_library(app_screen STATIC
         ${SCREEN_PAGE_DIR}/launcher_action_hints.h
         ${SCREEN_PAGE_DIR}/launcher_scroll.c
         ${SCREEN_PAGE_DIR}/launcher_scroll.h
+        ${SCREEN_PAGE_DIR}/launcher_input.c
+        ${SCREEN_PAGE_DIR}/launcher_input.h
         ${SCREEN_PAGE_DIR}/ui_screen_launcher.c
         ${SCREEN_PAGE_DIR}/display_mode.c
         ${SCREEN_PAGE_DIR}/display_mode.h

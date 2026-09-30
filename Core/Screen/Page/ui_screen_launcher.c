@@ -28,6 +28,7 @@
 #include "lvgl_render_benchmark.h"
 #include "lv_port_indev.h"
 #include "launcher_scroll.h"
+#include "launcher_input.h"
 #include "launcher_strip.h"
 #include "launcher_display.h"
 #include "launcher_cache_render.h"
@@ -609,6 +610,7 @@ static void prv_apply_scroll_position_cb(int32_t position, void *user_data)
  * app/LVGL owner task 上下文；ISR 不得进入。
  */
 static launcher_scroll_t s_scroll;
+static launcher_input_t s_launcher_input;
 
 static void prv_scroll_controller_init(void)
 {
@@ -693,6 +695,53 @@ static void prv_scroll_tick(uint32_t now_ms)
         g_launcher_direct_drag_updates = updates;
     }
 #endif
+}
+
+static int32_t prv_input_get_scroll_x(void *user)
+{
+    (void)user;
+    return s_logical_scroll_x;
+}
+
+static void prv_input_scroll_tick(bool pressed, int32_t screen_x,
+                                  uint32_t now_ms, void *user)
+{
+    (void)user;
+    (void)launcher_scroll_tick(&s_scroll, pressed, screen_x, now_ms);
+}
+
+static void prv_input_scroll_cancel(void *user)
+{
+    (void)user;
+    launcher_scroll_cancel(&s_scroll);
+}
+
+static void prv_input_tick(uint32_t now_ms)
+{
+    const display_mode_t mode = launcher_display_mode();
+
+    if(mode == DISPLAY_MODE_LAUNCHER_HW_PAN) {
+        lv_port_pointer_sample_t port_sample;
+        if(lv_port_indev_get_pointer_sample(&port_sample)) {
+            const launcher_pointer_sample_t sample = {
+                .x = port_sample.x,
+                .y = port_sample.y,
+                .pressed = port_sample.pressed,
+                .touch_count = port_sample.touch_count,
+                .timestamp_ms = now_ms,
+            };
+            launcher_input_process(&s_launcher_input, true, &sample);
+        }
+        return;
+    }
+
+    const launcher_pointer_sample_t released = {
+        .timestamp_ms = now_ms,
+    };
+    launcher_input_process(&s_launcher_input, false, &released);
+
+    /* Fallback Launcher/Lua keeps the pre-existing LVGL indev semantics. */
+    if(mode == DISPLAY_MODE_LVGL_APP) prv_scroll_tick(now_ms);
 }
 
 
@@ -1694,11 +1743,47 @@ static void prv_set_selection(lv_obj_t *selected_obj)
 /*  事件回调                                                            */
 /* ------------------------------------------------------------------ */
 
+static void prv_activate_slot(int clicked_index)
+{
+    const bool should_launch = s_app_launch_armed
+                               && (s_selected_index == clicked_index)
+                               && prv_selected_app_can_start();
+
+    if(clicked_index < 0 || clicked_index >= DESIGN_APP_COUNT) return;
+
+    prv_set_selection(s_slots[clicked_index]);
+    s_app_launch_armed = true;
+    prv_uart_log_clicked_app(clicked_index, prv_slot_title(clicked_index));
+
+    if(should_launch) prv_start_selected_app();
+}
+
+static void prv_activate_circle(int circle_index)
+{
+    if(circle_index < 0 || circle_index >= DESIGN_CIRCLE_COUNT) return;
+    s_app_launch_armed = false;
+    prv_set_selection(s_circles[circle_index]);
+}
+
+static void prv_input_activate_slot(uint8_t slot, void *user)
+{
+    (void)user;
+    prv_activate_slot((int)slot);
+}
+
+static void prv_input_activate_button(uint8_t button, void *user)
+{
+    (void)user;
+    prv_activate_circle((int)button);
+}
+
 static void prv_box_clicked_cb(lv_event_t *e)
 {
     lv_obj_t *slot = lv_event_get_current_target(e);
     int clicked_index = -1;
-    bool should_launch = false;
+
+    /* HW-pan 的同一 pointer sequence 只能由 launcher_input 消费。 */
+    if(launcher_display_mode() != DISPLAY_MODE_LVGL_APP) return;
 
     /* 与 native 一致：本次手势只要滚动过，就不产生 click。 */
     if(prv_take_scroll_gesture()) {
@@ -1712,28 +1797,20 @@ static void prv_box_clicked_cb(lv_event_t *e)
         }
     }
 
-    should_launch = s_app_launch_armed
-                    && (s_selected_index == clicked_index)
-                    && prv_selected_app_can_start();
-
-    prv_set_selection(slot);
-    if (clicked_index >= 0) {
-        s_app_launch_armed = true;
-    }
-
-    if (clicked_index >= 0) {
-        prv_uart_log_clicked_app(clicked_index, prv_slot_title(clicked_index));
-    }
-
-    if (should_launch) {
-        prv_start_selected_app();
-    }
+    prv_activate_slot(clicked_index);
 }
 
 static void prv_circle_clicked_cb(lv_event_t *e)
 {
-    s_app_launch_armed = false;
-    prv_set_selection(lv_event_get_target(e));
+    lv_obj_t *circle = lv_event_get_current_target(e);
+
+    if(launcher_display_mode() != DISPLAY_MODE_LVGL_APP) return;
+    for(int i = 0; i < DESIGN_CIRCLE_COUNT; ++i) {
+        if(circle == s_circles[i]) {
+            prv_activate_circle(i);
+            return;
+        }
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -1949,6 +2026,58 @@ static void prv_create_circle_area(lv_obj_t *parent)
         RenderAudit_RegisterObject(label, RENDER_AUDIT_OBJ_KIND_CIRCLE_LABEL,
                                    (uint32_t)i);
     }
+}
+
+static void prv_launcher_input_init(void)
+{
+    launcher_hit_geometry_t geometry;
+    (void)memset(&geometry, 0, sizeof(geometry));
+
+    /* Snapshot once after layout. Hardware pan never queries moving LVGL coords. */
+    lv_obj_update_layout(s_main_container);
+    geometry.viewport = (launcher_input_rect_t) {
+        .x1 = 0,
+        .y1 = (int16_t)s_viewport_top,
+        .x2 = (int16_t)(s_viewport_w - 1),
+        .y2 = (int16_t)s_viewport_bottom,
+    };
+
+    geometry.slot_count = (uint8_t)s_slot_count;
+    for(uint8_t i = 0u; i < geometry.slot_count; ++i) {
+        lv_area_t coords;
+        lv_obj_get_coords(s_slots[i], &coords);
+        geometry.slots[i] = (launcher_input_rect_t) {
+            .x1 = (int16_t)coords.x1,
+            .y1 = (int16_t)(coords.y1 - s_viewport_top),
+            .x2 = (int16_t)coords.x2,
+            .y2 = (int16_t)(coords.y2 - s_viewport_top),
+        };
+    }
+
+    geometry.button_count = DESIGN_CIRCLE_COUNT;
+    for(uint8_t i = 0u; i < geometry.button_count; ++i) {
+        lv_area_t coords;
+        lv_obj_get_coords(s_circles[i], &coords);
+        const int16_t width = (int16_t)(coords.x2 - coords.x1 + 1);
+        geometry.buttons[i] = (launcher_input_circle_t) {
+            .center_x = (int16_t)(coords.x1 + width / 2),
+            .center_y = (int16_t)(coords.y1 + width / 2),
+            .radius = (int16_t)(width / 2),
+        };
+        if(coords.y1 > geometry.viewport.y1 && coords.y1 <= geometry.viewport.y2) {
+            geometry.viewport.y2 = (int16_t)(coords.y1 - 1);
+        }
+    }
+
+    const launcher_input_ops_t ops = {
+        .get_scroll_x = prv_input_get_scroll_x,
+        .scroll_tick = prv_input_scroll_tick,
+        .scroll_cancel = prv_input_scroll_cancel,
+        .activate_slot = prv_input_activate_slot,
+        .activate_button = prv_input_activate_button,
+        .user = NULL,
+    };
+    launcher_input_init(&s_launcher_input, &geometry, &ops);
 }
 
 static void prv_create_divider_line(lv_obj_t *parent)
@@ -2408,8 +2537,8 @@ void Launcher_Task(void)
         (void)launcher_display_request_hw_pan();
     }
 
-    /* 生产手势推进：只在 Launcher 存在时运行，且不强制任何渲染。 */
-    prv_scroll_tick(HAL_GetTick());
+    /* HW-pan 由 launcher_input 独占；LVGL_APP 保留原 indev/scroll 路径。 */
+    prv_input_tick(HAL_GetTick());
 
 #if CARTDESK_LTDC_SYNC_TRACE_ENABLE
     prv_scroll_capture_poll();
@@ -2505,6 +2634,7 @@ void DesignLauncher_Create(lv_display_t *disp)
     /* 视口几何与 slot 数量在 prv_create_box_area() 里确定，控制器必须在其后初始化。 */
     prv_scroll_controller_init();
     prv_create_circle_area(s_main_container);
+    prv_launcher_input_init();
     prv_create_divider_line(s_main_container);
     prv_create_status_label(s_main_container);
     launcher_action_hints_init(&s_action_hints, s_main_container);
@@ -2611,6 +2741,7 @@ void DesignLauncher_Destroy(void)
 
     /* 先停滚动模型再删对象：惯性/吸附不得在对象树消失后继续执行。 */
     prv_scroll_state_reset();
+    launcher_input_reset(&s_launcher_input);
     memset(s_slots, 0, sizeof(s_slots));
     memset(s_slot_labels, 0, sizeof(s_slot_labels));
 
