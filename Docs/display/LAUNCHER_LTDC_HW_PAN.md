@@ -274,12 +274,48 @@ steady-state 只写 CFBAR。
 `tools/debug/analyze_ltdc_layers.py` 可以按 LTDC 的真实合成规则重建面板图，
 并检查越界/padding/窗口对齐。
 
-## 13. 已知边界与未完成项
+### 目标板实测：模式切换（50 次往返）
+
+`Debug-Launcher-HW-Pan` 上由 `g_launcher_hwpan_lua_cycle_target` 驱动的自动往返
+（真实的 Lua 启停路径，非桩）：
+
+| 指标 | 数值 |
+|---|---|
+| Launcher → Lua → Launcher 完整往返 | **50 / 50** |
+| 切换 abort | **0** |
+| reload owner 一致性 | `orphan=0 overrun=0 crosstalk=0`，arms 与 completions 完全匹配 |
+| strip / 静态层重建 | 各 2 次（进入 + 返回），0 失败，99 ms / 40 ms |
+| `dm_rejected_busy` / `dm_rejected_invalid` | 0 / 0 |
+| 最终状态 | `LAUNCHER_HW_PAN`，L1 回到 strip（`CFBLR=0x29A00C87`，`CFBLNR=304`） |
+
+单次往返期间采到的中间态证明两层配置是原子切换的：
+
+| 阶段 | mode | HW L0 CR | HW L1 CFBAR / CFBLR / CFBLNR |
+|---|---|---|---|
+| Launcher | `LAUNCHER_HW_PAN` | `0x1`（enabled） | `0xD0465000` / `0x29A00C87` / 304（strip） |
+| Lua Cart | `LVGL_APP` | **`0x0`（disabled）** | `0xD02EE000` / `0x0C800C87` / 480（FB_B 全屏） |
+| 返回 Launcher | `LAUNCHER_HW_PAN` | `0x1`（enabled） | `0xD0465000` / `0x29A00C87` / 304（strip） |
+
+LTDC `ISR` 在整个压力过程中保持 `0x00000000`。
+
+## 13. Debug 面与 Release 面
+
+`PERF_MONITOR_ENABLE`（Debug / RelWithDebInfo 为 1）是唯一的 debug 面开关：
+
+- Debug 面额外保留 GDB 快照 `g_launcher_hwpan_debug`、确定性单步口
+  `g_launcher_hwpan_request_x`、10k pan 压力驱动器 `g_launcher_hwpan_stress_*`
+  以及 Launcher↔Lua 往返驱动器 `g_launcher_hwpan_lua_cycle_*`。
+- Release 面这些符号**全部不存在**，只保留 display mode manager、strip 渲染器、
+  hardware pan 逻辑与 cache 重建路径。
+
+可用 `arm-none-eabi-nm build/Release/cartdesk-os.elf` 复核。
+
+## 14. 已知边界与未完成项
 
 - **触摸映射**：硬件平移后 slot 的 screen-space 位置由 `touch_x + logical_scroll_x`
   推导，不能用旧的 LVGL object coords 做 hit-test。本任务按规划保留第一版
   deterministic 验证路径（GDB 驱动），生产触摸映射属于后续工作。
-- **strip rebuild**：当前实现要求 strip dirty 时不在扫描中原地改写；低频 rebuild
-  的安全窗口（停 pan → 等 VBR → 重建 → 重新 latch）尚未实现为完整状态机，
-  现阶段 rebuild 只发生在进入 Launcher 模式之前。
+- **strip rebuild 的安全窗口**：当前要求 strip dirty 时不在扫描中原地改写；低频
+  rebuild 的完整状态机（停 pan → 等 VBR → 重建 → 重新 latch）尚未实现，现阶段
+  rebuild 都发生在进入 Launcher 模式之前（含从 Lua 返回时的重建）。
 - `Docs/display/SDRAM_LAYOUT.md` 描述 SDRAM 分区，本文档描述图层与平移行为。
