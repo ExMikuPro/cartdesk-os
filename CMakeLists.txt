@@ -108,6 +108,18 @@ if(CARTDESK_HOST_TESTS_ONLY)
             ${SCREEN_PAGE_DIR}
     )
 
+    # Launcher 双层硬件平移核心：编译 production 的纯逻辑模块（无 HAL/LVGL 依赖）
+    add_executable(launcher_hw_pan_test
+            ${PROJECT_ROOT}/tests/host/launcher_hw_pan_test.c
+            ${SCREEN_PAGE_DIR}/launcher_hw_pan.c
+            ${SCREEN_PAGE_DIR}/display_mode.c
+            ${DRIVER_DIR}/LCD/ltdc_reload.c
+    )
+    target_include_directories(launcher_hw_pan_test PRIVATE
+            ${SCREEN_PAGE_DIR}
+            ${DRIVER_DIR}/LCD
+    )
+
     # SDRAM 统一布局回归：直接使用 production 的 Core/Inc/sdram_layout.h，
     # 不做 host stub，因此布局的编译期断言本身就是测试的一部分。
     add_executable(sdram_layout_test
@@ -139,6 +151,11 @@ if(CARTDESK_HOST_TESTS_ONLY)
                 -fsanitize=address,undefined -fno-omit-frame-pointer)
         target_link_options(sdram_layout_test PRIVATE
                 -fsanitize=address,undefined -fno-omit-frame-pointer)
+        target_compile_options(launcher_hw_pan_test PRIVATE
+                -Wall -Wextra -Werror -Wconversion -Wsign-conversion
+                -fsanitize=address,undefined -fno-omit-frame-pointer)
+        target_link_options(launcher_hw_pan_test PRIVATE
+                -fsanitize=address,undefined -fno-omit-frame-pointer)
     endif()
 
     foreach(host_test IN ITEMS
@@ -147,6 +164,7 @@ if(CARTDESK_HOST_TESTS_ONLY)
             resource_manager_test
             launcher_scroll_test
             sdram_layout_test
+            launcher_hw_pan_test
             lua_runtime_task_test
             lua_ui_owner_test
             lua_foundation_owner_test
