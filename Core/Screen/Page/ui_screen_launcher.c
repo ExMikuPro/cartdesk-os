@@ -807,6 +807,14 @@ volatile uint32_t g_stability_board_state = 0u;
 volatile uint32_t g_stability_board_last_stage = 0u;
 static uint32_t s_stability_board_dwell_count = 0u;
 
+#if PERF_MONITOR_ENABLE
+/* Launcher <-> Lua 模式切换压力测试的自动驱动器（GDB 写 target 即可）。
+ * 与相邻的板级自测一起只存在于 Debug/RelWithDebInfo 构建。 */
+volatile uint32_t g_launcher_hwpan_lua_cycle_target = 0u;
+volatile uint32_t g_launcher_hwpan_lua_cycles = 0u;
+volatile uint32_t g_launcher_hwpan_lua_cycle_phase = 0u;
+#endif
+
 volatile uint32_t g_lua_budget_board_command = 0u;
 volatile uint32_t g_lua_budget_board_completed = 0u;
 volatile uint32_t g_lua_budget_board_failures = 0u;
@@ -2144,6 +2152,25 @@ void Launcher_Task(void)
             s_runtime_exit_pending = true;
             LuaRuntimeTask_RequestStop();
         }
+    }
+
+    /* 模式切换压力：自动跑 N 次真实的 Launcher -> Lua -> Launcher 往返。
+     * phase 0 空闲 / 1 正在启动 Lua / 2 正在退出 Lua。 */
+    if (g_launcher_hwpan_lua_cycle_phase == 0u &&
+        g_launcher_hwpan_lua_cycles < g_launcher_hwpan_lua_cycle_target) {
+        g_launcher_hwpan_lua_cycle_phase = 1u;
+        g_lua_budget_board_command = 1u;
+    } else if (g_launcher_hwpan_lua_cycle_phase == 2u &&
+               LuaRuntimeTask_IsIdle()) {
+        ++g_launcher_hwpan_lua_cycles;
+        g_launcher_hwpan_lua_cycle_phase = (g_launcher_hwpan_lua_cycles <
+                                            g_launcher_hwpan_lua_cycle_target) ? 0u : 3u;
+    }
+    if (g_launcher_hwpan_lua_cycle_phase == 1u &&
+        g_lua_budget_board_state != 0u) {
+        /* Lua 已经起来了：等它跑完再请求退出 */
+        g_launcher_hwpan_lua_cycle_phase = 2u;
+        g_lua_budget_board_command = 2u;
     }
 
     switch (g_lua_budget_board_state) {

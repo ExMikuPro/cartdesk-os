@@ -26,9 +26,16 @@ const char *launcher_cache_result_name(launcher_cache_result_t result)
     }
 }
 
+static bool s_initialized;
+
 void launcher_cache_render_init(void)
 {
-    (void)memset(&s_stats, 0, sizeof(s_stats));
+    const bool first = !s_initialized;
+    s_initialized = true;
+
+    if (first) {
+        (void)memset(&s_stats, 0, sizeof(s_stats));
+    }
     s_stats.last_static_result = LAUNCHER_CACHE_OK;
     s_stats.last_strip_result = LAUNCHER_CACHE_OK;
     s_static_draw_buf_ready = false;

@@ -54,6 +54,7 @@ static uint32_t s_layer0_swap_generation;
 
 static bool s_configured;
 
+#if PERF_MONITOR_ENABLE
 volatile launcher_hwpan_debug_t g_launcher_hwpan_debug;
 
 volatile int32_t  g_launcher_hwpan_request_x = -1;
@@ -109,7 +110,6 @@ static void launcher_display_service_debug_hooks(void)
         ++g_launcher_hwpan_stress_updates;
     }
 }
-
 void launcher_display_refresh_debug(void)
 {
     const ltdc_reload_state_t *rl = ltdc_reload_state();
@@ -135,6 +135,12 @@ void launcher_display_refresh_debug(void)
     g_launcher_hwpan_debug.mode_requests = s_stats.mode_requests;
     g_launcher_hwpan_debug.mode_commits = s_stats.mode_commits;
     g_launcher_hwpan_debug.mode_aborts = s_stats.mode_aborts;
+    g_launcher_hwpan_debug.commit_to_lvgl_app = s_stats.commit_to_lvgl_app;
+    g_launcher_hwpan_debug.commit_to_hw_pan = s_stats.commit_to_hw_pan;
+    g_launcher_hwpan_debug.dm_rejected_busy = s_mode.rejected_busy;
+    g_launcher_hwpan_debug.dm_rejected_reload = s_mode.rejected_reload;
+    g_launcher_hwpan_debug.dm_rejected_invalid = s_mode.rejected_invalid;
+    g_launcher_hwpan_debug.flush_idle = lv_port_disp_is_flush_idle() ? 1u : 0u;
     g_launcher_hwpan_debug.strip_rebuilds = s_stats.strip_rebuilds;
     g_launcher_hwpan_debug.static_rebuilds = s_stats.static_rebuilds;
     g_launcher_hwpan_debug.fallback_count = s_stats.fallback_count;
@@ -163,6 +169,7 @@ void launcher_display_refresh_debug(void)
     g_launcher_hwpan_debug.vblank = LCD_GetVBlankCount();
 
     if (rl != NULL) {
+        g_launcher_hwpan_debug.reload_pending_owner = (uint32_t)rl->pending_owner;
         g_launcher_hwpan_debug.reload_orphan = rl->orphan_completions;
         g_launcher_hwpan_debug.reload_overrun = rl->overrun_count;
         g_launcher_hwpan_debug.reload_crosstalk = rl->crosstalk_count;
@@ -177,6 +184,8 @@ void launcher_display_refresh_debug(void)
         g_launcher_hwpan_debug.owner_done_mode = rl->owner_completions[LTDC_RELOAD_OWNER_MODE_SWITCH];
     }
 }
+
+#endif /* PERF_MONITOR_ENABLE */
 
 /* ---------------------------------------------------------------- pan ops */
 
@@ -224,9 +233,17 @@ static void launcher_display_external_dispatch(ltdc_reload_owner_t owner,
 
 /* ------------------------------------------------------------------ init */
 
+static bool s_initialized;
+
 void launcher_display_init(void)
 {
-    (void)memset(&s_stats, 0, sizeof(s_stats));
+    /* Launcher 每次返回都会重建对象树并重新 configure；累计计数与 fallback
+     * 历史必须跨重建保留，否则模式切换压力测试无法统计。只有首次初始化清零。 */
+    if (!s_initialized) {
+        (void)memset(&s_stats, 0, sizeof(s_stats));
+        s_initialized = true;
+    }
+
     (void)memset(&s_trans, 0, sizeof(s_trans));
 
     display_mode_init(&s_mode);
@@ -466,6 +483,7 @@ static void launcher_display_leave_step(void)
     if (s_trans.lvgl_flush_seen && lv_port_disp_is_flush_idle()) {
         (void)display_mode_commit(&s_mode);
         ++s_stats.mode_commits;
+        ++s_stats.commit_to_lvgl_app;
         (void)memset(&s_trans, 0, sizeof(s_trans));
         s_stats.hw_pan_active = false;
     }
@@ -481,18 +499,21 @@ void launcher_display_tick(void)
         launcher_display_leave_step();
         break;
     case DISPLAY_MODE_LAUNCHER_HW_PAN:
-        /* steady state：提交尚未生效的最新位置；strip rebuild 只在 dirty 时。 */
-        if (s_strip_dirty || s_static_dirty) {
-            return; /* 低频 rebuild 由显式接口处理，不在 tick 里原地改 strip */
+        /* steady state：提交尚未生效的最新位置。strip/static 仍在 dirty 时
+         * 原地改缓存会撕裂正在扫描的 surface，因此跳过提交（低频 rebuild 由
+         * 显式接口在进入模式前完成）。 */
+        if (!s_strip_dirty && !s_static_dirty) {
+            (void)launcher_hw_pan_tick(&s_pan);
         }
-        (void)launcher_hw_pan_tick(&s_pan);
         break;
     default:
         break;
     }
 
+#if PERF_MONITOR_ENABLE
     launcher_display_service_debug_hooks();
     launcher_display_refresh_debug();
+#endif
 }
 
 /* --------------------------------------------------------------- 请求入口 */
@@ -584,6 +605,7 @@ void launcher_display_on_mode_switch_complete(uint32_t generation)
     if (s_mode.mode == DISPLAY_MODE_TO_LAUNCHER_HW_PAN) {
         (void)display_mode_commit(&s_mode);
         ++s_stats.mode_commits;
+        ++s_stats.commit_to_hw_pan;
         launcher_hw_pan_set_enabled(&s_pan, true);
         launcher_hw_pan_set_x(&s_pan, s_pan.desired_x);
         s_stats.hw_pan_active = true;

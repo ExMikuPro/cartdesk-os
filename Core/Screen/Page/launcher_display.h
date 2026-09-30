@@ -7,6 +7,7 @@
 #include "display_mode.h"
 #include "launcher_hw_pan.h"
 #include "lvgl.h"
+#include "perf_monitor.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -50,6 +51,13 @@ typedef struct {
     uint32_t mode_requests;
     uint32_t mode_commits;
     uint32_t mode_aborts;
+    uint32_t commit_to_lvgl_app;    /* 成功 latch 到 LVGL_APP 的次数 */
+    uint32_t commit_to_hw_pan;      /* 成功 latch 到 LAUNCHER_HW_PAN 的次数 */
+    uint32_t reload_pending_owner;  /* 0=空闲；非 0 表示一笔 VBR 未归还 */
+    uint32_t dm_rejected_busy;      /* display_mode_request 被占用拒绝 */
+    uint32_t dm_rejected_reload;    /* display_mode_request 被 pending VBR 拒绝 */
+    uint32_t dm_rejected_invalid;
+    uint32_t flush_idle;            /* 采样瞬间 lv_port_disp_is_flush_idle() */
     uint32_t strip_rebuilds;
     uint32_t static_rebuilds;
     uint32_t pan_set_x_calls;
@@ -121,6 +129,7 @@ launcher_fallback_reason_t launcher_display_last_fallback(void);
 const launcher_display_stats_t *launcher_display_stats(void);
 const launcher_hw_pan_t *launcher_display_pan(void);
 
+#if PERF_MONITOR_ENABLE
 /*
  * GDB / 串口可读的运行期快照。
  *
@@ -146,6 +155,13 @@ typedef struct {
     uint32_t mode_requests;
     uint32_t mode_commits;
     uint32_t mode_aborts;
+    uint32_t commit_to_lvgl_app;    /* 成功 latch 到 LVGL_APP 的次数 */
+    uint32_t commit_to_hw_pan;      /* 成功 latch 到 LAUNCHER_HW_PAN 的次数 */
+    uint32_t reload_pending_owner;  /* 0=空闲；非 0 表示一笔 VBR 未归还 */
+    uint32_t dm_rejected_busy;      /* display_mode_request 被占用拒绝 */
+    uint32_t dm_rejected_reload;    /* display_mode_request 被 pending VBR 拒绝 */
+    uint32_t dm_rejected_invalid;
+    uint32_t flush_idle;            /* 采样瞬间 lv_port_disp_is_flush_idle() */
     uint32_t strip_rebuilds;
     uint32_t static_rebuilds;
     uint32_t strip_build_ms;
@@ -184,7 +200,7 @@ typedef struct {
 
 extern volatile launcher_hwpan_debug_t g_launcher_hwpan_debug;
 
-/** 立即刷新 GDB 快照（tick 与关键完成点都会调用） */
+/** 立即刷新 GDB 快照（tick 与关键完成点都会调用；仅 Debug/RelWithDebInfo） */
 void launcher_display_refresh_debug(void);
 
 /*
@@ -200,6 +216,7 @@ extern volatile uint32_t g_launcher_hwpan_stress_enable;
 extern volatile uint32_t g_launcher_hwpan_stress_dir;
 extern volatile uint32_t g_launcher_hwpan_stress_updates;
 extern volatile int32_t  g_launcher_hwpan_stress_x;
+#endif /* PERF_MONITOR_ENABLE */
 
 /** 名字（日志/dump 用） */
 const char *launcher_fallback_reason_name(launcher_fallback_reason_t reason);
